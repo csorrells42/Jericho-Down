@@ -1,0 +1,68 @@
+namespace VoiceWorkbench.Audio;
+
+public sealed class SpectrumFrame
+{
+    public SpectrumFrame(double[] magnitudes, double peakLevel)
+        : this(magnitudes, magnitudes, [], [], peakLevel, peakLevel, new VoiceProcessingTelemetry())
+    {
+    }
+
+    public SpectrumFrame(
+        double[] magnitudes,
+        double[] rawMagnitudes,
+        float[] processedSamples,
+        float[] rawSamples,
+        double peakLevel,
+        double rawPeakLevel,
+        VoiceProcessingTelemetry telemetry,
+        double[]? input1Magnitudes = null,
+        double[]? input2Magnitudes = null,
+        double input1PeakLevel = 0d,
+        double input2PeakLevel = 0d,
+        float[]? input1Samples = null,
+        float[]? input2Samples = null)
+    {
+        Magnitudes = magnitudes;
+        RawMagnitudes = rawMagnitudes;
+        ProcessedSamples = processedSamples;
+        RawSamples = rawSamples;
+        PeakLevel = peakLevel;
+        RawPeakLevel = rawPeakLevel;
+        Telemetry = telemetry;
+        Input1Magnitudes = input1Magnitudes ?? [];
+        Input2Magnitudes = input2Magnitudes ?? [];
+        Input1PeakLevel = input1PeakLevel;
+        Input2PeakLevel = input2PeakLevel;
+        Input1Samples = input1Samples ?? [];
+        Input2Samples = input2Samples ?? [];
+    }
+
+    public double[] Magnitudes { get; }
+
+    public double[] RawMagnitudes { get; }
+
+    public float[] ProcessedSamples { get; }
+
+    public float[] RawSamples { get; }
+
+    public double PeakLevel { get; }
+
+    public double RawPeakLevel { get; }
+
+    public VoiceProcessingTelemetry Telemetry { get; }
+
+    public double[] Input1Magnitudes { get; }
+
+    public double[] Input2Magnitudes { get; }
+
+    public double Input1PeakLevel { get; }
+
+    public double Input2PeakLevel { get; }
+
+    public float[] Input1Samples { get; }
+
+    public float[] Input2Samples { get; }
+
+    public bool HasStereoInput => Input1Magnitudes.Length > 0 && Input2Magnitudes.Length > 0;
+}
+

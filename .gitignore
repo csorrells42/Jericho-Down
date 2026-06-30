@@ -1,0 +1,10 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.log
+Podcast Workbench Sessions/
+.vs/
+*.user
+*.suo
