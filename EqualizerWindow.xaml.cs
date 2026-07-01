@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -118,9 +118,6 @@ public partial class EqualizerWindow : Window
     private double _visualCeiling = 0.25d;
     private double _recordingVisualCeiling = 0.25d;
     private double _displayInputPeak;
-    private double _displayGainReductionDb;
-    private double _displayGateOpenness = 1d;
-    private int _gateClosedHoldFrames;
     private int _silentFrameCount;
     private readonly Dictionary<Slider, double> _processingSliderDefaults = [];
     private readonly Dictionary<Slider, string> _processingSliderBaseToolTips = [];
@@ -129,8 +126,6 @@ public partial class EqualizerWindow : Window
     private AudioInputDevice? _selectedDevice;
     private AudioOutputDevice? _selectedOutputDevice;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
-    private ProcessingSnapshot? _snapshotA;
-    private ProcessingSnapshot? _snapshotB;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "Podcast Workbench Sessions");
@@ -208,7 +203,6 @@ public partial class EqualizerWindow : Window
         WaveformCanvas.Children.Add(_processedWaveTrace);
         RecordingSignalCanvas.Children.Add(_recordingSignalTrace);
         _spectrumService.SpectrumAvailable += SpectrumAvailable;
-        _spectrumService.TestClipStateChanged += TestClipStateChanged;
         _cameraPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged += CameraPreviewStatusChanged;
         CompositionTarget.Rendering += CompositionTargetRendering;
@@ -289,18 +283,7 @@ public partial class EqualizerWindow : Window
         UpdateOutputFolderText();
         UpdateRecordingTransportControls();
 
-        SetProcessingSliderDefaults(
-            "Choose a preset to load a starting point. Yellow ticks show that preset's home settings.",
-            Settings.HighPassFrequencyHz,
-            Settings.DePopperAmountDb,
-            Settings.NoiseGateThresholdDb,
-            Settings.NoiseSuppressionAmountDb,
-            Settings.EchoReducerAmountDb,
-            Settings.CompressorThresholdDb,
-            Settings.CompressorRatio,
-            Settings.DeEsserAmountDb,
-            Settings.MakeupGainDb,
-            Settings.LimiterCeilingDb);
+        LoadWarmRadioPreset();
     }
 
     private void ApplyDarkTitleBar()
@@ -337,30 +320,23 @@ public partial class EqualizerWindow : Window
 
     private void WindowActivated(object? sender, EventArgs e)
     {
-        if (!_spectrumService.IsPlayingTestClip)
-        {
-            StartSelectedDevice();
-        }
+        StartSelectedDevice();
     }
 
     private void WindowDeactivated(object? sender, EventArgs e)
     {
-        if (_spectrumService.IsProcessedOutputEnabled)
+        if (_spectrumService.IsRunning)
         {
-            StatusText.Text = "Output routing active";
-            return;
+            StatusText.Text = _spectrumService.IsProcessedOutputEnabled
+                ? "Listening and routing output"
+                : "Listening";
         }
-
-        _spectrumService.StopTestClipRecording();
-        _spectrumService.Stop();
-        StatusText.Text = "Paused";
     }
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         CompositionTarget.Rendering -= CompositionTargetRendering;
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
-        _spectrumService.TestClipStateChanged -= TestClipStateChanged;
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
         _cameraModeLoadCancellation?.Cancel();
@@ -1317,7 +1293,6 @@ public partial class EqualizerWindow : Window
     private void MicrophoneSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
-        _spectrumService.StopTestClipPlayback();
         _spectrumService.Stop();
         StartSelectedDevice();
     }
@@ -1329,7 +1304,6 @@ public partial class EqualizerWindow : Window
             _selectedInputChannelMode = option.Mode;
         }
 
-        _spectrumService.StopTestClipPlayback();
         _spectrumService.Stop();
         StartSelectedDevice();
     }
@@ -1360,7 +1334,7 @@ public partial class EqualizerWindow : Window
                 ? $"Sending processed mic to {_selectedOutputDevice.Name}. In your podcast app, select the matching virtual cable output as the mic."
                 : "Output off. Pick a virtual cable input when you want podcast routing.";
 
-            if (enabled && !_spectrumService.IsRunning && !_spectrumService.IsPlayingTestClip)
+            if (enabled && !_spectrumService.IsRunning)
             {
                 StartSelectedDevice();
             }
@@ -1374,7 +1348,7 @@ public partial class EqualizerWindow : Window
 
     private void StartSelectedDevice()
     {
-        if (_selectedDevice is null || !IsActive || _spectrumService.IsPlayingTestClip)
+        if (_selectedDevice is null)
         {
             return;
         }
@@ -1388,195 +1362,6 @@ public partial class EqualizerWindow : Window
         {
             StatusText.Text = $"Mic unavailable: {ex.Message}";
         }
-    }
-
-    private void RecordClipClicked(object sender, RoutedEventArgs e)
-    {
-        if (_spectrumService.IsRecordingTestClip)
-        {
-            _spectrumService.StopTestClipRecording();
-            StatusText.Text = "Test clip saved";
-            return;
-        }
-
-        _spectrumService.StopTestClipPlayback();
-        StartSelectedDevice();
-        if (!_spectrumService.IsRunning)
-        {
-            ClipStatusText.Text = "Choose a working mic before recording.";
-            return;
-        }
-
-        _spectrumService.BeginTestClipRecording();
-        StatusText.Text = "Recording test clip";
-    }
-
-    private void PlayClipClicked(object sender, RoutedEventArgs e)
-    {
-        if (_spectrumService.IsPlayingTestClip)
-        {
-            _spectrumService.StopTestClipPlayback();
-            StartSelectedDevice();
-            return;
-        }
-
-        _spectrumService.StartTestClipPlayback(Settings);
-    }
-
-    private void ReturnToLiveMicClicked(object sender, RoutedEventArgs e)
-    {
-        _spectrumService.StopTestClipPlayback();
-        _spectrumService.StopTestClipRecording();
-        StartSelectedDevice();
-        UpdateTestClipUi();
-    }
-
-    private void StoreAClicked(object sender, RoutedEventArgs e)
-    {
-        _snapshotA = CaptureSnapshot("A");
-        UpdateCompareUi("Stored current settings as A.");
-    }
-
-    private void StoreBClicked(object sender, RoutedEventArgs e)
-    {
-        _snapshotB = CaptureSnapshot("B");
-        UpdateCompareUi("Stored current settings as B.");
-    }
-
-    private void LoadAClicked(object sender, RoutedEventArgs e)
-    {
-        if (_snapshotA is null)
-        {
-            return;
-        }
-
-        ApplySnapshot(_snapshotA);
-        UpdateCompareUi("Listening to A.");
-    }
-
-    private void LoadBClicked(object sender, RoutedEventArgs e)
-    {
-        if (_snapshotB is null)
-        {
-            return;
-        }
-
-        ApplySnapshot(_snapshotB);
-        UpdateCompareUi("Listening to B.");
-    }
-
-    private void TestClipStateChanged(object? sender, EventArgs e)
-    {
-        Dispatcher.Invoke(UpdateTestClipUi);
-    }
-
-    private void UpdateTestClipUi()
-    {
-        var duration = _spectrumService.TestClipDurationSeconds;
-        var progressWidth = Math.Clamp(duration / 10d, 0d, 1d) * 260d;
-        ClipProgressMeter.Width = progressWidth;
-        PlayClipButton.IsEnabled = _spectrumService.HasTestClip;
-
-        if (_spectrumService.IsRecordingTestClip)
-        {
-            RecordClipButton.Content = "Stop recording";
-            PlayClipButton.Content = "Loop test clip";
-            ClipStatusText.Text = $"Recording raw mic: {duration:0.0}/10.0 seconds";
-            ClipProgressMeter.Fill = new SolidColorBrush(Color.FromRgb(218, 80, 72));
-            return;
-        }
-
-        RecordClipButton.Content = "Record 10 seconds";
-        ClipProgressMeter.Fill = new SolidColorBrush(Color.FromRgb(0, 190, 230));
-
-        if (_spectrumService.IsPlayingTestClip)
-        {
-            PlayClipButton.Content = "Stop loop";
-            ClipStatusText.Text = $"Looping {duration:0.0}s test clip through current settings";
-            StatusText.Text = "Looping test clip";
-            return;
-        }
-
-        PlayClipButton.Content = "Loop test clip";
-        ClipStatusText.Text = duration > 0d
-            ? $"Saved {duration:0.0}s raw test clip"
-            : "No test clip recorded";
-    }
-
-    private ProcessingSnapshot CaptureSnapshot(string name)
-    {
-        return new ProcessingSnapshot(
-            name,
-            Settings.HighPassEnabled,
-            Settings.HighPassFrequencyHz,
-            Settings.DePopperEnabled,
-            Settings.DePopperAmountDb,
-            Settings.NoiseGateEnabled,
-            Settings.NoiseGateThresholdDb,
-            Settings.NoiseSuppressionEnabled,
-            Settings.NoiseSuppressionAmountDb,
-            Settings.EchoReducerEnabled,
-            Settings.EchoReducerAmountDb,
-            Settings.CompressorEnabled,
-            Settings.CompressorThresholdDb,
-            Settings.CompressorRatio,
-            Settings.DeEsserEnabled,
-            Settings.DeEsserAmountDb,
-            Settings.MakeupGainDb,
-            Settings.LimiterEnabled,
-            Settings.LimiterCeilingDb,
-            [.. Bands.Select(band => band.GainDb)]);
-    }
-
-    private void ApplySnapshot(ProcessingSnapshot snapshot)
-    {
-        Settings.HighPassEnabled = snapshot.HighPassEnabled;
-        Settings.HighPassFrequencyHz = snapshot.HighPassFrequencyHz;
-        Settings.DePopperEnabled = snapshot.DePopperEnabled;
-        Settings.DePopperAmountDb = snapshot.DePopperAmountDb;
-        Settings.NoiseGateEnabled = snapshot.NoiseGateEnabled;
-        Settings.NoiseGateThresholdDb = snapshot.NoiseGateThresholdDb;
-        Settings.NoiseSuppressionEnabled = snapshot.NoiseSuppressionEnabled;
-        Settings.NoiseSuppressionAmountDb = snapshot.NoiseSuppressionAmountDb;
-        Settings.EchoReducerEnabled = snapshot.EchoReducerEnabled;
-        Settings.EchoReducerAmountDb = snapshot.EchoReducerAmountDb;
-        Settings.CompressorEnabled = snapshot.CompressorEnabled;
-        Settings.CompressorThresholdDb = snapshot.CompressorThresholdDb;
-        Settings.CompressorRatio = snapshot.CompressorRatio;
-        Settings.DeEsserEnabled = snapshot.DeEsserEnabled;
-        Settings.DeEsserAmountDb = snapshot.DeEsserAmountDb;
-        Settings.MakeupGainDb = snapshot.MakeupGainDb;
-        Settings.LimiterEnabled = snapshot.LimiterEnabled;
-        Settings.LimiterCeilingDb = snapshot.LimiterCeilingDb;
-
-        for (var i = 0; i < Bands.Count && i < snapshot.BandGains.Length; i++)
-        {
-            Bands[i].GainDb = snapshot.BandGains[i];
-        }
-
-        SetProcessingSliderDefaults(
-            $"A/B slot {snapshot.Name} loaded. Yellow ticks now mark this slot's saved processing values.",
-            snapshot.HighPassFrequencyHz,
-            snapshot.DePopperAmountDb,
-            snapshot.NoiseGateThresholdDb,
-            snapshot.NoiseSuppressionAmountDb,
-            snapshot.EchoReducerAmountDb,
-            snapshot.CompressorThresholdDb,
-            snapshot.CompressorRatio,
-            snapshot.DeEsserAmountDb,
-            snapshot.MakeupGainDb,
-            snapshot.LimiterCeilingDb);
-        StatusText.Text = $"Listening to {snapshot.Name}";
-    }
-
-    private void UpdateCompareUi(string message)
-    {
-        LoadAButton.IsEnabled = _snapshotA is not null;
-        LoadBButton.IsEnabled = _snapshotB is not null;
-
-        var aState = _snapshotA is null ? "A empty" : "A saved";
-        var bState = _snapshotB is null ? "B empty" : "B saved";
-        CompareStatusText.Text = $"{message} {aState}, {bState}.";
     }
 
     private void StartMicAnalysisClicked(object sender, RoutedEventArgs e)
@@ -2007,7 +1792,6 @@ public partial class EqualizerWindow : Window
             ? $"Mic 1 {frame.Input1PeakLevel:P0}  Mic 2 {frame.Input2PeakLevel:P0}"
             : $"Peak {frame.PeakLevel:P0}";
         UpdateInputCoach(frame.RawPeakLevel);
-        UpdateProcessingMeters(frame.Telemetry);
         UpdateSignalStatus(frame.PeakLevel);
     }
 
@@ -2254,48 +2038,6 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void UpdateProcessingMeters(VoiceProcessingTelemetry telemetry)
-    {
-        var targetGainReduction = Math.Clamp(telemetry.CompressorGainReductionDb, 0d, 24d);
-        _displayGainReductionDb = targetGainReduction > _displayGainReductionDb
-            ? Ease(_displayGainReductionDb, targetGainReduction, 0.45d)
-            : Ease(_displayGainReductionDb, targetGainReduction, 0.08d);
-
-        var gainReduction = _displayGainReductionDb;
-        GainReductionText.Text = $"Compressor: -{gainReduction:0.0} dB";
-        GainReductionMeter.Width = Math.Max(0d, (gainReduction / 12d) * 260d);
-
-        var compressorActive = _displayGainReductionDb > 0.25d;
-        CompressorStateText.Text = compressorActive
-            ? $"Compressing: voice {telemetry.CompressorInputLevelDb:0.0} dB, threshold {telemetry.CompressorThresholdDb:0.0} dB"
-            : $"Below threshold: voice {telemetry.CompressorInputLevelDb:0.0} dB, threshold {telemetry.CompressorThresholdDb:0.0} dB";
-        CompressorStateText.Foreground = compressorActive
-            ? new SolidColorBrush(Color.FromRgb(215, 178, 32))
-            : new SolidColorBrush(Color.FromRgb(184, 199, 217));
-
-        _displayGateOpenness = Ease(_displayGateOpenness, telemetry.GateOpenness, telemetry.GateOpenness > _displayGateOpenness ? 0.35d : 0.08d);
-        if (_displayGateOpenness < 0.45d)
-        {
-            _gateClosedHoldFrames = 10;
-        }
-        else if (_displayGateOpenness > 0.7d && _gateClosedHoldFrames > 0)
-        {
-            _gateClosedHoldFrames--;
-        }
-
-        var gateOpen = _gateClosedHoldFrames == 0 && _displayGateOpenness > 0.6d;
-        if (gateOpen)
-        {
-            GateIndicator.Fill = new SolidColorBrush(Color.FromRgb(66, 215, 125));
-            GateStateText.Text = "Gate open";
-        }
-        else
-        {
-            GateIndicator.Fill = new SolidColorBrush(Color.FromRgb(218, 80, 72));
-            GateStateText.Text = "Gate reducing noise";
-        }
-    }
-
     private double GetVisualGainForBar(int barIndex, int barCount)
     {
         var frequency = FrequencyForBar(barIndex, barCount);
@@ -2401,18 +2143,6 @@ public partial class EqualizerWindow : Window
 
     private void UpdateSignalStatus(double peakLevel)
     {
-        if (_spectrumService.IsPlayingTestClip)
-        {
-            StatusText.Text = "Looping test clip";
-            return;
-        }
-
-        if (_spectrumService.IsRecordingTestClip)
-        {
-            StatusText.Text = "Recording test clip";
-            return;
-        }
-
         if (peakLevel < 0.001d)
         {
             _silentFrameCount++;
@@ -2549,6 +2279,51 @@ public partial class EqualizerWindow : Window
 
     private void WarmRadioPresetClicked(object sender, RoutedEventArgs e)
     {
+        LoadWarmRadioPreset();
+    }
+
+    private void PodMicSm7bPresetClicked(object sender, RoutedEventArgs e)
+    {
+        const string description = "Shapes a Rode PodMic toward a smoother SM7B-style broadcast tone: fuller lows, less boxiness, controlled bite, and polished limiting.";
+
+        ApplyPreset(
+            "PodMic to SM7B",
+            description,
+            75, 4, -50, 3.5, 2, -21, 3.8, 3.5, 3, -1,
+            [-4, -3, -1.5, 1, 2.5, 2, 0.5, -1.5, -2.5, -2, -1, 0.5, 2, 2.5, 1.5, 0, -1, -1.5, -1, -1]);
+
+        Settings.InputTrimDb = 0;
+        Settings.DePopperFrequencyHz = 165;
+        Settings.DePopperThresholdDb = -30;
+        Settings.ExpanderThresholdDb = -56;
+        Settings.ExpanderRatio = 1.6;
+        Settings.ExpanderRangeDb = 10;
+        Settings.NoiseGateThresholdDb = -50;
+        Settings.NoiseGateAttackMs = 6;
+        Settings.NoiseGateHoldMs = 110;
+        Settings.NoiseGateReleaseMs = 180;
+        Settings.NoiseGateRangeDb = 24;
+        Settings.NoiseSuppressionSensitivity = 3.5;
+        Settings.EchoReducerSensitivity = 4;
+        Settings.CompressorAttackMs = 10;
+        Settings.CompressorReleaseMs = 160;
+        Settings.CompressorKneeDb = 7;
+        Settings.DeEsserFrequencyHz = 6100;
+        Settings.DeEsserThresholdDb = -36;
+        Settings.DeEsserRangeDb = 8;
+        Settings.PresenceEnhancerAmountDb = 1.7;
+        Settings.PresenceEnhancerFrequencyHz = 3400;
+        Settings.PresenceEnhancerWidthHz = 2200;
+        Settings.LimiterSoftClipDriveDb = 1.2;
+        Settings.LimiterLookaheadMs = 3;
+        Settings.LimiterReleaseMs = 75;
+
+        SetProcessingSliderDefaults(description);
+        StatusText.Text = "PodMic to SM7B preset loaded";
+    }
+
+    private void LoadWarmRadioPreset()
+    {
         ApplyPreset(
             "Warm Radio",
             "Adds body and warmth, gently tames harshness, and uses a slightly stronger compressor for a denser sound.",
@@ -2590,57 +2365,104 @@ public partial class EqualizerWindow : Window
         double[] gains)
     {
         Settings.HighPassEnabled = true;
+        Settings.InputTrimDb = 0;
         Settings.HighPassFrequencyHz = highPassFrequencyHz;
-        Settings.DePopperEnabled = dePopperAmountDb > 0;
+        Settings.DePopperEnabled = true;
         Settings.DePopperAmountDb = dePopperAmountDb;
+        Settings.DePopperFrequencyHz = 180;
+        Settings.DePopperThresholdDb = -28;
         Settings.NoiseGateEnabled = true;
         Settings.NoiseGateThresholdDb = gateThresholdDb;
-        Settings.NoiseSuppressionEnabled = noiseSuppressionAmountDb > 0;
+        Settings.NoiseGateAttackMs = 5;
+        Settings.NoiseGateHoldMs = 90;
+        Settings.NoiseGateReleaseMs = 140;
+        Settings.NoiseGateRangeDb = 28;
+        Settings.ExpanderEnabled = true;
+        Settings.ExpanderThresholdDb = Math.Min(-15, gateThresholdDb - 6);
+        Settings.ExpanderRatio = 1.8;
+        Settings.ExpanderRangeDb = 12;
+        Settings.ExpanderAttackMs = 8;
+        Settings.ExpanderHoldMs = 60;
+        Settings.ExpanderReleaseMs = 220;
+        Settings.NoiseSuppressionEnabled = true;
         Settings.NoiseSuppressionAmountDb = noiseSuppressionAmountDb;
-        Settings.EchoReducerEnabled = echoReducerAmountDb > 0;
+        Settings.NoiseSuppressionSensitivity = 4;
+        Settings.EchoReducerEnabled = true;
         Settings.EchoReducerAmountDb = echoReducerAmountDb;
+        Settings.EchoReducerSensitivity = 5;
         Settings.CompressorEnabled = true;
         Settings.CompressorThresholdDb = compressorThresholdDb;
         Settings.CompressorRatio = compressorRatio;
-        Settings.DeEsserEnabled = deEsserAmountDb > 0;
+        Settings.CompressorAttackMs = 12;
+        Settings.CompressorReleaseMs = 140;
+        Settings.CompressorKneeDb = 6;
+        Settings.DeEsserEnabled = true;
         Settings.DeEsserAmountDb = deEsserAmountDb;
+        Settings.DeEsserFrequencyHz = 5200;
+        Settings.DeEsserThresholdDb = -34;
+        Settings.DeEsserRangeDb = 9;
+        Settings.PresenceEnhancerEnabled = true;
+        Settings.PresenceEnhancerAmountDb = 2;
+        Settings.PresenceEnhancerFrequencyHz = 3000;
+        Settings.PresenceEnhancerWidthHz = 2600;
         Settings.MakeupGainDb = makeupGainDb;
         Settings.LimiterEnabled = true;
         Settings.LimiterCeilingDb = limiterCeilingDb;
+        Settings.LimiterSoftClipEnabled = true;
+        Settings.LimiterSoftClipDriveDb = 1.5;
+        Settings.LimiterLookaheadEnabled = true;
+        Settings.LimiterLookaheadMs = 3;
+        Settings.LimiterReleaseMs = 60;
 
         for (var i = 0; i < Bands.Count && i < gains.Length; i++)
         {
             Bands[i].GainDb = gains[i];
         }
 
-        SetProcessingSliderDefaults(description, highPassFrequencyHz, dePopperAmountDb, gateThresholdDb, noiseSuppressionAmountDb, echoReducerAmountDb, compressorThresholdDb, compressorRatio, deEsserAmountDb, makeupGainDb, limiterCeilingDb);
+        SetProcessingSliderDefaults(description);
         StatusText.Text = $"{name} preset loaded";
     }
 
-    private void SetProcessingSliderDefaults(
-        string description,
-        double highPassFrequencyHz,
-        double dePopperAmountDb,
-        double gateThresholdDb,
-        double noiseSuppressionAmountDb,
-        double echoReducerAmountDb,
-        double compressorThresholdDb,
-        double compressorRatio,
-        double deEsserAmountDb,
-        double makeupGainDb,
-        double limiterCeilingDb)
+    private void SetProcessingSliderDefaults(string description)
     {
         PresetDescriptionText.Text = description;
-        SetProcessingSliderDefault(HighPassSlider, highPassFrequencyHz);
-        SetProcessingSliderDefault(DePopperSlider, dePopperAmountDb);
-        SetProcessingSliderDefault(GateThresholdSlider, gateThresholdDb);
-        SetProcessingSliderDefault(NoiseSuppressionSlider, noiseSuppressionAmountDb);
-        SetProcessingSliderDefault(EchoReducerSlider, echoReducerAmountDb);
-        SetProcessingSliderDefault(CompressorThresholdSlider, compressorThresholdDb);
-        SetProcessingSliderDefault(CompressorRatioSlider, compressorRatio);
-        SetProcessingSliderDefault(DeEsserSlider, deEsserAmountDb);
-        SetProcessingSliderDefault(MakeupGainSlider, makeupGainDb);
-        SetProcessingSliderDefault(LimiterCeilingSlider, limiterCeilingDb);
+        SetProcessingSliderDefault(InputTrimSlider, Settings.InputTrimDb);
+        SetProcessingSliderDefault(HighPassSlider, Settings.HighPassFrequencyHz);
+        SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
+        SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
+        SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);
+        SetProcessingSliderDefault(GateThresholdSlider, Settings.NoiseGateThresholdDb);
+        SetProcessingSliderDefault(GateAttackSlider, Settings.NoiseGateAttackMs);
+        SetProcessingSliderDefault(GateHoldSlider, Settings.NoiseGateHoldMs);
+        SetProcessingSliderDefault(GateReleaseSlider, Settings.NoiseGateReleaseMs);
+        SetProcessingSliderDefault(GateRangeSlider, Settings.NoiseGateRangeDb);
+        SetProcessingSliderDefault(ExpanderThresholdSlider, Settings.ExpanderThresholdDb);
+        SetProcessingSliderDefault(ExpanderRatioSlider, Settings.ExpanderRatio);
+        SetProcessingSliderDefault(ExpanderRangeSlider, Settings.ExpanderRangeDb);
+        SetProcessingSliderDefault(ExpanderAttackSlider, Settings.ExpanderAttackMs);
+        SetProcessingSliderDefault(ExpanderHoldSlider, Settings.ExpanderHoldMs);
+        SetProcessingSliderDefault(ExpanderReleaseSlider, Settings.ExpanderReleaseMs);
+        SetProcessingSliderDefault(NoiseSuppressionSlider, Settings.NoiseSuppressionAmountDb);
+        SetProcessingSliderDefault(NoiseSuppressionSensitivitySlider, Settings.NoiseSuppressionSensitivity);
+        SetProcessingSliderDefault(EchoReducerSlider, Settings.EchoReducerAmountDb);
+        SetProcessingSliderDefault(EchoReducerSensitivitySlider, Settings.EchoReducerSensitivity);
+        SetProcessingSliderDefault(CompressorThresholdSlider, Settings.CompressorThresholdDb);
+        SetProcessingSliderDefault(CompressorRatioSlider, Settings.CompressorRatio);
+        SetProcessingSliderDefault(CompressorAttackSlider, Settings.CompressorAttackMs);
+        SetProcessingSliderDefault(CompressorReleaseSlider, Settings.CompressorReleaseMs);
+        SetProcessingSliderDefault(CompressorKneeSlider, Settings.CompressorKneeDb);
+        SetProcessingSliderDefault(DeEsserSlider, Settings.DeEsserAmountDb);
+        SetProcessingSliderDefault(DeEsserFrequencySlider, Settings.DeEsserFrequencyHz);
+        SetProcessingSliderDefault(DeEsserThresholdSlider, Settings.DeEsserThresholdDb);
+        SetProcessingSliderDefault(DeEsserRangeSlider, Settings.DeEsserRangeDb);
+        SetProcessingSliderDefault(PresenceEnhancerSlider, Settings.PresenceEnhancerAmountDb);
+        SetProcessingSliderDefault(PresenceFrequencySlider, Settings.PresenceEnhancerFrequencyHz);
+        SetProcessingSliderDefault(PresenceWidthSlider, Settings.PresenceEnhancerWidthHz);
+        SetProcessingSliderDefault(MakeupGainSlider, Settings.MakeupGainDb);
+        SetProcessingSliderDefault(LimiterCeilingSlider, Settings.LimiterCeilingDb);
+        SetProcessingSliderDefault(LimiterDriveSlider, Settings.LimiterSoftClipDriveDb);
+        SetProcessingSliderDefault(LimiterLookaheadSlider, Settings.LimiterLookaheadMs);
+        SetProcessingSliderDefault(LimiterReleaseSlider, Settings.LimiterReleaseMs);
     }
 
     private void SetProcessingSliderDefault(Slider slider, double value)
@@ -2680,27 +2502,6 @@ public partial class EqualizerWindow : Window
 
     private sealed record RecordingTarget(string SessionFolder, int SetNumber);
 
-    private sealed record ProcessingSnapshot(
-        string Name,
-        bool HighPassEnabled,
-        double HighPassFrequencyHz,
-        bool DePopperEnabled,
-        double DePopperAmountDb,
-        bool NoiseGateEnabled,
-        double NoiseGateThresholdDb,
-        bool NoiseSuppressionEnabled,
-        double NoiseSuppressionAmountDb,
-        bool EchoReducerEnabled,
-        double EchoReducerAmountDb,
-        bool CompressorEnabled,
-        double CompressorThresholdDb,
-        double CompressorRatio,
-        bool DeEsserEnabled,
-        double DeEsserAmountDb,
-        double MakeupGainDb,
-        bool LimiterEnabled,
-        double LimiterCeilingDb,
-        double[] BandGains);
 }
 
 

@@ -37,7 +37,7 @@
                                 Value="6"
                                 VerticalAlignment="Center" />
                         <TextBlock x:Name="StatusText"
-                                   Text="Listening while this window is active"
+                                   Text="Listening"
                                    Foreground="#B8C7D9"
                                    VerticalAlignment="Center"
                                    Margin="14,0,0,0" />

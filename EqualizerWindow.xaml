@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Window x:Class="PodcastWorkbench.EqualizerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Podcast Workbench" Height="820" Width="1400" MinHeight="680" MinWidth="1080" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#05070A" Loaded="WindowLoaded" Activated="WindowActivated" Deactivated="WindowDeactivated" Closing="WindowClosing" KeyDown="WindowKeyDown">
   <Window.Resources>
     <Style TargetType="ToolTip">
@@ -118,6 +118,14 @@
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#F8FAFC" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="DspBubble" TargetType="Border">
+      <Setter Property="Background" Value="#6618242E" />
+      <Setter Property="BorderBrush" Value="#334F5D6B" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="10" />
+      <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
     <Style TargetType="TextBox">
       <Setter Property="Background" Value="#0B1118" />
@@ -664,278 +672,365 @@
             </ItemsControl>
           </Border>
           <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14" Margin="0,64,0,0">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-              <StackPanel Margin="0,0,12,0">
-                <Border x:Name="MicAnalysisPanel" Background="#6618242E" BorderBrush="#334F5D6B" BorderThickness="1" Padding="10" Margin="0,0,0,14" Visibility="Collapsed">
-                  <StackPanel>
-                    <TextBlock Text="Mic Analysis" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock Text="Test mode" Foreground="#B8C7D9" />
-                    <ComboBox x:Name="MicAnalysisModeComboBox" SelectedIndex="0" Margin="0,2,0,8">
-                      <ComboBoxItem Content="Simultaneous" />
-                      <ComboBoxItem Content="Sequential" />
-                    </ComboBox>
-                    <CheckBox x:Name="MicAnalysisNormalizeCheckBox" Content="Normalize volume" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
-                      <CheckBox.ToolTip>
-                        <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Level-matches the louder microphone downward before drawing conclusions, so the report focuses on tone instead of gain mismatch." />
-                      </CheckBox.ToolTip>
-                    </CheckBox>
-                    <Button x:Name="StartMicAnalysisButton" Content="Start mic test" Click="StartMicAnalysisClicked" Margin="0,0,0,8">
-                      <Button.ToolTip>
-                        <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Simultaneous mode compares both raw mic channels while you speak once. Sequential mode prompts mic 1 first, then mic 2, and compares the two passes after level matching." />
-                      </Button.ToolTip>
-                    </Button>
-                    <TextBlock x:Name="MicAnalysisStatusText" Text="Use Mic Compare, then start a test and speak normally." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <Border Height="14" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,0,0,8">
-                      <Grid>
-                        <Rectangle x:Name="MicAnalysisProgressMeter" Fill="#00BEE6" HorizontalAlignment="Left" Width="0" />
-                      </Grid>
-                    </Border>
-                    <TextBlock x:Name="MicAnalysisResultText" Text="No analysis yet." Foreground="#F8FAFC" TextWrapping="Wrap" />
-                  </StackPanel>
-                </Border>
-                <TextBlock Text="Presets" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <Button Content="Flat" Click="FlatPresetClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Reset EQ and processing to a neutral starting point." />
-                  </Button.ToolTip>
-                </Button>
-                <Button Content="Podcast Clean" Click="PodcastCleanPresetClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Reduces rumble and mud, adds clarity, and uses moderate compression." />
-                  </Button.ToolTip>
-                </Button>
-                <Button Content="Warm Radio" Click="WarmRadioPresetClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Adds body and warmth with smoother highs and medium compression." />
-                  </Button.ToolTip>
-                </Button>
-                <Button Content="Noisy Room" Click="NoisyRoomPresetClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Uses a stronger gate and low-cut to fight background noise." />
-                  </Button.ToolTip>
-                </Button>
-                <Button Content="Bright Headset" Click="BrightHeadsetPresetClicked" Margin="0,0,0,8">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Adds presence and clarity for darker headset microphones." />
-                  </Button.ToolTip>
-                </Button>
-                <TextBlock x:Name="PresetDescriptionText" Text="Choose a preset to load a starting point. Yellow ticks show that preset's home settings." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,16" />
-                <TextBlock Text="Output" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <TextBlock Text="Send to" Foreground="#B8C7D9" />
-                <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
-                <CheckBox x:Name="ProcessedOutputCheckBox" Content="Send processed mic" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <TextBlock x:Name="OutputStatusText" Text="Output off. Pick a virtual cable input when you want podcast routing." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,16" />
-                <TextBlock Text="Test Clip" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <Button x:Name="RecordClipButton" Content="Record 10 seconds" Click="RecordClipClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Records up to 10 seconds of raw microphone audio. Use the same clip to test different settings without repeating yourself." />
-                  </Button.ToolTip>
-                </Button>
-                <Button x:Name="PlayClipButton" Content="Loop test clip" Click="PlayClipClicked" IsEnabled="False" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Loops the recorded clip through the current processing so you can move controls and compare the result." />
-                  </Button.ToolTip>
-                </Button>
-                <Button Content="Return to live mic" Click="ReturnToLiveMicClicked" Margin="0,0,0,6">
-                  <Button.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Stops test playback and listens to the selected microphone again." />
-                  </Button.ToolTip>
-                </Button>
-                <Border Height="16" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,0,0,6">
-                  <Grid>
-                    <Rectangle x:Name="ClipProgressMeter" Fill="#00BEE6" HorizontalAlignment="Left" Width="0" />
-                  </Grid>
-                </Border>
-                <TextBlock x:Name="ClipStatusText" Text="No test clip recorded" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,16" />
-                <TextBlock Text="A/B Compare" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <UniformGrid Columns="2" Margin="0,0,0,6">
-                  <Button x:Name="StoreAButton" Content="Store A" Click="StoreAClicked" Margin="0,0,3,0">
-                    <Button.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Save the current EQ and processing controls into slot A." />
-                    </Button.ToolTip>
-                  </Button>
-                  <Button x:Name="StoreBButton" Content="Store B" Click="StoreBClicked" Margin="3,0,0,0">
-                    <Button.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Save the current EQ and processing controls into slot B." />
-                    </Button.ToolTip>
-                  </Button>
-                </UniformGrid>
-                <UniformGrid Columns="2" Margin="0,0,0,6">
-                  <Button x:Name="LoadAButton" Content="Hear A" Click="LoadAClicked" IsEnabled="False" Margin="0,0,3,0">
-                    <Button.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Load slot A instantly. Works especially well while the test clip is looping." />
-                    </Button.ToolTip>
-                  </Button>
-                  <Button x:Name="LoadBButton" Content="Hear B" Click="LoadBClicked" IsEnabled="False" Margin="3,0,0,0">
-                    <Button.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Load slot B instantly. Flip between A and B to judge which setting is clearer." />
-                    </Button.ToolTip>
-                  </Button>
-                </UniformGrid>
-                <TextBlock x:Name="CompareStatusText" Text="Store A and B, then flip between them while the clip loops." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,16" />
-                <TextBlock Text="Meters" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <TextBlock x:Name="InputCoachText" Text="Input: waiting for signal" Foreground="#B8C7D9" />
-                <Border Height="16" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,4,0,10">
-                  <Grid>
-                    <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" />
-                  </Grid>
-                </Border>
-                <TextBlock x:Name="GainReductionText" Text="Compressor: 0.0 dB" Foreground="#B8C7D9" />
-                <Border Height="16" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,4,0,10">
-                  <Grid>
-                    <Rectangle x:Name="GainReductionMeter" Fill="#D7B220" HorizontalAlignment="Left" Width="0" />
-                  </Grid>
-                </Border>
-                <Border Height="44" Margin="0,0,0,10">
-                  <TextBlock x:Name="CompressorStateText" Text="Compressor below threshold" Foreground="#B8C7D9" TextWrapping="Wrap" TextTrimming="CharacterEllipsis">
-                    <TextBlock.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="The compressor meter moves only when your voice rises above the threshold. Lower the threshold or raise input level to see more compression." />
-                    </TextBlock.ToolTip>
-                  </TextBlock>
-                </Border>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                  <Ellipse x:Name="GateIndicator" Width="16" Height="16" Fill="#42D77D" Stroke="#B8C7D9" StrokeThickness="1" VerticalAlignment="Center" Margin="0,0,8,0" />
-                  <TextBlock x:Name="GateStateText" Text="Gate open" Foreground="#B8C7D9" VerticalAlignment="Center" />
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+              <Border Style="{StaticResource DspBubble}" Margin="0,0,12,12">
+                <StackPanel>
+                  <TextBlock Text="Input Level" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                  <TextBlock x:Name="InputCoachText" Text="Input: waiting for signal" Foreground="#B8C7D9" />
+                  <Border Height="16" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,4,0,0">
+                    <Grid>
+                      <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" />
+                    </Grid>
+                  </Border>
                 </StackPanel>
-                <TextBlock Text="Processing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <CheckBox Content="High-pass filter" IsChecked="{Binding HighPassEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Cuts low rumble below the selected frequency. Useful for desk vibration, HVAC, handling noise, and plosives." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="HPF Hz" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=HighPassSlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="HighPassSlider" Minimum="40" Maximum="180" Value="{Binding HighPassFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Higher values remove more low end. Drag near the yellow preset tick to return home." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="De-popper" IsChecked="{Binding DePopperEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Tames low-frequency plosive bursts from P and B sounds without lowering the whole voice." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Pop reduction" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=DePopperSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="DePopperSlider" Minimum="0" Maximum="12" Value="{Binding DePopperAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="How strongly low plosive bursts are reduced. Too much can thin out close mic warmth." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="Noise gate" IsChecked="{Binding NoiseGateEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Turns down quiet background noise when you are not speaking." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Gate dB" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=GateThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="GateThresholdSlider" Minimum="-70" Maximum="-20" Value="{Binding NoiseGateThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Less negative values make the gate stricter. More negative values let quieter sound through." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Noise reduction" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=NoiseSuppressionSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="NoiseSuppressionSlider" Minimum="0" Maximum="18" Value="{Binding NoiseSuppressionAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="How much steady background noise is reduced. Too much can make quiet speech sound unnatural." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="Echo reducer" IsChecked="{Binding EchoReducerEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Reduces quiet room reflection tails after louder syllables. This is not full speaker-reference acoustic echo cancellation yet." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Echo reduction" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=EchoReducerSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="EchoReducerSlider" Minimum="0" Maximum="12" Value="{Binding EchoReducerAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="How strongly room echo tails are reduced. Too much can make sentence endings feel chopped." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="Compressor" IsChecked="{Binding CompressorEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Turns down louder moments so your voice level is more even." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Comp threshold" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=CompressorThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="CompressorThresholdSlider" Minimum="-36" Maximum="-6" Value="{Binding CompressorThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="The level where compression starts. Lower it to compress more often." />
-                  </Slider.ToolTip>
-                </Slider>
-                <Grid>
-                  <TextBlock Text="Comp ratio" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=CompressorRatioSlider, Path=Value, StringFormat={}{0:0.0}:1}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="CompressorRatioSlider" Minimum="1" Maximum="8" Value="{Binding CompressorRatio}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="How strongly loud parts are turned down after crossing the threshold." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="De-esser" IsChecked="{Binding DeEsserEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Tames sharp S, sh, and hiss energy in the sibilance band without dulling the entire voice." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Ess reduction" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=DeEsserSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="DeEsserSlider" Minimum="0" Maximum="12" Value="{Binding DeEsserAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="How strongly sharp sibilance is reduced. Too much can make speech sound lispy." />
-                  </Slider.ToolTip>
-                </Slider>
-                <CheckBox Content="Limiter" IsChecked="{Binding LimiterEnabled}" Foreground="#F8FAFC" Margin="0,0,0,6">
-                  <CheckBox.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="A final safety ceiling that catches peaks before clipping." />
-                  </CheckBox.ToolTip>
-                </CheckBox>
-                <Grid>
-                  <TextBlock Text="Makeup dB" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=MakeupGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="MakeupGainSlider" Minimum="-6" Maximum="12" Value="{Binding MakeupGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,10">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Raises or lowers the processed voice after compression." />
-                  </Slider.ToolTip>
-                </Slider>
-                <Grid>
-                  <TextBlock Text="Limiter ceiling" Foreground="#B8C7D9" />
-                  <TextBlock Text="{Binding ElementName=LimiterCeilingSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                </Grid>
-                <Slider x:Name="LimiterCeilingSlider" Minimum="-6" Maximum="0" Value="{Binding LimiterCeilingDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,16">
-                  <Slider.ToolTip>
-                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Maximum output level. Keep slightly below 0 dB to avoid clipping." />
-                  </Slider.ToolTip>
-                </Slider>
-                <TextBlock Text="What am I seeing?" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <TextBlock Text="Gray is raw mic input. Blue is processed sound after EQ and dynamics. Gold is the smoothed processed average. Yellow ticks are the current preset defaults. The yellow meter shows compressor gain reduction. The gate light shows whether quiet noise is being reduced." Foreground="#B8C7D9" TextWrapping="Wrap" />
-              </StackPanel>
-            </ScrollViewer>
+              </Border>
+              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="0,0,12,0">
+                  <Border x:Name="MicAnalysisPanel" Style="{StaticResource DspBubble}" Visibility="Collapsed">
+                    <StackPanel>
+                      <TextBlock Text="Mic Analysis" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <TextBlock Text="Test mode" Foreground="#B8C7D9" />
+                      <ComboBox x:Name="MicAnalysisModeComboBox" SelectedIndex="0" Margin="0,2,0,8">
+                        <ComboBoxItem Content="Simultaneous" />
+                        <ComboBoxItem Content="Sequential" />
+                      </ComboBox>
+                      <CheckBox x:Name="MicAnalysisNormalizeCheckBox" Content="Normalize volume" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Level-matches the louder microphone downward before drawing conclusions, so the report focuses on tone instead of gain mismatch." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Button x:Name="StartMicAnalysisButton" Content="Start mic test" Click="StartMicAnalysisClicked" Margin="0,0,0,8">
+                        <Button.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Simultaneous mode compares both raw mic channels while you speak once. Sequential mode prompts mic 1 first, then mic 2, and compares the two passes after level matching." />
+                        </Button.ToolTip>
+                      </Button>
+                      <TextBlock x:Name="MicAnalysisStatusText" Text="Use Mic Compare, then start a test and speak normally." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,8" />
+                      <Border Height="14" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,0,0,8">
+                        <Grid>
+                          <Rectangle x:Name="MicAnalysisProgressMeter" Fill="#00BEE6" HorizontalAlignment="Left" Width="0" />
+                        </Grid>
+                      </Border>
+                      <TextBlock x:Name="MicAnalysisResultText" Text="No analysis yet." Foreground="#F8FAFC" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <TextBlock Text="Presets" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <Button Content="Flat" Click="FlatPresetClicked" Margin="0,0,0,6" />
+                      <Button Content="Podcast Clean" Click="PodcastCleanPresetClicked" Margin="0,0,0,6" />
+                      <Button Content="Warm Radio" Click="WarmRadioPresetClicked" Margin="0,0,0,6" />
+                      <Button Content="PodMic to SM7B" Click="PodMicSm7bPresetClicked" Margin="0,0,0,6" />
+                      <Button Content="Noisy Room" Click="NoisyRoomPresetClicked" Margin="0,0,0,6" />
+                      <Button Content="Bright Headset" Click="BrightHeadsetPresetClicked" Margin="0,0,0,8" />
+                      <TextBlock x:Name="PresetDescriptionText" Text="Choose a preset to load a starting point. Yellow ticks show that preset's home settings." Foreground="#B8C7D9" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <TextBlock Text="Send to" Foreground="#B8C7D9" />
+                      <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
+                      <CheckBox x:Name="ProcessedOutputCheckBox" Content="Send processed mic" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Foreground="#F8FAFC" Margin="0,0,0,6">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <TextBlock x:Name="OutputStatusText" Text="Output off. Pick a virtual cable input when you want podcast routing." Foreground="#B8C7D9" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                  <TextBlock Text="Digital Signal Processing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,2,0,8" />
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <TextBlock Text="Input Trim" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Preamp" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=InputTrimSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="InputTrimSlider" Minimum="-18" Maximum="18" Value="{Binding InputTrimDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,0">
+                        <Slider.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Raises or lowers the microphone before EQ, gate, compression, and limiting." />
+                        </Slider.ToolTip>
+                      </Slider>
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="De-popper" IsChecked="{Binding DePopperEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Tames low-frequency plosive bursts from P and B sounds without lowering the whole voice." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Pop reduction" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DePopperSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DePopperSlider" Minimum="0" Maximum="12" Value="{Binding DePopperAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                      <Grid Margin="0,8,0,0">
+                        <TextBlock Text="Frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DePopperFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DePopperFrequencySlider" Minimum="80" Maximum="320" Value="{Binding DePopperFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Threshold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DePopperThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DePopperThresholdSlider" Minimum="-48" Maximum="-12" Value="{Binding DePopperThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="High-pass filter" IsChecked="{Binding HighPassEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Cuts low rumble below the selected frequency. Useful for desk vibration, HVAC, handling noise, and plosives." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="HPF Hz" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=HighPassSlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="HighPassSlider" Minimum="40" Maximum="180" Value="{Binding HighPassFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Noise reduction" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NoiseSuppressionSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NoiseSuppressionSlider" Minimum="0" Maximum="18" Value="{Binding NoiseSuppressionAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                      <Grid Margin="0,8,0,0">
+                        <TextBlock Text="Sensitivity" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NoiseSuppressionSensitivitySlider, Path=Value, StringFormat={}{0:0.0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NoiseSuppressionSensitivitySlider" Minimum="1" Maximum="10" Value="{Binding NoiseSuppressionSensitivity}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Expander" IsChecked="{Binding ExpanderEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently lowers room tone below the threshold. It is smoother than a noise gate and helps avoid chopped sentence endings." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Threshold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderThresholdSlider" Minimum="-70" Maximum="-15" Value="{Binding ExpanderThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Ratio" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderRatioSlider, Path=Value, StringFormat={}{0:0.0}:1}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderRatioSlider" Minimum="1" Maximum="6" Value="{Binding ExpanderRatio}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Range" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderRangeSlider, Path=Value, StringFormat={}{0:0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderRangeSlider" Minimum="0" Maximum="48" Value="{Binding ExpanderRangeDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Attack" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderAttackSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderAttackSlider" Minimum="1" Maximum="100" Value="{Binding ExpanderAttackMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Hold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderHoldSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderHoldSlider" Minimum="0" Maximum="500" Value="{Binding ExpanderHoldMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Release" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=ExpanderReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="ExpanderReleaseSlider" Minimum="20" Maximum="1200" Value="{Binding ExpanderReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Noise gate" IsChecked="{Binding NoiseGateEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Turns down quiet background noise when you are not speaking." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Gate dB" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=GateThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="GateThresholdSlider" Minimum="-70" Maximum="-20" Value="{Binding NoiseGateThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Attack" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=GateAttackSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="GateAttackSlider" Minimum="1" Maximum="80" Value="{Binding NoiseGateAttackMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Hold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=GateHoldSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="GateHoldSlider" Minimum="0" Maximum="500" Value="{Binding NoiseGateHoldMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Release" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=GateReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="GateReleaseSlider" Minimum="20" Maximum="1000" Value="{Binding NoiseGateReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Range" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=GateRangeSlider, Path=Value, StringFormat={}{0:0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="GateRangeSlider" Minimum="6" Maximum="60" Value="{Binding NoiseGateRangeDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Echo reducer" IsChecked="{Binding EchoReducerEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Reduces quiet room reflection tails after louder syllables. This is not full speaker-reference acoustic echo cancellation yet." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Echo reduction" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=EchoReducerSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="EchoReducerSlider" Minimum="0" Maximum="12" Value="{Binding EchoReducerAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                      <Grid Margin="0,8,0,0">
+                        <TextBlock Text="Sensitivity" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=EchoReducerSensitivitySlider, Path=Value, StringFormat={}{0:0.0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="EchoReducerSensitivitySlider" Minimum="1" Maximum="10" Value="{Binding EchoReducerSensitivity}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Compressor" IsChecked="{Binding CompressorEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Threshold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=CompressorThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="CompressorThresholdSlider" Minimum="-36" Maximum="-6" Value="{Binding CompressorThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Ratio" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=CompressorRatioSlider, Path=Value, StringFormat={}{0:0.0}:1}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="CompressorRatioSlider" Minimum="1" Maximum="8" Value="{Binding CompressorRatio}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Attack" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=CompressorAttackSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="CompressorAttackSlider" Minimum="1" Maximum="100" Value="{Binding CompressorAttackMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Release" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=CompressorReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="CompressorReleaseSlider" Minimum="20" Maximum="1000" Value="{Binding CompressorReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Knee" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=CompressorKneeSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="CompressorKneeSlider" Minimum="0" Maximum="18" Value="{Binding CompressorKneeDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="De-esser" IsChecked="{Binding DeEsserEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Sensitivity" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DeEsserSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DeEsserSlider" Minimum="0" Maximum="12" Value="{Binding DeEsserAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DeEsserFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DeEsserFrequencySlider" Minimum="3500" Maximum="10000" Value="{Binding DeEsserFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Threshold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DeEsserThresholdSlider, Path=Value, StringFormat={}{0:+0;-0;0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DeEsserThresholdSlider" Minimum="-60" Maximum="-12" Value="{Binding DeEsserThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Range" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=DeEsserRangeSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="DeEsserRangeSlider" Minimum="1" Maximum="18" Value="{Binding DeEsserRangeDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Presence enhancer" IsChecked="{Binding PresenceEnhancerEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Presence amount" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=PresenceEnhancerSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="PresenceEnhancerSlider" Minimum="0" Maximum="8" Value="{Binding PresenceEnhancerAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=PresenceFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="PresenceFrequencySlider" Minimum="1500" Maximum="6500" Value="{Binding PresenceEnhancerFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Width" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=PresenceWidthSlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="PresenceWidthSlider" Minimum="800" Maximum="5000" Value="{Binding PresenceEnhancerWidthHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <TextBlock Text="Makeup Gain" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Makeup dB" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=MakeupGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="MakeupGainSlider" Minimum="-6" Maximum="12" Value="{Binding MakeupGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <CheckBox Content="Limiter" IsChecked="{Binding LimiterEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <CheckBox Content="Soft clip peaks" IsChecked="{Binding LimiterSoftClipEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Ceiling" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LimiterCeilingSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LimiterCeilingSlider" Minimum="-6" Maximum="0" Value="{Binding LimiterCeilingDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Soft clip drive" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LimiterDriveSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LimiterDriveSlider" Minimum="0" Maximum="12" Value="{Binding LimiterSoftClipDriveDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <CheckBox Content="Lookahead" IsChecked="{Binding LimiterLookaheadEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Adds a tiny delay so the limiter can catch fast peaks before they clip." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Lookahead" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LimiterLookaheadSlider, Path=Value, StringFormat={}{0:0.0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LimiterLookaheadSlider" Minimum="0" Maximum="20" Value="{Binding LimiterLookaheadMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Release" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LimiterReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LimiterReleaseSlider" Minimum="10" Maximum="500" Value="{Binding LimiterReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <TextBlock Text="What am I seeing?" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <TextBlock Text="Gray is raw mic input. Blue is processed sound after EQ and dynamics. Gold is the smoothed processed average. Yellow ticks are the current preset defaults." Foreground="#B8C7D9" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </ScrollViewer>
+            </Grid>
           </Border>
         </Grid>
       </TabItem>

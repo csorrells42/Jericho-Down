@@ -5,63 +5,23 @@ namespace PodcastWorkbench.Audio;
 public sealed class MicrophoneSpectrumService : IDisposable
 {
     private const int SampleRate = 44100;
-    private const int TestClipSeconds = 10;
-    private const int PlaybackChunkMilliseconds = 15;
-    private const int PlaybackChunkSamples = SampleRate * PlaybackChunkMilliseconds / 1000;
     private readonly SpectrumAnalyzer _processedAnalyzer = new();
     private readonly SpectrumAnalyzer _rawAnalyzer = new();
     private readonly SpectrumAnalyzer _input1Analyzer = new();
     private readonly SpectrumAnalyzer _input2Analyzer = new();
-    private readonly object _testClipLock = new();
-    private readonly List<float> _testClipSamples = [];
     private WaveInEvent? _capture;
     private VoiceSampleProcessor? _voiceProcessor;
-    private WaveOutEvent? _testClipOutput;
-    private BufferedWaveProvider? _testClipProvider;
     private WaveOutEvent? _processedOutput;
     private BufferedWaveProvider? _processedOutputProvider;
-    private Timer? _testClipTimer;
-    private VoiceSampleProcessor? _testClipProcessor;
-    private VoiceProcessorSettings? _testClipSettings;
     private InputChannelMode _inputChannelMode = InputChannelMode.MonoSum;
-    private int _testClipPlaybackIndex;
     private int _processedOutputDeviceNumber = -1;
-    private bool _isRecordingTestClip;
-    private bool _isPlayingTestClip;
     private bool _processedOutputEnabled;
 
     public event EventHandler<SpectrumFrame>? SpectrumAvailable;
-    public event EventHandler? TestClipStateChanged;
 
     public bool IsRunning => _capture is not null;
 
-    public bool IsRecordingTestClip => _isRecordingTestClip;
-
-    public bool IsPlayingTestClip => _isPlayingTestClip;
-
     public bool IsProcessedOutputEnabled => _processedOutputEnabled;
-
-    public bool HasTestClip
-    {
-        get
-        {
-            lock (_testClipLock)
-            {
-                return _testClipSamples.Count > 0;
-            }
-        }
-    }
-
-    public double TestClipDurationSeconds
-    {
-        get
-        {
-            lock (_testClipLock)
-            {
-                return _testClipSamples.Count / (double)SampleRate;
-            }
-        }
-    }
 
     public static IReadOnlyList<AudioInputDevice> GetInputDevices()
     {
@@ -134,87 +94,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
         StartProcessedOutput();
     }
 
-    public void BeginTestClipRecording()
-    {
-        StopTestClipPlayback();
-        lock (_testClipLock)
-        {
-            _testClipSamples.Clear();
-            _isRecordingTestClip = true;
-        }
-
-        TestClipStateChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void StopTestClipRecording()
-    {
-        if (!_isRecordingTestClip)
-        {
-            return;
-        }
-
-        _isRecordingTestClip = false;
-        TestClipStateChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void StartTestClipPlayback(VoiceProcessorSettings settings)
-    {
-        float[] clip;
-        lock (_testClipLock)
-        {
-            if (_testClipSamples.Count == 0)
-            {
-                return;
-            }
-
-            clip = [.. _testClipSamples];
-        }
-
-        Stop();
-        StopTestClipRecording();
-        StopTestClipPlayback();
-
-        _testClipSettings = settings;
-        _testClipProcessor = new VoiceSampleProcessor(settings);
-        _testClipProvider = new BufferedWaveProvider(new WaveFormat(SampleRate, 16, 1))
-        {
-            BufferDuration = TimeSpan.FromMilliseconds(250),
-            DiscardOnBufferOverflow = true
-        };
-        _testClipOutput = new WaveOutEvent
-        {
-            DeviceNumber = _processedOutputDeviceNumber
-        };
-        _testClipOutput.Init(_testClipProvider);
-        _testClipOutput.Play();
-        _testClipPlaybackIndex = 0;
-        _isPlayingTestClip = true;
-        _testClipTimer = new Timer(_ => FeedTestClipPlayback(clip), null, TimeSpan.Zero, TimeSpan.FromMilliseconds(PlaybackChunkMilliseconds));
-        TestClipStateChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void StopTestClipPlayback()
-    {
-        _testClipTimer?.Dispose();
-        _testClipTimer = null;
-        _testClipOutput?.Stop();
-        _testClipOutput?.Dispose();
-        _testClipOutput = null;
-        _testClipProvider = null;
-        _testClipProcessor = null;
-        _testClipSettings = null;
-        _testClipPlaybackIndex = 0;
-
-        if (_isPlayingTestClip)
-        {
-            _isPlayingTestClip = false;
-            TestClipStateChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
     public void Dispose()
     {
-        StopTestClipPlayback();
         StopProcessedOutput();
         Stop();
         ReleaseCapture();
@@ -234,8 +115,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             return;
         }
-
-        CaptureTestClipSamples(samples);
 
         var analyzerSamples = _voiceProcessor?.Process(samples) ?? samples;
         AddProcessedOutputSamples(analyzerSamples);
@@ -293,44 +172,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             DeviceNumber = deviceNumber,
             WaveFormat = new WaveFormat(SampleRate, 16, channelCount),
-            BufferMilliseconds = 15
+            BufferMilliseconds = 25
         };
         capture.DataAvailable += CaptureDataAvailable;
         capture.RecordingStopped += CaptureRecordingStopped;
         return capture;
-    }
-
-    private void CaptureTestClipSamples(float[] samples)
-    {
-        if (!_isRecordingTestClip)
-        {
-            return;
-        }
-
-        var changed = false;
-        lock (_testClipLock)
-        {
-            var remainingSamples = TestClipSeconds * SampleRate - _testClipSamples.Count;
-            if (remainingSamples <= 0)
-            {
-                _isRecordingTestClip = false;
-                changed = true;
-            }
-            else
-            {
-                _testClipSamples.AddRange(samples.Take(remainingSamples));
-                changed = true;
-                if (_testClipSamples.Count >= TestClipSeconds * SampleRate)
-                {
-                    _isRecordingTestClip = false;
-                }
-            }
-        }
-
-        if (changed)
-        {
-            TestClipStateChanged?.Invoke(this, EventArgs.Empty);
-        }
     }
 
     private void StartProcessedOutput()
@@ -342,13 +188,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         _processedOutputProvider = new BufferedWaveProvider(new WaveFormat(SampleRate, 16, 1))
         {
-            BufferDuration = TimeSpan.FromMilliseconds(180),
+            BufferDuration = TimeSpan.FromMilliseconds(320),
             DiscardOnBufferOverflow = true
         };
         _processedOutput = new WaveOutEvent
         {
             DeviceNumber = _processedOutputDeviceNumber,
-            DesiredLatency = 80
+            DesiredLatency = 120
         };
         _processedOutput.Init(_processedOutputProvider);
         _processedOutput.Play();
@@ -369,53 +215,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (_processedOutputProvider.BufferedDuration > TimeSpan.FromMilliseconds(140))
-        {
-            _processedOutputProvider.ClearBuffer();
-        }
-
         var bytes = ConvertFloatSamplesToPcm16(samples);
         _processedOutputProvider.AddSamples(bytes, 0, bytes.Length);
-    }
-
-    private void FeedTestClipPlayback(float[] clip)
-    {
-        if (!_isPlayingTestClip || _testClipProvider is null || _testClipProcessor is null)
-        {
-            return;
-        }
-
-        if (_testClipPlaybackIndex >= clip.Length)
-        {
-            _testClipPlaybackIndex = 0;
-            _testClipProcessor = _testClipSettings is null ? null : new VoiceSampleProcessor(_testClipSettings);
-        }
-
-        var count = Math.Min(PlaybackChunkSamples, clip.Length - _testClipPlaybackIndex);
-        if (count <= 0)
-        {
-            return;
-        }
-
-        var rawSamples = new float[count];
-        Array.Copy(clip, _testClipPlaybackIndex, rawSamples, 0, count);
-        _testClipPlaybackIndex += count;
-
-        var processedSamples = _testClipProcessor?.Process(rawSamples) ?? rawSamples;
-        _testClipProvider.AddSamples(ConvertFloatSamplesToPcm16(processedSamples), 0, processedSamples.Length * sizeof(short));
-
-        var rawFrame = _rawAnalyzer.AddSamples(rawSamples);
-        var processedFrame = _processedAnalyzer.AddSamples(processedSamples);
-        SpectrumAvailable?.Invoke(
-            this,
-            new SpectrumFrame(
-                processedFrame.Magnitudes,
-                rawFrame.Magnitudes,
-                processedSamples,
-                rawSamples,
-                processedFrame.PeakLevel,
-                rawFrame.PeakLevel,
-                _testClipProcessor?.Telemetry ?? new VoiceProcessingTelemetry()));
     }
 
     private static byte[] ConvertFloatSamplesToPcm16(ReadOnlySpan<float> samples)

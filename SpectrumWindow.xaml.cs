@@ -63,8 +63,10 @@ public partial class SpectrumWindow : Window
 
     private void WindowDeactivated(object? sender, EventArgs e)
     {
-        _spectrumService.Stop();
-        StatusText.Text = "Paused because the spectrum window is not active";
+        if (_spectrumService.IsRunning)
+        {
+            StatusText.Text = "Listening";
+        }
     }
 
     private void WindowClosing(object? sender, CancelEventArgs e)
@@ -96,7 +98,7 @@ public partial class SpectrumWindow : Window
 
     private void StartListening()
     {
-        if (_selectedDevice is null || !IsActive)
+        if (_selectedDevice is null)
         {
             return;
         }
@@ -104,7 +106,7 @@ public partial class SpectrumWindow : Window
         try
         {
             _spectrumService.Start(_selectedDevice.DeviceNumber);
-            StatusText.Text = "Listening while this window is active";
+            StatusText.Text = "Listening";
         }
         catch (Exception ex)
         {
@@ -280,7 +282,7 @@ public partial class SpectrumWindow : Window
         }
         else if (_selectedDevice is not null)
         {
-            StatusText.Text = "Listening while this window is active";
+            StatusText.Text = "Listening";
         }
     }
 }
