@@ -1,8 +1,8 @@
-using System.Configuration;
+﻿using System.Configuration;
 using System.Data;
 using System.Windows;
 
-namespace VoiceWorkbench;
+namespace PodcastWorkbench;
 
 /// <summary>
 /// Interaction logic for App.xaml
@@ -10,5 +10,6 @@ namespace VoiceWorkbench;
 public partial class App : Application
 {
 }
+
 
 

@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed class VoiceSampleProcessor
 {
@@ -272,4 +272,5 @@ public sealed class VoiceSampleProcessor
         return 20d * Math.Log10(Math.Max(0.0000001d, linear));
     }
 }
+
 

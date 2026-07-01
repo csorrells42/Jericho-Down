@@ -1,6 +1,6 @@
-using System.IO;
+﻿using System.IO;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public static class FfmpegLocator
 {
@@ -30,3 +30,4 @@ public static class FfmpegLocator
         }
     }
 }
+

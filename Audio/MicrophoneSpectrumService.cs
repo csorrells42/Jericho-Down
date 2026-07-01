@@ -1,6 +1,6 @@
-using NAudio.Wave;
+﻿using NAudio.Wave;
 
-namespace VoiceWorkbench.Audio;
+namespace PodcastWorkbench.Audio;
 
 public sealed class MicrophoneSpectrumService : IDisposable
 {
@@ -564,4 +564,5 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _voiceProcessor = null;
     }
 }
+
 

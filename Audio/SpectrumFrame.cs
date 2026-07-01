@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed class SpectrumFrame
 {
@@ -65,4 +65,5 @@ public sealed class SpectrumFrame
 
     public bool HasStereoInput => Input1Magnitudes.Length > 0 && Input2Magnitudes.Length > 0;
 }
+
 

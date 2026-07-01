@@ -1,7 +1,7 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace VoiceWorkbench.Audio;
+namespace PodcastWorkbench.Audio;
 
 public sealed class EqualizerBand : INotifyPropertyChanged
 {
@@ -34,4 +34,5 @@ public sealed class EqualizerBand : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 }
+
 

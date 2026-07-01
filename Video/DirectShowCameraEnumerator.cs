@@ -1,7 +1,7 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public static class DirectShowCameraEnumerator
 {
@@ -133,3 +133,4 @@ public static class DirectShowCameraEnumerator
             [MarshalAs(UnmanagedType.Struct)] ref object value);
     }
 }
+

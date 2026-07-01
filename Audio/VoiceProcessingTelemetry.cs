@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed class VoiceProcessingTelemetry
 {
@@ -14,3 +14,4 @@ public sealed class VoiceProcessingTelemetry
 
     public double GateOpenness { get; set; } = 1;
 }
+

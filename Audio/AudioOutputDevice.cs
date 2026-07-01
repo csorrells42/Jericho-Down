@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed record AudioOutputDevice(int DeviceNumber, string Name)
 {
@@ -7,3 +7,4 @@ public sealed record AudioOutputDevice(int DeviceNumber, string Name)
         return Name;
     }
 }
+

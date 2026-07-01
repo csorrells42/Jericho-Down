@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed class SpectrumAnalyzer
 {
@@ -135,4 +135,5 @@ public sealed class SpectrumAnalyzer
         return reversed;
     }
 }
+
 

@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public enum InputChannelMode
 {
@@ -6,4 +6,5 @@ public enum InputChannelMode
     Input1Left,
     Input2Right
 }
+
 

@@ -1,8 +1,8 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public sealed class FfmpegCameraModeService
 {
@@ -275,3 +275,4 @@ public sealed class FfmpegCameraModeService
         }
     }
 }
+

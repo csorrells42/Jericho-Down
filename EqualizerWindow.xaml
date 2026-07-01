@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Window x:Class="VoiceWorkbench.EqualizerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Podcast Workbench" Height="820" Width="1400" MinHeight="680" MinWidth="1080" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#05070A" Loaded="WindowLoaded" Activated="WindowActivated" Deactivated="WindowDeactivated" Closing="WindowClosing" KeyDown="WindowKeyDown">
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Window x:Class="PodcastWorkbench.EqualizerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Podcast Workbench" Height="820" Width="1400" MinHeight="680" MinWidth="1080" WindowStartupLocation="CenterScreen" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#05070A" Loaded="WindowLoaded" Activated="WindowActivated" Deactivated="WindowDeactivated" Closing="WindowClosing" KeyDown="WindowKeyDown">
   <Window.Resources>
     <Style TargetType="ToolTip">
       <Setter Property="MaxWidth" Value="360" />

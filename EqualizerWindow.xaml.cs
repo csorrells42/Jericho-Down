@@ -15,10 +15,10 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using VoiceWorkbench.Audio;
-using VoiceWorkbench.Video;
+using PodcastWorkbench.Audio;
+using PodcastWorkbench.Video;
 
-namespace VoiceWorkbench;
+namespace PodcastWorkbench;
 
 public partial class EqualizerWindow : Window
 {
@@ -2702,4 +2702,5 @@ public partial class EqualizerWindow : Window
         double LimiterCeilingDb,
         double[] BandGains);
 }
+
 

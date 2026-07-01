@@ -1,7 +1,7 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace VoiceWorkbench.Audio;
+namespace PodcastWorkbench.Audio;
 
 public sealed class VoiceProcessorSettings : INotifyPropertyChanged
 {
@@ -145,4 +145,5 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+
 

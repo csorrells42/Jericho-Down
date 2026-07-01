@@ -1,9 +1,9 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows.Media.Imaging;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public sealed class FfmpegCameraPreviewService : IDisposable
 {
@@ -354,3 +354,4 @@ public sealed class FfmpegCameraPreviewService : IDisposable
         }
     }
 }
+

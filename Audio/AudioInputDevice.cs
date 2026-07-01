@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Audio;
+﻿namespace PodcastWorkbench.Audio;
 
 public sealed class AudioInputDevice
 {
@@ -14,4 +14,5 @@ public sealed class AudioInputDevice
 
     public override string ToString() => Name;
 }
+
 

@@ -1,7 +1,7 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public sealed class DirectShowCameraControlService
 {
@@ -317,3 +317,4 @@ public sealed class DirectShowCameraControlService
         int Get(int property, out int value, out int flags);
     }
 }
+

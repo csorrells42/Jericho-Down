@@ -1,8 +1,8 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
-namespace VoiceWorkbench.Video;
+namespace PodcastWorkbench.Video;
 
 public sealed class CameraPreviewHost : HwndHost
 {
@@ -143,3 +143,4 @@ public sealed class CameraPreviewHost : HwndHost
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 }
+

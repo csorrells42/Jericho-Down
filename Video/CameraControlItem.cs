@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Video;
+﻿namespace PodcastWorkbench.Video;
 
 public sealed class CameraControlItem
 {
@@ -46,3 +46,4 @@ public sealed class CameraControlItem
 
     public bool SupportsAuto { get; }
 }
+

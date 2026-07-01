@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Video;
+﻿namespace PodcastWorkbench.Video;
 
 public sealed class CameraDevice
 {
@@ -17,3 +17,4 @@ public sealed class CameraDevice
 
     public override string ToString() => Name;
 }
+

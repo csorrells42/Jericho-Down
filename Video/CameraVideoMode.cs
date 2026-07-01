@@ -1,4 +1,4 @@
-namespace VoiceWorkbench.Video;
+﻿namespace PodcastWorkbench.Video;
 
 public sealed class CameraVideoMode
 {
@@ -34,3 +34,4 @@ public sealed class CameraVideoMode
 
     public override string ToString() => Label;
 }
+

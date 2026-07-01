@@ -1,4 +1,4 @@
-<Window x:Class="VoiceWorkbench.SpectrumWindow"
+﻿<Window x:Class="PodcastWorkbench.SpectrumWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Microphone Spectrum"
@@ -53,4 +53,5 @@
         </Border>
     </Grid>
 </Window>
+
 
