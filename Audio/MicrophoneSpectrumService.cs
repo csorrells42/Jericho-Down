@@ -62,6 +62,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _spectrumAnalysisVersion;
     private long _nextSpectrumAnalysisTimestamp;
     private long _lastAudioCallbackTimestamp;
+    private long _audioStreamStartedTimestamp;
     private double _audioCallbackIntervalMs;
     private double _audioExpectedCallbackIntervalMs;
     private double _audioProcessingTimeMs;
@@ -125,6 +126,61 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public bool IsRunning => _capture is not null;
 
     public bool IsProcessedOutputEnabled => IsProcessedOutputEnabledVolatile();
+
+    public bool AreAudioCallbacksStale(TimeSpan startupGrace, TimeSpan staleDuration)
+    {
+        if (_capture is null)
+        {
+            return false;
+        }
+
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var lastCallbackTimestamp = System.Threading.Volatile.Read(ref _lastAudioCallbackTimestamp);
+        if (lastCallbackTimestamp == 0)
+        {
+            var startedTimestamp = System.Threading.Volatile.Read(ref _audioStreamStartedTimestamp);
+            return startedTimestamp != 0 && ElapsedSince(startedTimestamp, now) > startupGrace;
+        }
+
+        return ElapsedSince(lastCallbackTimestamp, now) > staleDuration;
+    }
+
+    public string ActiveInputFormatStatus
+    {
+        get
+        {
+            var capture = _capture;
+            return capture is null ? "not open" : DescribeWaveFormat(capture.WaveFormat);
+        }
+    }
+
+    public string TargetProcessedOutputFormatStatus
+    {
+        get
+        {
+            return _capture is null ? "not ready" : DescribeTargetProcessedOutputFormat();
+        }
+    }
+
+    public string ActualProcessedOutputFormatStatus
+    {
+        get
+        {
+            var provider = _processedOutputProvider;
+            return IsProcessedOutputEnabledVolatile() && provider is not null
+                ? DescribeWaveFormat(provider.WaveFormat)
+                : "not routed";
+        }
+    }
+
+    public bool IsProcessedOutputFormatConstrained
+    {
+        get
+        {
+            var provider = _processedOutputProvider;
+            return IsProcessedOutputEnabledVolatile() && provider is not null && !IsTargetProcessedOutputFormat(provider.WaveFormat);
+        }
+    }
 
     public string ProcessedOutputFormatStatus
     {
@@ -322,6 +378,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         System.Threading.Volatile.Write(ref _nextSpectrumAnalysisTimestamp, 0);
         ResetAudioStabilityCounters();
         _voiceProcessor = processorSettings is null ? null : new VoiceSampleProcessor(processorSettings, _activeSampleRate);
+        System.Threading.Volatile.Write(ref _audioStreamStartedTimestamp, System.Diagnostics.Stopwatch.GetTimestamp());
         _capture = capture;
         if (IsProcessedOutputEnabledVolatile())
         {
@@ -349,7 +406,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             {
             }
 
-            ReleaseCapture();
+            ReleaseCapture(capture);
         }
         finally
         {
@@ -398,13 +455,40 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     public void RestartCurrentCapture()
     {
-        if (_currentProcessorSettings is null && _capture is null)
+        RestartCurrentCapture(TimeSpan.FromSeconds(2));
+    }
+
+    public void RestartCurrentCapture(TimeSpan stopTimeout)
+    {
+        RestartCapture(_currentDeviceNumber, _currentProcessorSettings, _currentInputChannelMode, stopTimeout);
+    }
+
+    public void RestartCapture(int deviceNumber, VoiceProcessorSettings? processorSettings, InputChannelMode inputChannelMode, TimeSpan stopTimeout)
+    {
+        var stopTask = Task.Run(Stop);
+        var stoppedCleanly = stopTask.Wait(stopTimeout);
+        if (!stoppedCleanly)
         {
-            return;
+            AbandonCurrentCaptureForDriverReset();
+            StreamStatusChanged?.Invoke(this, "Audio driver is still releasing the old stream; opening a fresh stream.");
         }
 
-        Stop();
-        Start(_currentDeviceNumber, _currentProcessorSettings, _currentInputChannelMode);
+        Exception? lastException = null;
+        for (var attempt = 1; attempt <= MaximumCaptureRecoveryAttempts + 2; attempt++)
+        {
+            try
+            {
+                Start(deviceNumber, processorSettings, inputChannelMode);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                Thread.Sleep(TimeSpan.FromMilliseconds(200 * attempt));
+            }
+        }
+
+        throw lastException ?? new InvalidOperationException("Could not reopen microphone capture.");
     }
 
     private void CaptureDataAvailable(object? sender, WaveInEventArgs e)
@@ -1152,9 +1236,22 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private static string DescribeWaveFormat(WaveFormat format)
     {
-        var encoding = format.Encoding == WaveFormatEncoding.IeeeFloat ? "float" : "PCM";
-        var bitsPerSample = format.Encoding == WaveFormatEncoding.IeeeFloat ? 32 : format.BitsPerSample;
+        var isFloat = IsFloatCaptureFormat(format);
+        var encoding = isFloat ? "float" : "PCM";
+        var bitsPerSample = isFloat ? 32 : format.BitsPerSample;
         return $"{format.SampleRate / 1000d:0.#} kHz, {format.Channels} ch, {bitsPerSample}-bit {encoding}";
+    }
+
+    private string DescribeTargetProcessedOutputFormat()
+    {
+        return $"{_activeSampleRate / 1000d:0.#} kHz, 2 ch, 32-bit float";
+    }
+
+    private bool IsTargetProcessedOutputFormat(WaveFormat format)
+    {
+        return format.SampleRate == _activeSampleRate
+            && format.Channels == 2
+            && IsFloatCaptureFormat(format);
     }
 
     private int ConvertFloatSamplesToStereoFloat32(ReadOnlySpan<float> samples)
@@ -1312,6 +1409,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private void ResetAudioStabilityCounters()
     {
         _lastAudioCallbackTimestamp = 0;
+        _audioStreamStartedTimestamp = 0;
         _audioCallbackIntervalMs = 0;
         _audioExpectedCallbackIntervalMs = 0;
         _audioProcessingTimeMs = 0;
@@ -1320,6 +1418,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _audioLateFrameCount = 0;
         _audioBufferResetCount = 0;
         _spectrumSkippedFrameCount = 0;
+    }
+
+    private static TimeSpan ElapsedSince(long startTimestamp, long endTimestamp)
+    {
+        var elapsedSeconds = Math.Max(0d, (endTimestamp - startTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+        return TimeSpan.FromSeconds(elapsedSeconds);
     }
 
     private ReadOnlySpan<float> ConvertToMonoSamples(ReadOnlySpan<byte> buffer, WaveFormat format, InputChannelMode channelMode)
@@ -1685,8 +1789,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private void CaptureRecordingStopped(object? sender, StoppedEventArgs e)
     {
-        var shouldRecover = _autoRecoverCapture && !_isStoppingCapture && !_isDisposing;
-        ReleaseCapture();
+        var stoppedCapture = sender as IWaveIn;
+        var shouldRecover = (stoppedCapture is null || ReferenceEquals(_capture, stoppedCapture))
+            && _autoRecoverCapture
+            && !_isStoppingCapture
+            && !_isDisposing;
+        ReleaseCapture(stoppedCapture);
         if (shouldRecover)
         {
             BeginCaptureRecovery(e.Exception);
@@ -1737,9 +1845,34 @@ public sealed class MicrophoneSpectrumService : IDisposable
         });
     }
 
-    private void ReleaseCapture()
+    private void AbandonCurrentCaptureForDriverReset()
     {
         var capture = _capture;
+        if (capture is null)
+        {
+            return;
+        }
+
+        try
+        {
+            DetachCaptureEvents(capture);
+        }
+        catch
+        {
+        }
+
+        if (ReferenceEquals(_capture, capture))
+        {
+            _capture = null;
+            _voiceProcessor = null;
+            System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
+            RestoreRuntimeMode();
+        }
+    }
+
+    private void ReleaseCapture(IWaveIn? capture = null)
+    {
+        capture ??= _capture;
         if (capture is null)
         {
             RestoreRuntimeMode();
@@ -1769,11 +1902,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
             if (ReferenceEquals(_capture, capture))
             {
                 _capture = null;
+                _voiceProcessor = null;
+                System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
+                RestoreRuntimeMode();
             }
-
-            _voiceProcessor = null;
-            System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
-            RestoreRuntimeMode();
         }
     }
 

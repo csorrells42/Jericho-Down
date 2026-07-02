@@ -149,6 +149,9 @@ public partial class EqualizerWindow : Window
     private AudioOutputDevice? _selectedOutputDevice;
     private AudioDeviceFormat? _selectedDeviceFormat;
     private bool _isRestartingAudioStream;
+    private bool _isCheckingAudioDeviceFormat;
+    private bool _isClosing;
+    private int _audioStreamOperationVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
@@ -362,6 +365,7 @@ public partial class EqualizerWindow : Window
 
         LoadWarmRadioPreset();
         _audioDeviceFormatTimer.Start();
+        UpdateAudioFormatRouteText();
     }
 
     private void ApplyDarkTitleBar()
@@ -413,6 +417,8 @@ public partial class EqualizerWindow : Window
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
+        _isClosing = true;
+        _audioStreamOperationVersion++;
         CompositionTarget.Rendering -= CompositionTargetRendering;
         _audioDeviceFormatTimer.Stop();
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
@@ -1420,23 +1426,28 @@ public partial class EqualizerWindow : Window
         _isSnappingProcessingSlider = false;
     }
 
-    private void MicrophoneSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void MicrophoneSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
-        _selectedDeviceFormat = GetSelectedDeviceFormat();
-        _spectrumService.Stop();
-        StartSelectedDevice();
+        var selectedDevice = _selectedDevice;
+        var selectedDeviceFormat = await GetDeviceFormatAsync(selectedDevice);
+        if (!Equals(_selectedDevice, selectedDevice))
+        {
+            return;
+        }
+
+        _selectedDeviceFormat = selectedDeviceFormat;
+        await RestartSelectedAudioStreamAsync("Listening");
     }
 
-    private void InputChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void InputChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (InputChannelComboBox.SelectedItem is InputChannelOption option)
         {
             _selectedInputChannelMode = option.Mode;
         }
 
-        _spectrumService.Stop();
-        StartSelectedDevice();
+        await RestartSelectedAudioStreamAsync("Listening");
     }
 
     private void OutputDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1454,6 +1465,7 @@ public partial class EqualizerWindow : Window
     {
         if (_selectedOutputDevice is null || ProcessedOutputCheckBox is null || OutputStatusText is null)
         {
+            UpdateAudioFormatRouteText();
             return;
         }
 
@@ -1469,11 +1481,13 @@ public partial class EqualizerWindow : Window
             OutputStatusText.Text = enabled
                 ? $"Sending DSP processed mic to selected output: {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
                 : "Output off. Pick a virtual cable input when you want podcast routing.";
+            UpdateAudioFormatRouteText();
         }
         catch (Exception ex)
         {
             ProcessedOutputCheckBox.IsChecked = false;
             OutputStatusText.Text = $"Output unavailable: {ex.Message}";
+            UpdateAudioFormatRouteText();
         }
     }
 
@@ -1493,10 +1507,51 @@ public partial class EqualizerWindow : Window
             : $"{_spectrumService.ProcessedOutputFormatStatus} High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
     }
 
+    private void UpdateAudioFormatRouteText()
+    {
+        if (AudioFormatRouteText is null)
+        {
+            return;
+        }
+
+        var inputFormat = _selectedDeviceFormat ?? GetSelectedDeviceFormat();
+        var receiving = _spectrumService.IsRunning
+            ? _spectrumService.ActiveInputFormatStatus
+            : inputFormat?.ToString() ?? "not open";
+        var targetOutput = _spectrumService.IsRunning
+            ? _spectrumService.TargetProcessedOutputFormatStatus
+            : BuildTargetOutputFormatStatus(inputFormat);
+        var routed = ProcessedOutputCheckBox?.IsChecked == true && _spectrumService.IsProcessedOutputEnabled;
+        var constrained = routed && _spectrumService.IsProcessedOutputFormatConstrained;
+        var text = $"Receiving: {receiving} | Trying output: {targetOutput}";
+
+        if (routed)
+        {
+            text += constrained
+                ? $" -> Actual: {_spectrumService.ActualProcessedOutputFormatStatus}"
+                : " (opened)";
+        }
+        else
+        {
+            text += " (routing off)";
+        }
+
+        AudioFormatRouteText.Text = text;
+        AudioFormatRouteText.Foreground = constrained ? _meterWarnBrush : _meterTextMutedBrush;
+    }
+
+    private static string BuildTargetOutputFormatStatus(AudioDeviceFormat? inputFormat)
+    {
+        return inputFormat is null
+            ? "not ready"
+            : $"{inputFormat.Value.SampleRate / 1000d:0.#} kHz, 2 ch, 32-bit float";
+    }
+
     private void StartSelectedDevice()
     {
-        if (_selectedDevice is null)
+        if (_selectedDevice is null || _isRestartingAudioStream)
         {
+            UpdateAudioFormatRouteText();
             return;
         }
 
@@ -1505,10 +1560,12 @@ public partial class EqualizerWindow : Window
             _spectrumService.Start(_selectedDevice.DeviceNumber, Settings, _selectedInputChannelMode);
             StatusText.Text = "Listening";
             _selectedDeviceFormat ??= GetSelectedDeviceFormat();
+            UpdateAudioFormatRouteText();
         }
         catch (Exception ex)
         {
             StatusText.Text = $"Mic unavailable: {ex.Message}";
+            UpdateAudioFormatRouteText();
         }
     }
 
@@ -1521,36 +1578,70 @@ public partial class EqualizerWindow : Window
             {
                 _selectedDeviceFormat = GetSelectedDeviceFormat();
             }
+
+            UpdateAudioFormatRouteText();
         });
     }
 
-    private void AudioDeviceFormatTimerTick(object? sender, EventArgs e)
+    private async void AudioDeviceFormatTimerTick(object? sender, EventArgs e)
     {
-        if (_selectedDevice is null || _isRestartingAudioStream)
+        var selectedDevice = _selectedDevice;
+        if (selectedDevice is null || _isRestartingAudioStream || _isCheckingAudioDeviceFormat || _isClosing)
+        {
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
+        if (!_spectrumService.IsRunning)
+        {
+            await RestartSelectedAudioStreamAsync("Audio stream stopped; reopened mic stream.");
+            return;
+        }
+
+        if (_spectrumService.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)))
+        {
+            await RestartSelectedAudioStreamAsync("Audio callback stopped; reopened mic stream.");
+            return;
+        }
+
+        _isCheckingAudioDeviceFormat = true;
+        AudioDeviceFormat? currentFormat;
+        try
+        {
+            currentFormat = await GetDeviceFormatAsync(selectedDevice);
+        }
+        finally
+        {
+            _isCheckingAudioDeviceFormat = false;
+        }
+
+        if (_isClosing || !Equals(_selectedDevice, selectedDevice))
         {
             return;
         }
 
-        var currentFormat = GetSelectedDeviceFormat();
         if (currentFormat is null)
         {
+            UpdateAudioFormatRouteText();
             return;
         }
 
         if (_selectedDeviceFormat is null)
         {
             _selectedDeviceFormat = currentFormat;
+            UpdateAudioFormatRouteText();
             return;
         }
 
         if (currentFormat.Value == _selectedDeviceFormat.Value)
         {
+            UpdateAudioFormatRouteText();
             return;
         }
 
         var previousFormat = _selectedDeviceFormat.Value;
         _selectedDeviceFormat = currentFormat;
-        RestartSelectedAudioStream($"Audio device changed from {previousFormat} to {currentFormat.Value}; reopened mic stream.");
+        await RestartSelectedAudioStreamAsync($"Audio device changed from {previousFormat} to {currentFormat.Value}; reopened mic stream.");
     }
 
     private AudioDeviceFormat? GetSelectedDeviceFormat()
@@ -1560,26 +1651,57 @@ public partial class EqualizerWindow : Window
             : MicrophoneSpectrumService.TryGetInputDeviceFormat(_selectedDevice);
     }
 
-    private void RestartSelectedAudioStream(string statusMessage)
+    private static Task<AudioDeviceFormat?> GetDeviceFormatAsync(AudioInputDevice? device)
     {
-        if (_selectedDevice is null)
+        return device is null
+            ? Task.FromResult<AudioDeviceFormat?>(null)
+            : Task.Run(() => MicrophoneSpectrumService.TryGetInputDeviceFormat(device));
+    }
+
+    private async Task RestartSelectedAudioStreamAsync(string statusMessage)
+    {
+        var selectedDevice = _selectedDevice;
+        if (selectedDevice is null || _isClosing)
         {
             return;
         }
 
+        var operationVersion = ++_audioStreamOperationVersion;
+        var inputChannelMode = _selectedInputChannelMode;
         _isRestartingAudioStream = true;
+        StatusText.Text = "Reopening audio stream...";
+        UpdateAudioFormatRouteText();
         try
         {
-            _spectrumService.RestartCurrentCapture();
+            await Task.Run(() =>
+            {
+                _spectrumService.RestartCapture(selectedDevice.DeviceNumber, Settings, inputChannelMode, TimeSpan.FromMilliseconds(850));
+            });
+            if (_isClosing || operationVersion != _audioStreamOperationVersion || !Equals(_selectedDevice, selectedDevice))
+            {
+                return;
+            }
+
             StatusText.Text = statusMessage;
+            _selectedDeviceFormat ??= await GetDeviceFormatAsync(selectedDevice);
+            UpdateAudioFormatRouteText();
         }
         catch (Exception ex)
         {
+            if (_isClosing || operationVersion != _audioStreamOperationVersion)
+            {
+                return;
+            }
+
             StatusText.Text = $"Audio stream refresh failed: {ex.Message}";
+            UpdateAudioFormatRouteText();
         }
         finally
         {
-            _isRestartingAudioStream = false;
+            if (operationVersion == _audioStreamOperationVersion)
+            {
+                _isRestartingAudioStream = false;
+            }
         }
     }
 
