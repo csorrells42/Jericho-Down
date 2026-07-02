@@ -16,15 +16,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int CaptureBufferMilliseconds = 8;
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
     private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(25).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
-    private const int WasapiProcessedOutputLatencyMilliseconds = 35;
-    private const int WaveOutProcessedOutputLatencyMilliseconds = 65;
+    private const int WasapiProcessedOutputLatencyMilliseconds = 50;
+    private const int WaveOutProcessedOutputLatencyMilliseconds = 90;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
-    private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(120);
-    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(30);
-    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(60);
+    private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(55);
+    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(55);
+    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(140);
     private const double ProcessedOutputRecoveryRampMilliseconds = 6d;
     private const int MaximumCaptureRecoveryAttempts = 3;
     [ThreadStatic]
@@ -794,17 +795,15 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         _processedOutputSampleRate = _activeSampleRate;
-        var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
-        if (TryStartWasapiProcessedOutput(floatProvider, out var floatOutput, out var floatPlaybackProvider))
+        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
+        if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
         {
-            _processedOutputProvider = floatProvider;
-            _processedOutputPlaybackProvider = floatPlaybackProvider;
-            _processedOutput = floatOutput;
+            _processedOutputProvider = pcmProvider;
+            _processedOutput = pcmWaveOut;
             ArmProcessedOutputRecoveryRamp();
             return;
         }
 
-        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
         if (TryStartWasapiProcessedOutput(pcmProvider, out var pcmWasapiOutput, out var pcmPlaybackProvider))
         {
             _processedOutputProvider = pcmProvider;
@@ -814,6 +813,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
+        var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
         if (TryStartWaveOutProcessedOutput(floatProvider, out var floatWaveOut))
         {
             _processedOutputProvider = floatProvider;
@@ -822,10 +822,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
+        if (TryStartWasapiProcessedOutput(floatProvider, out var floatOutput, out var floatPlaybackProvider))
         {
-            _processedOutputProvider = pcmProvider;
-            _processedOutput = pcmWaveOut;
+            _processedOutputProvider = floatProvider;
+            _processedOutputPlaybackProvider = floatPlaybackProvider;
+            _processedOutput = floatOutput;
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -841,12 +842,29 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private static BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)
     {
-        return new BufferedWaveProvider(waveFormat)
+        var provider = new BufferedWaveProvider(waveFormat)
         {
             BufferDuration = ProcessedOutputBufferDuration,
             DiscardOnBufferOverflow = true,
             ReadFully = true
         };
+        PrimeProcessedOutputProvider(provider);
+        return provider;
+    }
+
+    private static void PrimeProcessedOutputProvider(BufferedWaveProvider provider)
+    {
+        var byteCount = DurationToAlignedByteCount(InitialLiveOutputBufferedDuration, provider.WaveFormat);
+        var silence = ArrayPool<byte>.Shared.Rent(byteCount);
+        try
+        {
+            Array.Clear(silence, 0, byteCount);
+            provider.AddSamples(silence, 0, byteCount);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(silence);
+        }
     }
 
     private bool TryStartWasapiProcessedOutput(IWaveProvider provider, out IWavePlayer? player, out IWaveProvider? playbackProvider)
@@ -1108,7 +1126,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        ArmProcessedOutputRecoveryRamp();
     }
 
     private static int DurationToAlignedByteCount(TimeSpan duration, WaveFormat waveFormat)
