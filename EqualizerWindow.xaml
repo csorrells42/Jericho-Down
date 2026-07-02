@@ -999,7 +999,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border x:Name="BandChrome" Width="44" HorizontalAlignment="Center" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="6" Padding="3" Margin="1">
+                    <Border x:Name="BandChrome" Width="44" HorizontalAlignment="Center" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="6" Padding="3" Margin="1" MouseEnter="EqBandMouseEnter" MouseLeave="EqBandMouseLeave">
                       <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                           <GradientStop Color="#202D36" Offset="0" />

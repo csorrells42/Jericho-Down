@@ -31,6 +31,7 @@ public partial class EqualizerWindow : Window
     private const int DwmwaTextColor = 36;
     private const double MinimumDisplayFrequency = 40d;
     private const double MaximumDisplayFrequency = 20000d;
+    private const double EqualizerHoverQ = 1.35d;
     private const int DefaultWaveformSampleRate = 44100;
     private const int MaximumWaveformHistorySeconds = 3;
     private const double MicAnalysisDurationSeconds = 8d;
@@ -55,6 +56,7 @@ public partial class EqualizerWindow : Window
             && (property.PropertyType == typeof(double) || property.PropertyType == typeof(bool)))
         .OrderBy(property => property.Name)
         .ToArray();
+    private static readonly double EqualizerHoverHalfPowerRatio = CalculateEqualizerHoverHalfPowerRatio();
     private readonly MicrophoneSpectrumService _spectrumService = new();
     private readonly FfmpegCameraPreviewService _cameraPreviewService = new();
     private readonly FfmpegCameraModeService _cameraModeService = new();
@@ -105,6 +107,16 @@ public partial class EqualizerWindow : Window
         StrokeThickness = 2,
         Opacity = 0.95,
         StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly Rectangle _equalizerHoverRegion = new()
+    {
+        Fill = new SolidColorBrush(Color.FromArgb(58, 0, 190, 230)),
+        Stroke = new SolidColorBrush(Color.FromArgb(170, 53, 232, 216)),
+        StrokeThickness = 1,
+        RadiusX = 3,
+        RadiusY = 3,
+        Visibility = Visibility.Collapsed,
+        IsHitTestVisible = false
     };
     private readonly ShapePath _rawWaveTrace = new()
     {
@@ -193,6 +205,7 @@ public partial class EqualizerWindow : Window
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
     private Waveform3DWindow? _waveform3DWindow;
+    private EqualizerBand? _hoveredEqualizerBand;
     private bool _showWaveform;
     private bool _showWaveform3D;
     private bool _showMicCompare;
@@ -251,6 +264,7 @@ public partial class EqualizerWindow : Window
         }
 
         SyncEqualizerSettings();
+        SpectrumCanvas.Children.Add(_equalizerHoverRegion);
         SpectrumCanvas.Children.Add(_input1Trace);
         SpectrumCanvas.Children.Add(_input2Trace);
         SpectrumCanvas.Children.Add(_averageTrace);
@@ -1376,6 +1390,7 @@ public partial class EqualizerWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         UpdateGraphViewButtonStates();
+        UpdateEqualizerHoverRegion();
     }
 
     private void UpdateGraphViewButtonStates()
@@ -1414,6 +1429,25 @@ public partial class EqualizerWindow : Window
         if (sender is Slider slider)
         {
             slider.ToolTip = "0 dB is the yellow center mark. Drag near it to snap back to flat.";
+        }
+    }
+
+    private void EqBandMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: EqualizerBand band })
+        {
+            _hoveredEqualizerBand = band;
+            UpdateEqualizerHoverRegion();
+        }
+    }
+
+    private void EqBandMouseLeave(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: EqualizerBand band }
+            && ReferenceEquals(_hoveredEqualizerBand, band))
+        {
+            _hoveredEqualizerBand = null;
+            UpdateEqualizerHoverRegion();
         }
     }
 
@@ -2139,6 +2173,7 @@ public partial class EqualizerWindow : Window
 
         EnsureVoiceZones(width, graphTop, graphBottom);
         EnsureGraphGrid(width, graphTop, graphBottom);
+        UpdateEqualizerHoverRegion(width, graphTop, graphBottom);
 
         var livePoints = new PointCollection();
         var rawPoints = new PointCollection();
@@ -2867,6 +2902,58 @@ public partial class EqualizerWindow : Window
             Canvas.SetLeft(_zoneLabels[i], left + Math.Max(2d, (zoneWidth - labelWidth) / 2d));
             Canvas.SetTop(_zoneLabels[i], graphTop + 8d);
         }
+    }
+
+    private void UpdateEqualizerHoverRegion()
+    {
+        var width = Math.Max(1d, SpectrumCanvas.ActualWidth);
+        var height = Math.Max(1d, SpectrumCanvas.ActualHeight);
+        var topInset = 86d;
+        var bottomInset = GetAnalyzerBottomInset();
+        var graphTop = topInset;
+        var graphBottom = graphTop + Math.Max(1d, height - topInset - bottomInset);
+        UpdateEqualizerHoverRegion(width, graphTop, graphBottom);
+    }
+
+    private void UpdateEqualizerHoverRegion(double width, double graphTop, double graphBottom)
+    {
+        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D || _showMicCompare)
+        {
+            _equalizerHoverRegion.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var (startFrequency, endFrequency) = GetEqualizerBandDisplayRange(_hoveredEqualizerBand);
+        var left = FrequencyToX(startFrequency, width);
+        var right = FrequencyToX(endFrequency, width);
+        if (right <= left)
+        {
+            var center = FrequencyToX(_hoveredEqualizerBand.CenterFrequencyHz, width);
+            left = Math.Max(0d, center - 4d);
+            right = Math.Min(width, center + 4d);
+        }
+
+        _equalizerHoverRegion.Width = Math.Max(2d, right - left);
+        _equalizerHoverRegion.Height = Math.Max(1d, graphBottom - graphTop);
+        Canvas.SetLeft(_equalizerHoverRegion, Math.Clamp(left, 0d, width));
+        Canvas.SetTop(_equalizerHoverRegion, graphTop);
+        _equalizerHoverRegion.Visibility = Visibility.Visible;
+    }
+
+    private static (double StartFrequency, double EndFrequency) GetEqualizerBandDisplayRange(EqualizerBand band)
+    {
+        var start = band.CenterFrequencyHz / EqualizerHoverHalfPowerRatio;
+        var end = band.CenterFrequencyHz * EqualizerHoverHalfPowerRatio;
+        return (
+            Math.Clamp(start, MinimumDisplayFrequency, MaximumDisplayFrequency),
+            Math.Clamp(end, MinimumDisplayFrequency, MaximumDisplayFrequency));
+    }
+
+    private static double CalculateEqualizerHoverHalfPowerRatio()
+    {
+        var qTerm = Math.Sqrt(4d * EqualizerHoverQ * EqualizerHoverQ + 1d);
+        var bandwidthOctaves = Math.Log2((qTerm + 1d) / (qTerm - 1d));
+        return Math.Pow(2d, bandwidthOctaves / 2d);
     }
 
     private static double FrequencyToX(double frequency, double width)
