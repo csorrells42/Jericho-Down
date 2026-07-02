@@ -6,6 +6,7 @@ namespace PodcastWorkbench.Audio;
 public sealed class EqualizerBand : INotifyPropertyChanged
 {
     private double _gainDb;
+    private bool _isEnabled = true;
 
     public EqualizerBand(string label, double centerFrequencyHz)
     {
@@ -16,6 +17,24 @@ public sealed class EqualizerBand : INotifyPropertyChanged
     public string Label { get; }
 
     public double CenterFrequencyHz { get; }
+
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set
+        {
+            if (_isEnabled == value)
+            {
+                return;
+            }
+
+            _isEnabled = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DisplayValue));
+            OnPropertyChanged(nameof(IsBoost));
+            OnPropertyChanged(nameof(IsCut));
+        }
+    }
 
     public double GainDb
     {
@@ -28,11 +47,25 @@ public sealed class EqualizerBand : INotifyPropertyChanged
             }
 
             _gainDb = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GainDb)));
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DisplayValue));
+            OnPropertyChanged(nameof(IsBoost));
+            OnPropertyChanged(nameof(IsCut));
         }
     }
 
+    public bool IsBoost => IsEnabled && GainDb > 0.05d;
+
+    public bool IsCut => IsEnabled && GainDb < -0.05d;
+
+    public string DisplayValue => IsEnabled ? $"{GainDb:+0;-0;0}" : "OFF";
+
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 

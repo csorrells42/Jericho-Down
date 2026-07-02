@@ -2,7 +2,9 @@ using System.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
@@ -36,6 +38,23 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly string UserPresetFolder = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PodcastWorkbench",
+        "Presets");
+    private static readonly JsonSerializerOptions UserPresetJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+    private static readonly PropertyInfo[] UserPresetSettingProperties = typeof(VoiceProcessorSettings)
+        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+        .Where(property =>
+            property.CanRead
+            && property.CanWrite
+            && (property.PropertyType == typeof(double) || property.PropertyType == typeof(bool)))
+        .OrderBy(property => property.Name)
+        .ToArray();
     private readonly MicrophoneSpectrumService _spectrumService = new();
     private readonly FfmpegCameraPreviewService _cameraPreviewService = new();
     private readonly FfmpegCameraModeService _cameraModeService = new();
@@ -294,11 +313,13 @@ public partial class EqualizerWindow : Window
 
     public ObservableCollection<EqualizerBand> Bands { get; }
 
+    public ObservableCollection<string> UserPresetNames { get; } = [];
+
     public VoiceProcessorSettings Settings { get; } = new();
 
     private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(EqualizerBand.GainDb))
+        if (e.PropertyName is nameof(EqualizerBand.GainDb) or nameof(EqualizerBand.IsEnabled))
         {
             SyncEqualizerSettings();
         }
@@ -309,7 +330,7 @@ public partial class EqualizerWindow : Window
         var gains = new double[Bands.Count];
         for (var i = 0; i < Bands.Count; i++)
         {
-            gains[i] = Bands[i].GainDb;
+            gains[i] = Bands[i].IsEnabled ? Bands[i].GainDb : 0d;
         }
 
         Settings.SetEqualizerGains(gains);
@@ -340,6 +361,8 @@ public partial class EqualizerWindow : Window
         var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
         OutputDeviceComboBox.ItemsSource = outputDevices;
         OutputDeviceComboBox.SelectedIndex = 0;
+        UserPresetComboBox.ItemsSource = UserPresetNames;
+        LoadUserPresetList();
 
         var cameras = DirectShowCameraEnumerator.GetVideoInputDevices();
         CameraComboBox.ItemsSource = cameras;
@@ -2134,10 +2157,11 @@ public partial class EqualizerWindow : Window
         EnsureRenderBuffers(frame.Magnitudes.Length, frame.RawMagnitudes.Length);
         EnsureInputRenderBuffers(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
 
+        var analyzerSmoothingCoefficient = GetAnalyzerSmoothingCoefficient();
         for (var i = 0; i < frame.Magnitudes.Length; i++)
         {
             var shaped = NormalizeForDisplay(ShapeMagnitude(frame.Magnitudes[i]));
-            _renderedMagnitudes[i] = Ease(_renderedMagnitudes[i], shaped, 0.105d);
+            _renderedMagnitudes[i] = Ease(_renderedMagnitudes[i], shaped, analyzerSmoothingCoefficient);
 
             var x = frame.Magnitudes.Length == 1
                 ? 0d
@@ -2148,7 +2172,7 @@ public partial class EqualizerWindow : Window
         for (var i = 0; i < frame.RawMagnitudes.Length; i++)
         {
             var rawShaped = NormalizeForDisplay(ShapeMagnitude(frame.RawMagnitudes[i]));
-            _renderedRawMagnitudes[i] = Ease(_renderedRawMagnitudes[i], rawShaped, 0.105d);
+            _renderedRawMagnitudes[i] = Ease(_renderedRawMagnitudes[i], rawShaped, analyzerSmoothingCoefficient);
             var x = frame.RawMagnitudes.Length == 1
                 ? 0d
                 : i / (double)(frame.RawMagnitudes.Length - 1) * width;
@@ -2162,8 +2186,8 @@ public partial class EqualizerWindow : Window
             {
                 var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input1Magnitudes[i]) + _micAnalysisInput1DisplayOffset, 0d, 1d));
                 var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input2Magnitudes[i]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
-                _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, 0.09d);
-                _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, 0.09d);
+                _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, analyzerSmoothingCoefficient);
+                _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, analyzerSmoothingCoefficient);
 
                 var x = compareLength == 1
                     ? 0d
@@ -2187,6 +2211,12 @@ public partial class EqualizerWindow : Window
         UpdateAudioStability(frame);
         UpdateInputCoach(frame.RawPeakLevel);
         UpdateSignalStatus(frame.PeakLevel);
+    }
+
+    private double GetAnalyzerSmoothingCoefficient()
+    {
+        var smoothingPercent = AnalyzerSmoothingSlider?.Value ?? 80d;
+        return Math.Clamp(0.36d - smoothingPercent * 0.0031d, 0.05d, 0.36d);
     }
 
     private void RenderWaveform(SpectrumFrame frame)
@@ -2975,12 +3005,288 @@ public partial class EqualizerWindow : Window
 
         for (var i = 0; i < Bands.Count && i < gains.Length; i++)
         {
+            Bands[i].IsEnabled = true;
             Bands[i].GainDb = gains[i];
+        }
+
+        for (var i = gains.Length; i < Bands.Count; i++)
+        {
+            Bands[i].IsEnabled = true;
+            Bands[i].GainDb = 0;
         }
 
         SyncEqualizerSettings();
         SetProcessingSliderDefaults(description);
         StatusText.Text = $"{name} preset loaded";
+    }
+
+    private void UserPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (UserPresetComboBox.SelectedItem is string name && !string.IsNullOrWhiteSpace(name))
+        {
+            UserPresetNameTextBox.Text = name;
+        }
+    }
+
+    private void SaveUserPresetClicked(object sender, RoutedEventArgs e)
+    {
+        var name = UserPresetNameTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            StatusText.Text = "Type a preset name before saving.";
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(UserPresetFolder);
+            var preset = CaptureUserPreset(name);
+            var json = JsonSerializer.Serialize(preset, UserPresetJsonOptions);
+            File.WriteAllText(GetUserPresetPath(name), json);
+            LoadUserPresetList();
+            UserPresetComboBox.SelectedItem = UserPresetNames.FirstOrDefault(candidate =>
+                candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+            StatusText.Text = $"User preset saved: {name}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not save preset: {ex.Message}";
+        }
+    }
+
+    private void LoadUserPresetClicked(object sender, RoutedEventArgs e)
+    {
+        var name = GetUserPresetNameFromEntry();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            StatusText.Text = "Choose a user preset to load.";
+            return;
+        }
+
+        try
+        {
+            var preset = LoadUserPreset(name);
+            if (preset is null)
+            {
+                StatusText.Text = $"User preset not found: {name}";
+                return;
+            }
+
+            ApplyUserPreset(preset);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not load preset: {ex.Message}";
+        }
+    }
+
+    private void DeleteUserPresetClicked(object sender, RoutedEventArgs e)
+    {
+        var name = GetUserPresetNameFromEntry();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            StatusText.Text = "Choose a user preset to delete.";
+            return;
+        }
+
+        try
+        {
+            var path = GetUserPresetPath(name);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            LoadUserPresetList();
+            UserPresetComboBox.SelectedIndex = UserPresetNames.Count > 0 ? 0 : -1;
+            StatusText.Text = $"User preset deleted: {name}";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not delete preset: {ex.Message}";
+        }
+    }
+
+    private void LoadUserPresetList()
+    {
+        UserPresetNames.Clear();
+
+        try
+        {
+            Directory.CreateDirectory(UserPresetFolder);
+            foreach (var path in Directory.EnumerateFiles(UserPresetFolder, "*.json").OrderBy(path => path))
+            {
+                var name = ReadUserPresetName(path);
+                if (!string.IsNullOrWhiteSpace(name)
+                    && !UserPresetNames.Any(existing => existing.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    UserPresetNames.Add(name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not read user presets: {ex.Message}";
+        }
+    }
+
+    private UserVoicePreset CaptureUserPreset(string name)
+    {
+        var preset = new UserVoicePreset
+        {
+            Name = name,
+            Description = string.IsNullOrWhiteSpace(PresetDescriptionText.Text)
+                ? $"User preset: {name}"
+                : PresetDescriptionText.Text,
+            AnalyzerSmoothing = AnalyzerSmoothingSlider.Value,
+            Bands = Bands
+                .Select(band => new UserEqualizerBandPreset
+                {
+                    Label = band.Label,
+                    FrequencyHz = band.CenterFrequencyHz,
+                    GainDb = band.GainDb,
+                    IsEnabled = band.IsEnabled
+                })
+                .ToList()
+        };
+
+        foreach (var property in UserPresetSettingProperties)
+        {
+            if (property.PropertyType == typeof(double))
+            {
+                var value = (double)(property.GetValue(Settings) ?? 0d);
+                if (double.IsFinite(value))
+                {
+                    preset.NumberSettings[property.Name] = value;
+                }
+            }
+            else if (property.PropertyType == typeof(bool))
+            {
+                preset.BooleanSettings[property.Name] = (bool)(property.GetValue(Settings) ?? false);
+            }
+        }
+
+        return preset;
+    }
+
+    private UserVoicePreset? LoadUserPreset(string name)
+    {
+        var path = GetUserPresetPath(name);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<UserVoicePreset>(json, UserPresetJsonOptions);
+    }
+
+    private void ApplyUserPreset(UserVoicePreset preset)
+    {
+        var booleanSettings = preset.BooleanSettings ?? [];
+        var numberSettings = preset.NumberSettings ?? [];
+        var bands = preset.Bands ?? [];
+
+        foreach (var setting in booleanSettings)
+        {
+            SetUserPresetSetting(setting.Key, setting.Value);
+        }
+
+        foreach (var setting in numberSettings)
+        {
+            if (double.IsFinite(setting.Value))
+            {
+                SetUserPresetSetting(setting.Key, setting.Value);
+            }
+        }
+
+        for (var i = 0; i < Bands.Count; i++)
+        {
+            if (i >= bands.Count)
+            {
+                Bands[i].IsEnabled = true;
+                Bands[i].GainDb = 0d;
+                continue;
+            }
+
+            Bands[i].IsEnabled = bands[i].IsEnabled;
+            Bands[i].GainDb = Math.Clamp(bands[i].GainDb, -12d, 12d);
+        }
+
+        if (double.IsFinite(preset.AnalyzerSmoothing))
+        {
+            AnalyzerSmoothingSlider.Value = Math.Clamp(preset.AnalyzerSmoothing, AnalyzerSmoothingSlider.Minimum, AnalyzerSmoothingSlider.Maximum);
+        }
+
+        var name = string.IsNullOrWhiteSpace(preset.Name) ? "User preset" : preset.Name.Trim();
+        UserPresetNameTextBox.Text = name;
+        UserPresetComboBox.SelectedItem = UserPresetNames.FirstOrDefault(candidate =>
+            candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+        SyncEqualizerSettings();
+        SetProcessingSliderDefaults(string.IsNullOrWhiteSpace(preset.Description)
+            ? $"User preset: {name}"
+            : preset.Description);
+        StatusText.Text = $"User preset loaded: {name}";
+    }
+
+    private void SetUserPresetSetting<T>(string name, T value)
+    {
+        var property = UserPresetSettingProperties.FirstOrDefault(candidate =>
+            candidate.Name.Equals(name, StringComparison.Ordinal)
+            && candidate.PropertyType == typeof(T));
+        property?.SetValue(Settings, value);
+    }
+
+    private string GetUserPresetNameFromEntry()
+    {
+        var typed = UserPresetNameTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(typed))
+        {
+            return typed;
+        }
+
+        return UserPresetComboBox.SelectedItem as string ?? string.Empty;
+    }
+
+    private static string ReadUserPresetName(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            var preset = JsonSerializer.Deserialize<UserVoicePreset>(json, UserPresetJsonOptions);
+            if (!string.IsNullOrWhiteSpace(preset?.Name))
+            {
+                return preset.Name.Trim();
+            }
+        }
+        catch
+        {
+            // Bad user preset files are ignored so the preset picker can still load.
+        }
+
+        return System.IO.Path.GetFileNameWithoutExtension(path);
+    }
+
+    private static string GetUserPresetPath(string name)
+    {
+        return System.IO.Path.Combine(UserPresetFolder, $"{SanitizePresetFileName(name)}.json");
+    }
+
+    private static string SanitizePresetFileName(string name)
+    {
+        var invalidCharacters = System.IO.Path.GetInvalidFileNameChars();
+        var sanitized = new string(name
+            .Trim()
+            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+            .ToArray());
+
+        sanitized = sanitized.Trim();
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return "Preset";
+        }
+
+        return sanitized.Length <= 80 ? sanitized : sanitized[..80].Trim();
     }
 
     private void SetProcessingSliderDefaults(string description)
@@ -3049,6 +3355,34 @@ public partial class EqualizerWindow : Window
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 340
         };
+    }
+
+    private sealed class UserVoicePreset
+    {
+        public int Version { get; set; } = 1;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string Description { get; set; } = string.Empty;
+
+        public double AnalyzerSmoothing { get; set; } = 80d;
+
+        public List<UserEqualizerBandPreset> Bands { get; set; } = [];
+
+        public Dictionary<string, double> NumberSettings { get; set; } = [];
+
+        public Dictionary<string, bool> BooleanSettings { get; set; } = [];
+    }
+
+    private sealed class UserEqualizerBandPreset
+    {
+        public string Label { get; set; } = string.Empty;
+
+        public double FrequencyHz { get; set; }
+
+        public double GainDb { get; set; }
+
+        public bool IsEnabled { get; set; } = true;
     }
 
     private sealed record VoiceZone(string Name, double StartFrequencyHz, double EndFrequencyHz, string Description);

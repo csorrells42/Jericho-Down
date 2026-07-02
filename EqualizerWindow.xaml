@@ -119,6 +119,82 @@
       <Setter Property="Foreground" Value="#F8FAFC" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
+    <Style x:Key="ProcessedOutputToggle" TargetType="ToggleButton">
+      <Setter Property="Content" Value="SEND PROCESSED MIC" />
+      <Setter Property="Background" Value="#7F1D1D" />
+      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="BorderBrush" Value="#EF4444" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Margin="{TemplateBinding Padding}" RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#FCA5A5" />
+                <Setter TargetName="Chrome" Property="Background" Value="#991B1B" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="#450A0A" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="#0F766E" />
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#5EEAD4" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Chrome" Property="Background" Value="#111820" />
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#26323D" />
+                <Setter Property="Foreground" Value="#64748B" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsChecked" Value="True">
+          <Setter Property="Content" Value="PROCESSED MIC LIVE" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="BandEnableSwitch" TargetType="ToggleButton">
+      <Setter Property="Width" Value="34" />
+      <Setter Property="Height" Value="16" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Background" Value="#0F766E" />
+      <Setter Property="BorderBrush" Value="#5EEAD4" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Grid Width="{TemplateBinding Width}" Height="{TemplateBinding Height}" SnapsToDevicePixels="True">
+              <Border x:Name="SwitchTrack" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" />
+              <Ellipse x:Name="SwitchThumb" Width="10" Height="10" Fill="#F8FAFC" HorizontalAlignment="Right" Margin="3" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="False">
+                <Setter TargetName="SwitchTrack" Property="Background" Value="#991B1B" />
+                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#F87171" />
+                <Setter TargetName="SwitchThumb" Property="HorizontalAlignment" Value="Left" />
+                <Setter TargetName="SwitchThumb" Property="Fill" Value="#FEE2E2" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#E2E8F0" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="DspBubble" TargetType="Border">
       <Setter Property="Background" Value="#6618242E" />
       <Setter Property="BorderBrush" Value="#334F5D6B" />
@@ -626,6 +702,15 @@
                     </CheckBox.ToolTip>
                   </CheckBox>
                 </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                  <TextBlock Text="Smooth" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
+                  <Slider x:Name="AnalyzerSmoothingSlider" Width="90" Minimum="0" Maximum="100" Value="80" TickFrequency="10" VerticalAlignment="Center">
+                    <Slider.ToolTip>
+                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Controls how much the spectrum analyzer display is smoothed. Lower values react faster; higher values look calmer." />
+                    </Slider.ToolTip>
+                  </Slider>
+                  <TextBlock Text="{Binding ElementName=AnalyzerSmoothingSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="38" VerticalAlignment="Center" Margin="6,0,0,0" />
+                </StackPanel>
               </StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
             </Grid>
@@ -640,15 +725,21 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Background="#99111820" BorderBrush="#334F5D6B" BorderThickness="1" Padding="3" Margin="1">
+                    <Border x:Name="BandChrome" Width="44" HorizontalAlignment="Center" Background="#99111820" BorderBrush="#334F5D6B" BorderThickness="1" Padding="3" Margin="1">
                       <Grid Height="210">
                         <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto" />
                           <RowDefinition Height="Auto" />
                           <RowDefinition Height="*" />
                           <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="{Binding Label}" Foreground="#B8C7D9" FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,3" />
-                        <Slider Grid.Row="1" Loaded="EqSliderLoaded" ValueChanged="EqSliderValueChanged" Minimum="-12" Maximum="12" Value="{Binding GainDb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Orientation="Vertical" TickFrequency="3" IsSnapToTickEnabled="False">
+                        <ToggleButton x:Name="BandSwitch" Grid.Row="0" Style="{StaticResource BandEnableSwitch}" IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,3">
+                          <ToggleButton.ToolTip>
+                            <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Bypasses this EQ band without losing the gain setting." />
+                          </ToggleButton.ToolTip>
+                        </ToggleButton>
+                        <TextBlock Grid.Row="1" Text="{Binding Label}" Foreground="#B8C7D9" FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,3" />
+                        <Slider Grid.Row="2" Loaded="EqSliderLoaded" ValueChanged="EqSliderValueChanged" Minimum="-12" Maximum="12" Value="{Binding GainDb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Orientation="Vertical" TickFrequency="3" IsSnapToTickEnabled="False">
                           <Slider.Template>
                             <ControlTemplate TargetType="Slider">
                               <Grid>
@@ -668,7 +759,7 @@
                             </ControlTemplate>
                           </Slider.Template>
                         </Slider>
-                        <TextBlock Grid.Row="2" Text="{Binding GainDb, StringFormat={}{0:+0;-0;0}}" Foreground="#F8FAFC" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                        <TextBlock x:Name="BandValueText" Grid.Row="3" Text="{Binding DisplayValue}" Foreground="#F8FAFC" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,4,0,0" />
                       </Grid>
                     </Border>
                   </DataTemplate>
@@ -677,7 +768,7 @@
               <TextBlock x:Name="AudioFormatRouteText" Text="Receiving: not open | Trying output: not ready" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="4,8,4,0" />
             </StackPanel>
           </Border>
-          <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14">
+          <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14,0,14,14">
             <Grid>
               <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -741,6 +832,19 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <TextBlock Text="Send to" Foreground="#B8C7D9" />
+                      <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
+                      <ToggleButton x:Name="ProcessedOutputCheckBox" Style="{StaticResource ProcessedOutputToggle}" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Margin="0,2,0,8">
+                        <ToggleButton.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
+                        </ToggleButton.ToolTip>
+                      </ToggleButton>
+                      <TextBlock x:Name="OutputStatusText" Text="Output off. Pick a virtual cable input when you want podcast routing." Foreground="#B8C7D9" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <TextBlock Text="Presets" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                       <Button Content="Flat" Click="FlatPresetClicked" Margin="0,0,0,6" />
                       <Button Content="Podcast Clean" Click="PodcastCleanPresetClicked" Margin="0,0,0,6" />
@@ -748,20 +852,20 @@
                       <Button Content="PodMic to SM7B" Click="PodMicSm7bPresetClicked" Margin="0,0,0,6" />
                       <Button Content="Noisy Room" Click="NoisyRoomPresetClicked" Margin="0,0,0,6" />
                       <Button Content="Bright Headset" Click="BrightHeadsetPresetClicked" Margin="0,0,0,8" />
+                      <TextBlock Text="User presets" Foreground="#B8C7D9" Margin="0,4,0,2" />
+                      <TextBox x:Name="UserPresetNameTextBox" Text="My Voice" Margin="0,0,0,6" />
+                      <ComboBox x:Name="UserPresetComboBox" SelectionChanged="UserPresetSelectionChanged" Margin="0,0,0,6" />
+                      <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Content="Save" Click="SaveUserPresetClicked" Margin="0,0,4,0" Padding="6,4" />
+                        <Button Grid.Column="1" Content="Load" Click="LoadUserPresetClicked" Margin="2,0,2,0" Padding="6,4" />
+                        <Button Grid.Column="2" Content="Delete" Click="DeleteUserPresetClicked" Margin="4,0,0,0" Padding="6,4" />
+                      </Grid>
                       <TextBlock x:Name="PresetDescriptionText" Text="Choose a preset to load a starting point. Yellow ticks show that preset's home settings." Foreground="#B8C7D9" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Border>
-                  <Border Style="{StaticResource DspBubble}">
-                    <StackPanel>
-                      <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <TextBlock Text="Send to" Foreground="#B8C7D9" />
-                      <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
-                      <CheckBox x:Name="ProcessedOutputCheckBox" Content="Send processed mic" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Foreground="#F8FAFC" Margin="0,0,0,6">
-                        <CheckBox.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
-                        </CheckBox.ToolTip>
-                      </CheckBox>
-                      <TextBlock x:Name="OutputStatusText" Text="Output off. Pick a virtual cable input when you want podcast routing." Foreground="#B8C7D9" TextWrapping="Wrap" />
                     </StackPanel>
                   </Border>
                   <TextBlock Text="Digital Signal Processing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,2,0,8" />
