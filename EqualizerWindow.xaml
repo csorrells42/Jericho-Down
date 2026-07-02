@@ -115,6 +115,105 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="PresetConsoleButton" TargetType="ToggleButton">
+      <Setter Property="Background" Value="#1F2A33" />
+      <Setter Property="Foreground" Value="#F8FAFC" />
+      <Setter Property="BorderBrush" Value="#526879" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Grid SnapsToDevicePixels="True">
+              <Border x:Name="Shadow" Background="#05070A" CornerRadius="5" Margin="0,3,0,0" Opacity="0.95" />
+              <Border x:Name="Chrome" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Margin="0,0,0,3">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#334251" Offset="0" />
+                    <GradientStop Color="#1A252E" Offset="0.5" />
+                    <GradientStop Color="#101820" Offset="1" />
+                  </LinearGradientBrush>
+                </Border.Background>
+                <Grid>
+                  <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.16" VerticalAlignment="Top" Margin="7,3,7,0" />
+                  <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Margin="{TemplateBinding Padding}" RecognizesAccessKey="True" />
+                </Grid>
+              </Border>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#7DD3FC" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Margin" Value="0,2,0,1" />
+                <Setter TargetName="Shadow" Property="Margin" Value="0,2,0,0" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Chrome" Property="Margin" Value="0,3,0,0" />
+                <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+                <Setter Property="BorderBrush" Value="#35E8D8" />
+                <Setter Property="Foreground" Value="#D7FFF9" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="#64748B" />
+                <Setter Property="BorderBrush" Value="#26323D" />
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.62" />
+                <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ConsolePushButton" TargetType="Button">
+      <Setter Property="Background" Value="#1F2A33" />
+      <Setter Property="Foreground" Value="#F8FAFC" />
+      <Setter Property="BorderBrush" Value="#526879" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="8,6" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Grid SnapsToDevicePixels="True">
+              <Border x:Name="Shadow" Background="#05070A" CornerRadius="5" Margin="0,3,0,0" Opacity="0.95" />
+              <Border x:Name="Chrome" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Margin="0,0,0,3">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#334251" Offset="0" />
+                    <GradientStop Color="#1A252E" Offset="0.5" />
+                    <GradientStop Color="#101820" Offset="1" />
+                  </LinearGradientBrush>
+                </Border.Background>
+                <Grid>
+                  <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.16" VerticalAlignment="Top" Margin="6,3,6,0" />
+                  <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Margin="{TemplateBinding Padding}" RecognizesAccessKey="True" />
+                </Grid>
+              </Border>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#7DD3FC" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Chrome" Property="Margin" Value="0,3,0,0" />
+                <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+                <Setter Property="Foreground" Value="#D7FFF9" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Foreground" Value="#64748B" />
+                <Setter Property="BorderBrush" Value="#26323D" />
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.62" />
+                <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#F8FAFC" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -298,19 +397,34 @@
       <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
     <Style TargetType="TextBox">
-      <Setter Property="Background" Value="#0B1118" />
+      <Setter Property="Background" Value="#05090C" />
       <Setter Property="Foreground" Value="#F8FAFC" />
-      <Setter Property="CaretBrush" Value="#F8FAFC" />
-      <Setter Property="BorderBrush" Value="#4F5D6B" />
+      <Setter Property="CaretBrush" Value="#9CFDF4" />
+      <Setter Property="BorderBrush" Value="#344B5C" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="7,5" />
-      <Setter Property="SelectionBrush" Value="#2563EB" />
+      <Setter Property="SelectionBrush" Value="#0F766E" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="TextBox">
-            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="2" SnapsToDevicePixels="True">
-              <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+            <Border x:Name="Chrome" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" SnapsToDevicePixels="True">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                  <GradientStop Color="#05090C" Offset="0" />
+                  <GradientStop Color="#0C1820" Offset="0.5" />
+                  <GradientStop Color="#05090C" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Grid>
+                <Rectangle Height="1" Fill="#9CFDF4" Opacity="0.18" VerticalAlignment="Bottom" Margin="7,0,7,3" />
+                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+              </Grid>
             </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#35E8D8" />
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -326,19 +440,34 @@
       </Style.Triggers>
     </Style>
     <Style TargetType="PasswordBox">
-      <Setter Property="Background" Value="#0B1118" />
+      <Setter Property="Background" Value="#05090C" />
       <Setter Property="Foreground" Value="#F8FAFC" />
-      <Setter Property="CaretBrush" Value="#F8FAFC" />
-      <Setter Property="BorderBrush" Value="#4F5D6B" />
+      <Setter Property="CaretBrush" Value="#9CFDF4" />
+      <Setter Property="BorderBrush" Value="#344B5C" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="7,5" />
-      <Setter Property="SelectionBrush" Value="#2563EB" />
+      <Setter Property="SelectionBrush" Value="#0F766E" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="PasswordBox">
-            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="2" SnapsToDevicePixels="True">
-              <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+            <Border x:Name="Chrome" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" SnapsToDevicePixels="True">
+              <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                  <GradientStop Color="#05090C" Offset="0" />
+                  <GradientStop Color="#0C1820" Offset="0.5" />
+                  <GradientStop Color="#05090C" Offset="1" />
+                </LinearGradientBrush>
+              </Border.Background>
+              <Grid>
+                <Rectangle Height="1" Fill="#9CFDF4" Opacity="0.18" VerticalAlignment="Bottom" Margin="7,0,7,3" />
+                <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+              </Grid>
             </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="#35E8D8" />
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -351,27 +480,65 @@
       </Style.Triggers>
     </Style>
     <Style TargetType="ComboBox">
-      <Setter Property="Background" Value="#0B1118" />
+      <Setter Property="Background" Value="#05090C" />
       <Setter Property="Foreground" Value="#F8FAFC" />
-      <Setter Property="BorderBrush" Value="#4F5D6B" />
+      <Setter Property="BorderBrush" Value="#344B5C" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="6,4" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ComboBox">
             <Grid>
+              <ContentControl x:Name="SelectedComboContent" Visibility="Collapsed" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
               <ToggleButton x:Name="DropDownToggle" Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="18" />
-                  </Grid.ColumnDefinitions>
-                  <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="0,0,6,0" />
-                  <TextBlock Grid.Column="1" Text="v" Foreground="#B8C7D9" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Grid>
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Grid SnapsToDevicePixels="True">
+                      <Border x:Name="Shadow" Background="#05070A" CornerRadius="5" Margin="0,3,0,0" Opacity="0.9" />
+                      <Border x:Name="Chrome" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Margin="0,0,0,3">
+                        <Border.Background>
+                          <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#334251" Offset="0" />
+                            <GradientStop Color="#17222B" Offset="0.52" />
+                            <GradientStop Color="#0B1218" Offset="1" />
+                          </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid Margin="{TemplateBinding Padding}">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="22" />
+                          </Grid.ColumnDefinitions>
+                          <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.13" VerticalAlignment="Top" Margin="0,-1,8,0" />
+                          <ContentPresenter Content="{Binding Content, ElementName=SelectedComboContent}" ContentTemplate="{Binding ContentTemplate, ElementName=SelectedComboContent}" ContentStringFormat="{Binding ContentStringFormat, ElementName=SelectedComboContent}" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="0,0,6,0" />
+                          <Border Grid.Column="1" Width="18" Height="18" Background="#0E4F4A" BorderBrush="#35E8D8" BorderThickness="1" CornerRadius="4" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Path Data="M 4 6 L 9 11 L 14 6" Stroke="#D7FFF9" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                          </Border>
+                        </Grid>
+                      </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="Chrome" Property="BorderBrush" Value="#7DD3FC" />
+                      </Trigger>
+                      <Trigger Property="IsPressed" Value="True">
+                        <Setter TargetName="Chrome" Property="Margin" Value="0,3,0,0" />
+                        <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+                      </Trigger>
+                      <Trigger Property="IsChecked" Value="True">
+                        <Setter TargetName="Chrome" Property="Margin" Value="0,3,0,0" />
+                        <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+                        <Setter TargetName="Chrome" Property="BorderBrush" Value="#35E8D8" />
+                      </Trigger>
+                      <Trigger Property="IsEnabled" Value="False">
+                        <Setter TargetName="Chrome" Property="Opacity" Value="0.62" />
+                        <Setter TargetName="Shadow" Property="Opacity" Value="0" />
+                      </Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
               </ToggleButton>
               <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" PopupAnimation="Fade">
-                <Border Background="#0B1118" BorderBrush="#4F5D6B" BorderThickness="1" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                <Border Background="#0B1118" BorderBrush="#35E8D8" BorderThickness="1" CornerRadius="5" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
                   <ScrollViewer Background="#0B1118">
                     <ItemsPresenter />
                   </ScrollViewer>
@@ -382,6 +549,9 @@
         </Setter.Value>
       </Setter>
       <Style.Triggers>
+        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+          <Setter Property="BorderBrush" Value="#35E8D8" />
+        </Trigger>
         <Trigger Property="IsEnabled" Value="False">
           <Setter Property="Background" Value="#111820" />
           <Setter Property="Foreground" Value="#64748B" />
@@ -395,11 +565,11 @@
       <Setter Property="Padding" Value="8,5" />
       <Style.Triggers>
         <Trigger Property="IsHighlighted" Value="True">
-          <Setter Property="Background" Value="#1E3A8A" />
+          <Setter Property="Background" Value="#0F766E" />
           <Setter Property="Foreground" Value="#FFFFFF" />
         </Trigger>
         <Trigger Property="IsSelected" Value="True">
-          <Setter Property="Background" Value="#1E3A8A" />
+          <Setter Property="Background" Value="#164E63" />
           <Setter Property="Foreground" Value="#FFFFFF" />
         </Trigger>
       </Style.Triggers>
@@ -745,6 +915,7 @@
         <Grid Background="#05070A">
           <Canvas x:Name="SpectrumCanvas" Background="#05070A" Margin="0,0,360,0" />
           <Canvas x:Name="WaveformCanvas" Background="#05070A" Margin="0,0,360,0" Visibility="Collapsed" />
+          <ContentControl x:Name="InlineWaveform3DHost" ClipToBounds="True" Margin="0,58,360,280" Visibility="Collapsed" />
           <Border HorizontalAlignment="Stretch" VerticalAlignment="Top" Background="#C0111820" Padding="18,12" Margin="0,0,360,0">
             <Grid>
               <Grid.ColumnDefinitions>
@@ -752,37 +923,25 @@
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <StackPanel x:Name="NormalSpectrumLegendPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                  <TextBlock Text="Processed" Foreground="#00BEE6" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
-                  <TextBlock Text="Raw" Foreground="#A7B0BC" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
-                </StackPanel>
-                <StackPanel x:Name="MicCompareLegendPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0" Visibility="Collapsed">
-                  <TextBlock Text="Mic 1" Foreground="#00BEE6" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
-                  <TextBlock Text="Mic 2" Foreground="#A7B0BC" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
-                </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                  <Button x:Name="SpectrumViewButton" Content="Spectrum" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
-                  <Button x:Name="WaveformViewButton" Content="Waveform" Click="WaveformViewClicked" Padding="10,4" Margin="0,0,6,0">
-                    <Button.ToolTip>
+                  <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" IsChecked="True" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
+                  <ToggleButton x:Name="WaveformViewButton" Style="{StaticResource PresetConsoleButton}" Content="Waveform" Click="WaveformViewClicked" Padding="10,4" Margin="0,0,6,0">
+                    <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows raw and processed microphone amplitude around the centerline." />
-                    </Button.ToolTip>
-                  </Button>
-                  <Button x:Name="Waveform3DButton" Content="3D Wave" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">
-                    <Button.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Opens a GPU-backed 3D rolling waveform window using the current processed sound." />
-                    </Button.ToolTip>
-                  </Button>
-                  <Button x:Name="MicCompareViewButton" Content="Mic Compare" Click="MicCompareViewClicked" Padding="10,4">
-                    <Button.ToolTip>
+                    </ToggleButton.ToolTip>
+                  </ToggleButton>
+                  <ToggleButton x:Name="Waveform3DButton" Style="{StaticResource PresetConsoleButton}" Content="3D Wave" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">
+                    <ToggleButton.ToolTip>
+                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows a GPU-backed 3D rolling waveform using the current processed sound." />
+                    </ToggleButton.ToolTip>
+                  </ToggleButton>
+                  <ToggleButton x:Name="MicCompareViewButton" Style="{StaticResource PresetConsoleButton}" Content="Mic Compare" Click="MicCompareViewClicked" Padding="10,4">
+                    <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows input 1 and input 2 as raw, unprocessed spectrum lines so two microphones can be compared directly." />
-                    </Button.ToolTip>
-                  </Button>
+                    </ToggleButton.ToolTip>
+                  </ToggleButton>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                <StackPanel x:Name="WaveformOptionsPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0" Visibility="Collapsed">
                   <TextBlock Text="Time" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
                   <Slider x:Name="WaveformTimeSlider" Width="110" Minimum="25" Maximum="1000" Value="120" TickFrequency="100" VerticalAlignment="Center">
                     <Slider.ToolTip>
@@ -796,7 +955,7 @@
                     </CheckBox.ToolTip>
                   </CheckBox>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                <StackPanel x:Name="AnalyzerSmoothingPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
                   <TextBlock Text="Smooth" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
                   <Slider x:Name="AnalyzerSmoothingSlider" Width="90" Minimum="0" Maximum="100" Value="80" TickFrequency="10" VerticalAlignment="Center">
                     <Slider.ToolTip>
@@ -806,7 +965,20 @@
                   <TextBlock Text="{Binding ElementName=AnalyzerSmoothingSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="38" VerticalAlignment="Center" Margin="6,0,0,0" />
                 </StackPanel>
               </StackPanel>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <StackPanel x:Name="NormalSpectrumLegendPanel" Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="Processed" Foreground="#00BEE6" VerticalAlignment="Center" />
+                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
+                  <TextBlock Text="Raw" Foreground="#A7B0BC" VerticalAlignment="Center" />
+                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
+                </StackPanel>
+                <StackPanel x:Name="MicCompareLegendPanel" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                  <TextBlock Text="Mic 1" Foreground="#00BEE6" VerticalAlignment="Center" />
+                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
+                  <TextBlock Text="Mic 2" Foreground="#A7B0BC" VerticalAlignment="Center" />
+                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
+                </StackPanel>
+              </StackPanel>
             </Grid>
           </Border>
           <Border x:Name="EqualizerFaceplate" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" BorderBrush="#445D6F7F" BorderThickness="1" CornerRadius="7" Padding="10" Margin="18,0,378,18">
@@ -916,12 +1088,21 @@
                   <StackPanel>
                     <Grid Margin="0,0,0,8">
                       <TextBlock Text="Audio Stability" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
-                      <Ellipse x:Name="AudioStabilityIndicator" Width="12" Height="12" Fill="#42D77D" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                      <Ellipse x:Name="AudioStabilityIndicator" Width="12" Height="12" Fill="#42D77D" Stroke="#D7FFF9" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center" />
                     </Grid>
                     <TextBlock x:Name="AudioStabilityText" Text="Stable: waiting for audio" Foreground="#B8C7D9" TextWrapping="Wrap" />
-                    <Border Height="12" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,6,0,0">
+                    <Border Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,7,0,0">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                          <GradientStop Color="#05090C" Offset="0" />
+                          <GradientStop Color="#0C1820" Offset="0.5" />
+                          <GradientStop Color="#05090C" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
                       <Grid>
-                        <Rectangle x:Name="AudioStabilityMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" />
+                        <Rectangle x:Name="AudioStabilityMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                        <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
+                        <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
                       </Grid>
                     </Border>
                   </StackPanel>
@@ -930,9 +1111,18 @@
                   <StackPanel>
                     <TextBlock Text="Input Level" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock x:Name="InputCoachText" Text="Input: waiting for signal" Foreground="#B8C7D9" />
-                    <Border Height="16" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,4,0,0">
+                    <Border Height="20" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,5,0,0">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                          <GradientStop Color="#05090C" Offset="0" />
+                          <GradientStop Color="#0C1820" Offset="0.5" />
+                          <GradientStop Color="#05090C" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
                       <Grid>
-                        <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" />
+                        <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                        <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
+                        <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
                       </Grid>
                     </Border>
                   </StackPanel>
@@ -977,18 +1167,18 @@
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
                         </ToggleButton.ToolTip>
                       </ToggleButton>
-                      <TextBlock x:Name="OutputStatusText" Text="Output off. Pick a virtual cable input when you want podcast routing." Foreground="#B8C7D9" TextWrapping="Wrap" />
+                      <TextBlock x:Name="OutputStatusText" Text="" Visibility="Collapsed" />
                     </StackPanel>
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
                       <TextBlock Text="Presets" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <Button Content="Flat" Click="FlatPresetClicked" Margin="0,0,0,6" />
-                      <Button Content="Podcast Clean" Click="PodcastCleanPresetClicked" Margin="0,0,0,6" />
-                      <Button Content="Warm Radio" Click="WarmRadioPresetClicked" Margin="0,0,0,6" />
-                      <Button Content="PodMic to SM7B" Click="PodMicSm7bPresetClicked" Margin="0,0,0,6" />
-                      <Button Content="Noisy Room" Click="NoisyRoomPresetClicked" Margin="0,0,0,6" />
-                      <Button Content="Bright Headset" Click="BrightHeadsetPresetClicked" Margin="0,0,0,8" />
+                      <ToggleButton x:Name="FlatPresetButton" Style="{StaticResource PresetConsoleButton}" Content="Flat" Click="FlatPresetClicked" Margin="0,0,0,6" />
+                      <ToggleButton x:Name="PodcastCleanPresetButton" Style="{StaticResource PresetConsoleButton}" Content="Podcast Clean" Click="PodcastCleanPresetClicked" Margin="0,0,0,6" />
+                      <ToggleButton x:Name="WarmRadioPresetButton" Style="{StaticResource PresetConsoleButton}" Content="Warm Radio" Click="WarmRadioPresetClicked" Margin="0,0,0,6" />
+                      <ToggleButton x:Name="PodMicSm7bPresetButton" Style="{StaticResource PresetConsoleButton}" Content="PodMic to SM7B" Click="PodMicSm7bPresetClicked" Margin="0,0,0,6" />
+                      <ToggleButton x:Name="NoisyRoomPresetButton" Style="{StaticResource PresetConsoleButton}" Content="Noisy Room" Click="NoisyRoomPresetClicked" Margin="0,0,0,6" />
+                      <ToggleButton x:Name="BrightHeadsetPresetButton" Style="{StaticResource PresetConsoleButton}" Content="Bright Headset" Click="BrightHeadsetPresetClicked" Margin="0,0,0,8" />
                       <TextBlock Text="User presets" Foreground="#B8C7D9" Margin="0,4,0,2" />
                       <TextBox x:Name="UserPresetNameTextBox" Text="My Voice" Margin="0,0,0,6" />
                       <ComboBox x:Name="UserPresetComboBox" SelectionChanged="UserPresetSelectionChanged" Margin="0,0,0,6" />
@@ -998,9 +1188,9 @@
                           <ColumnDefinition Width="*" />
                           <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button Content="Save" Click="SaveUserPresetClicked" Margin="0,0,4,0" Padding="6,4" />
-                        <Button Grid.Column="1" Content="Load" Click="LoadUserPresetClicked" Margin="2,0,2,0" Padding="6,4" />
-                        <Button Grid.Column="2" Content="Delete" Click="DeleteUserPresetClicked" Margin="4,0,0,0" Padding="6,4" />
+                        <Button Style="{StaticResource ConsolePushButton}" Content="Save" Click="SaveUserPresetClicked" Margin="0,0,4,0" Padding="6,4" />
+                        <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Load" Click="LoadUserPresetClicked" Margin="2,0,2,0" Padding="6,4" />
+                        <Button Grid.Column="2" Style="{StaticResource ConsolePushButton}" Content="Delete" Click="DeleteUserPresetClicked" Margin="4,0,0,0" Padding="6,4" />
                       </Grid>
                       <TextBlock x:Name="PresetDescriptionText" Text="Choose a preset to load a starting point. Yellow ticks show that preset's home settings." Foreground="#B8C7D9" TextWrapping="Wrap" />
                     </StackPanel>
@@ -1283,12 +1473,6 @@
                         <TextBlock Text="{Binding ElementName=LimiterReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                       </Grid>
                       <Slider x:Name="LimiterReleaseSlider" Minimum="10" Maximum="500" Value="{Binding LimiterReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
-                    </StackPanel>
-                  </Border>
-                  <Border Style="{StaticResource DspBubble}">
-                    <StackPanel>
-                      <TextBlock Text="What am I seeing?" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <TextBlock Text="Gray is raw mic input. Blue is processed sound after EQ and dynamics. Gold is the smoothed processed average. Yellow ticks are the current preset defaults." Foreground="#B8C7D9" TextWrapping="Wrap" />
                     </StackPanel>
                   </Border>
                 </StackPanel>

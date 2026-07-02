@@ -194,6 +194,7 @@ public partial class EqualizerWindow : Window
     private int _spectrumFrameUpdateQueued;
     private Waveform3DWindow? _waveform3DWindow;
     private bool _showWaveform;
+    private bool _showWaveform3D;
     private bool _showMicCompare;
     private bool _isRecordingSession;
     private bool _isRecordingPaused;
@@ -1303,14 +1304,11 @@ public partial class EqualizerWindow : Window
     private void SpectrumViewClicked(object sender, RoutedEventArgs e)
     {
         _showWaveform = false;
+        _showWaveform3D = false;
         _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = false;
         UpdateWaveformSampleRetention();
-        SpectrumCanvas.Visibility = Visibility.Visible;
-        WaveformCanvas.Visibility = Visibility.Collapsed;
-        SpectrumViewButton.FontWeight = FontWeights.SemiBold;
-        WaveformViewButton.FontWeight = FontWeights.Normal;
-        MicCompareViewButton.FontWeight = FontWeights.Normal;
+        UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
         MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
@@ -1319,14 +1317,11 @@ public partial class EqualizerWindow : Window
     private void WaveformViewClicked(object sender, RoutedEventArgs e)
     {
         _showWaveform = true;
+        _showWaveform3D = false;
         _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = false;
         UpdateWaveformSampleRetention();
-        SpectrumCanvas.Visibility = Visibility.Collapsed;
-        WaveformCanvas.Visibility = Visibility.Visible;
-        SpectrumViewButton.FontWeight = FontWeights.Normal;
-        WaveformViewButton.FontWeight = FontWeights.SemiBold;
-        MicCompareViewButton.FontWeight = FontWeights.Normal;
+        UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
         MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
@@ -1335,14 +1330,11 @@ public partial class EqualizerWindow : Window
     private void MicCompareViewClicked(object sender, RoutedEventArgs e)
     {
         _showWaveform = false;
+        _showWaveform3D = false;
         _showMicCompare = true;
         _spectrumService.StereoInputAnalysisEnabled = true;
         UpdateWaveformSampleRetention();
-        SpectrumCanvas.Visibility = Visibility.Visible;
-        WaveformCanvas.Visibility = Visibility.Collapsed;
-        SpectrumViewButton.FontWeight = FontWeights.Normal;
-        WaveformViewButton.FontWeight = FontWeights.Normal;
-        MicCompareViewButton.FontWeight = FontWeights.SemiBold;
+        UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
         MicCompareLegendPanel.Visibility = Visibility.Visible;
         UpdateMicCompareUiState();
@@ -1350,39 +1342,62 @@ public partial class EqualizerWindow : Window
 
     private void Waveform3DClicked(object sender, RoutedEventArgs e)
     {
-        if (_waveform3DWindow is not null)
-        {
-            _waveform3DWindow.Activate();
-            return;
-        }
-
-        var window = new Waveform3DWindow
-        {
-            Owner = this
-        };
-        _waveform3DWindow = window;
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_waveform3DWindow, window))
-            {
-                _waveform3DWindow = null;
-                UpdateWaveformSampleRetention();
-            }
-        };
-
+        _showWaveform = false;
+        _showWaveform3D = true;
+        _showMicCompare = false;
+        _spectrumService.StereoInputAnalysisEnabled = false;
+        EnsureInlineWaveform3DView();
         UpdateWaveformSampleRetention();
+        UpdateGraphSurfaceVisibility();
+        NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
+        MicCompareLegendPanel.Visibility = Visibility.Collapsed;
+        UpdateMicCompareUiState();
+
         if (_latestFrame is not null)
         {
-            window.AcceptFrame(_latestFrame);
+            _waveform3DWindow?.AcceptFrame(_latestFrame);
         }
-
-        window.Show();
-        window.Activate();
     }
 
     private void UpdateWaveformSampleRetention()
     {
-        _spectrumService.WaveformSamplesEnabled = _showWaveform || _waveform3DWindow is not null;
+        _spectrumService.WaveformSamplesEnabled = _showWaveform || _showWaveform3D;
+    }
+
+    private void UpdateGraphSurfaceVisibility()
+    {
+        SpectrumCanvas.Visibility = _showWaveform || _showWaveform3D
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        WaveformCanvas.Visibility = _showWaveform
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        InlineWaveform3DHost.Visibility = _showWaveform3D
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        UpdateGraphViewButtonStates();
+    }
+
+    private void UpdateGraphViewButtonStates()
+    {
+        SpectrumViewButton.IsChecked = !_showWaveform && !_showWaveform3D && !_showMicCompare;
+        WaveformViewButton.IsChecked = _showWaveform;
+        Waveform3DButton.IsChecked = _showWaveform3D;
+        MicCompareViewButton.IsChecked = _showMicCompare;
+    }
+
+    private void EnsureInlineWaveform3DView()
+    {
+        if (_waveform3DWindow is not null)
+        {
+            return;
+        }
+
+        var waveform3DWindow = new Waveform3DWindow();
+        var content = waveform3DWindow.Content;
+        waveform3DWindow.Content = null;
+        InlineWaveform3DHost.Content = content;
+        _waveform3DWindow = waveform3DWindow;
     }
 
     private void UpdateMicCompareUiState()
@@ -1390,8 +1405,8 @@ public partial class EqualizerWindow : Window
         MicAnalysisPanel.Visibility = _showMicCompare ? Visibility.Visible : Visibility.Collapsed;
         EqBandPanel.IsEnabled = !_showMicCompare;
         EqBandPanel.Opacity = _showMicCompare ? 0.35d : 1d;
-        WaveformTimeSlider.IsEnabled = !_showMicCompare;
-        WaveformTriggerCheckBox.IsEnabled = !_showMicCompare;
+        WaveformOptionsPanel.Visibility = _showWaveform ? Visibility.Visible : Visibility.Collapsed;
+        AnalyzerSmoothingPanel.Visibility = _showWaveform || _showWaveform3D ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void EqSliderLoaded(object sender, RoutedEventArgs e)
@@ -2049,7 +2064,11 @@ public partial class EqualizerWindow : Window
         _latestFrame = frame;
         _waveformSampleRate = Math.Max(8000, frame.SampleRate);
         CollectMicAnalysisFrame(frame);
-        _waveform3DWindow?.AcceptFrame(frame);
+        if (_showWaveform3D)
+        {
+            _waveform3DWindow?.AcceptFrame(frame);
+        }
+
         AppendWaveformHistory(frame.RawSamples, frame.ProcessedSamples);
     }
 
@@ -2485,7 +2504,10 @@ public partial class EqualizerWindow : Window
             : Ease(_displayInputPeak, rawPeakLevel, 0.06d);
 
         var peakDb = 20d * Math.Log10(Math.Max(0.000001d, _displayInputPeak));
-        InputLevelMeter.Width = Math.Clamp((_displayInputPeak / 0.95d) * 260d, 0d, 260d);
+        var meterHostWidth = InputLevelMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
+            ? meterHost.ActualWidth
+            : 260d;
+        InputLevelMeter.Width = Math.Clamp((_displayInputPeak / 0.95d) * meterHostWidth, 0d, meterHostWidth);
 
         if (peakDb < -36d)
         {
@@ -3023,6 +3045,7 @@ public partial class EqualizerWindow : Window
 
         SyncEqualizerSettings();
         SetProcessingSliderDefaults(description);
+        SetActivePresetButton(name);
         StatusText.Text = $"{name} preset loaded";
     }
 
@@ -3232,7 +3255,26 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefaults(string.IsNullOrWhiteSpace(preset.Description)
             ? $"User preset: {name}"
             : preset.Description);
+        SetActivePresetButton(null);
         StatusText.Text = $"User preset loaded: {name}";
+    }
+
+    private void SetActivePresetButton(string? presetName)
+    {
+        SetPresetButtonState(FlatPresetButton, presetName, "Flat");
+        SetPresetButtonState(PodcastCleanPresetButton, presetName, "Podcast Clean");
+        SetPresetButtonState(WarmRadioPresetButton, presetName, "Warm Radio");
+        SetPresetButtonState(PodMicSm7bPresetButton, presetName, "PodMic to SM7B");
+        SetPresetButtonState(NoisyRoomPresetButton, presetName, "Noisy Room");
+        SetPresetButtonState(BrightHeadsetPresetButton, presetName, "Bright Headset");
+    }
+
+    private static void SetPresetButtonState(ToggleButton? button, string? activePresetName, string presetName)
+    {
+        if (button is not null)
+        {
+            button.IsChecked = activePresetName?.Equals(presetName, StringComparison.OrdinalIgnoreCase) == true;
+        }
     }
 
     private void SetUserPresetSetting<T>(string name, T value)
