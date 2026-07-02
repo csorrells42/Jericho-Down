@@ -1485,12 +1485,12 @@ public partial class EqualizerWindow : Window
             : MicrophoneSpectrumService.TryGetOutputDeviceFormat(_selectedOutputDevice);
         if (inputFormat is null || outputFormat is null)
         {
-            return "Virtual audio cables are supported; choose the matching cable output as the mic in your DAW or podcast app.";
+            return $"{_spectrumService.ProcessedOutputFormatStatus} Virtual audio cables are supported; choose the matching cable output as the mic in your DAW or podcast app.";
         }
 
         return inputFormat.Value.SampleRate == outputFormat.Value.SampleRate
-            ? $"Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling."
-            : $"High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
+            ? $"{_spectrumService.ProcessedOutputFormatStatus} Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling."
+            : $"{_spectrumService.ProcessedOutputFormatStatus} High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
     }
 
     private void StartSelectedDevice()

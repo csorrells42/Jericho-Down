@@ -126,6 +126,17 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     public bool IsProcessedOutputEnabled => IsProcessedOutputEnabledVolatile();
 
+    public string ProcessedOutputFormatStatus
+    {
+        get
+        {
+            var provider = _processedOutputProvider;
+            return IsProcessedOutputEnabledVolatile() && provider is not null
+                ? $"Live route opened as {DescribeWaveFormat(provider.WaveFormat)}."
+                : "Live route is not open.";
+        }
+    }
+
     private bool IsProcessedOutputEnabledVolatile()
     {
         return System.Threading.Volatile.Read(ref _processedOutputEnabled) != 0;
@@ -795,24 +806,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         _processedOutputSampleRate = _activeSampleRate;
-        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
-        if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutput = pcmWaveOut;
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (TryStartWasapiProcessedOutput(pcmProvider, out var pcmWasapiOutput, out var pcmPlaybackProvider))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutputPlaybackProvider = pcmPlaybackProvider;
-            _processedOutput = pcmWasapiOutput;
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
         if (TryStartWaveOutProcessedOutput(floatProvider, out var floatWaveOut))
         {
@@ -822,11 +815,29 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
+        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
+        if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
+        {
+            _processedOutputProvider = pcmProvider;
+            _processedOutput = pcmWaveOut;
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
         if (TryStartWasapiProcessedOutput(floatProvider, out var floatOutput, out var floatPlaybackProvider))
         {
             _processedOutputProvider = floatProvider;
             _processedOutputPlaybackProvider = floatPlaybackProvider;
             _processedOutput = floatOutput;
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
+        if (TryStartWasapiProcessedOutput(pcmProvider, out var pcmWasapiOutput, out var pcmPlaybackProvider))
+        {
+            _processedOutputProvider = pcmProvider;
+            _processedOutputPlaybackProvider = pcmPlaybackProvider;
+            _processedOutput = pcmWasapiOutput;
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1137,6 +1148,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
         requestedBytes = Math.Clamp(requestedBytes, blockAlign, int.MaxValue);
         var alignedBytes = requestedBytes / blockAlign * blockAlign;
         return (int)Math.Max(blockAlign, alignedBytes);
+    }
+
+    private static string DescribeWaveFormat(WaveFormat format)
+    {
+        var encoding = format.Encoding == WaveFormatEncoding.IeeeFloat ? "float" : "PCM";
+        var bitsPerSample = format.Encoding == WaveFormatEncoding.IeeeFloat ? 32 : format.BitsPerSample;
+        return $"{format.SampleRate / 1000d:0.#} kHz, {format.Channels} ch, {bitsPerSample}-bit {encoding}";
     }
 
     private int ConvertFloatSamplesToStereoFloat32(ReadOnlySpan<float> samples)
