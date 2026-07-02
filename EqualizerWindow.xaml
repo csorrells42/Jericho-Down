@@ -118,6 +118,100 @@
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#F8FAFC" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <Grid SnapsToDevicePixels="True">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Grid Width="34" Height="16" VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                <Border x:Name="SwitchTrack" Background="#16A34A" BorderBrush="#86EFAC" BorderThickness="1" CornerRadius="8" />
+                <Ellipse x:Name="SwitchThumb" Width="10" Height="10" Fill="#F8FAFC" HorizontalAlignment="Right" Margin="3" />
+              </Grid>
+              <ContentPresenter Grid.Column="1" ContentSource="Content" RecognizesAccessKey="True" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" Margin="8,0,0,0" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="False">
+                <Setter TargetName="SwitchTrack" Property="Background" Value="#991B1B" />
+                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#F87171" />
+                <Setter TargetName="SwitchThumb" Property="HorizontalAlignment" Value="Left" />
+                <Setter TargetName="SwitchThumb" Property="Fill" Value="#FEE2E2" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#E2E8F0" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="SwitchTrack" Property="Background" Value="#26323D" />
+                <Setter TargetName="SwitchTrack" Property="BorderBrush" Value="#64748B" />
+                <Setter Property="Foreground" Value="#64748B" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="Slider">
+      <Setter Property="MinHeight" Value="26" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid SnapsToDevicePixels="True" Margin="0,2">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="22" />
+                <RowDefinition Height="4" />
+              </Grid.RowDefinitions>
+              <Border Height="18" VerticalAlignment="Center" Background="#05090C" BorderBrush="#24394A" BorderThickness="1" CornerRadius="5" />
+              <Border Height="8" VerticalAlignment="Center" Margin="8,0" CornerRadius="4" Opacity="0.96">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#061017" Offset="0" />
+                    <GradientStop Color="#0C2638" Offset="0.44" />
+                    <GradientStop Color="#164961" Offset="0.5" />
+                    <GradientStop Color="#0C2638" Offset="0.56" />
+                    <GradientStop Color="#061017" Offset="1" />
+                  </LinearGradientBrush>
+                </Border.Background>
+              </Border>
+              <Rectangle Height="3" Fill="#25E0D0" VerticalAlignment="Center" Margin="10,0" Opacity="0.34" RadiusX="1.5" RadiusY="1.5" />
+              <Rectangle Height="1" Fill="#9CFDF4" VerticalAlignment="Center" Margin="10,0" Opacity="0.9" />
+              <Track x:Name="PART_Track" Height="22" VerticalAlignment="Center" Margin="5,0">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="Slider.DecreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" Focusable="False" />
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" Focusable="False" />
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="10" Height="20">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border Width="10" Height="20" BorderBrush="#A7FFF8" BorderThickness="1" CornerRadius="2" SnapsToDevicePixels="True">
+                          <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                              <GradientStop Color="#0E4F4A" Offset="0" />
+                              <GradientStop Color="#35E8D8" Offset="0.48" />
+                              <GradientStop Color="#0E4F4A" Offset="1" />
+                            </LinearGradientBrush>
+                          </Border.Background>
+                        </Border>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+              <TickBar Grid.Row="1" Margin="5,-1,5,0" Height="4" Fill="#F4C542" Placement="Bottom" ReservedSpace="10" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Ticks="{TemplateBinding Ticks}" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style x:Key="ProcessedOutputToggle" TargetType="ToggleButton">
       <Setter Property="Content" Value="SEND PROCESSED MIC" />
@@ -170,8 +264,8 @@
       <Setter Property="Height" Value="16" />
       <Setter Property="HorizontalAlignment" Value="Center" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Background" Value="#0F766E" />
-      <Setter Property="BorderBrush" Value="#5EEAD4" />
+      <Setter Property="Background" Value="#16A34A" />
+      <Setter Property="BorderBrush" Value="#86EFAC" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Template">
         <Setter.Value>
@@ -715,7 +809,15 @@
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
             </Grid>
           </Border>
-          <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Background="#66111820" Padding="10" Margin="18,0,378,18">
+          <Border x:Name="EqualizerFaceplate" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" BorderBrush="#445D6F7F" BorderThickness="1" CornerRadius="7" Padding="10" Margin="18,0,378,18">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="#1C2730" Offset="0" />
+                <GradientStop Color="#0A0F14" Offset="0.32" />
+                <GradientStop Color="#121A22" Offset="0.72" />
+                <GradientStop Color="#05080B" Offset="1" />
+              </LinearGradientBrush>
+            </Border.Background>
             <StackPanel>
               <ItemsControl x:Name="EqBandPanel" VerticalAlignment="Bottom" HorizontalAlignment="Stretch">
                 <ItemsControl.ItemsPanel>
@@ -725,7 +827,14 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border x:Name="BandChrome" Width="44" HorizontalAlignment="Center" Background="#99111820" BorderBrush="#334F5D6B" BorderThickness="1" Padding="3" Margin="1">
+                    <Border x:Name="BandChrome" Width="44" HorizontalAlignment="Center" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="6" Padding="3" Margin="1">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                          <GradientStop Color="#202D36" Offset="0" />
+                          <GradientStop Color="#0D141B" Offset="0.45" />
+                          <GradientStop Color="#1A242D" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
                       <Grid Height="210">
                         <Grid.RowDefinitions>
                           <RowDefinition Height="Auto" />
@@ -742,19 +851,47 @@
                         <Slider Grid.Row="2" Loaded="EqSliderLoaded" ValueChanged="EqSliderValueChanged" Minimum="-12" Maximum="12" Value="{Binding GainDb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Orientation="Vertical" TickFrequency="3" IsSnapToTickEnabled="False">
                           <Slider.Template>
                             <ControlTemplate TargetType="Slider">
-                              <Grid>
-                                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                              <Grid Width="30" HorizontalAlignment="Center">
+                                <Border Width="24" HorizontalAlignment="Center" Background="#04080C" BorderBrush="#24394A" BorderThickness="1" CornerRadius="5" />
+                                <Border Width="16" HorizontalAlignment="Center" Margin="0,7" CornerRadius="4" Opacity="0.95">
+                                  <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                      <GradientStop Color="#061017" Offset="0" />
+                                      <GradientStop Color="#0C2638" Offset="0.44" />
+                                      <GradientStop Color="#164961" Offset="0.5" />
+                                      <GradientStop Color="#0C2638" Offset="0.56" />
+                                      <GradientStop Color="#061017" Offset="1" />
+                                    </LinearGradientBrush>
+                                  </Border.Background>
+                                </Border>
+                                <Rectangle Width="3" Fill="#25E0D0" HorizontalAlignment="Center" Margin="0,10" Opacity="0.34" RadiusX="1.5" RadiusY="1.5" />
+                                <Rectangle Width="1" Fill="#9CFDF4" HorizontalAlignment="Center" Margin="0,10" Opacity="0.9" />
+                                <Rectangle Height="2" Fill="#F4C542" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="2,0" />
+                                <Track x:Name="PART_Track" IsDirectionReversed="True" Margin="0,5">
                                   <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="Slider.DecreaseLarge" Background="#26323D" BorderBrush="#536575" BorderThickness="1" IsTabStop="False" />
+                                    <RepeatButton Command="Slider.DecreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" />
                                   </Track.DecreaseRepeatButton>
                                   <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="Slider.IncreaseLarge" Background="#18222B" BorderBrush="#536575" BorderThickness="1" IsTabStop="False" />
+                                    <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" />
                                   </Track.IncreaseRepeatButton>
                                   <Track.Thumb>
-                                    <Thumb Width="18" Height="8" Background="#F8FAFC" BorderBrush="#93A4B8" BorderThickness="1" />
+                                    <Thumb Width="20" Height="10">
+                                      <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                          <Border Width="20" Height="10" BorderBrush="#A7FFF8" BorderThickness="1" CornerRadius="2" SnapsToDevicePixels="True">
+                                            <Border.Background>
+                                              <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Color="#0E4F4A" Offset="0" />
+                                                <GradientStop Color="#35E8D8" Offset="0.48" />
+                                                <GradientStop Color="#0E4F4A" Offset="1" />
+                                              </LinearGradientBrush>
+                                            </Border.Background>
+                                          </Border>
+                                        </ControlTemplate>
+                                      </Thumb.Template>
+                                    </Thumb>
                                   </Track.Thumb>
                                 </Track>
-                                <Rectangle Height="2" Fill="#F4C542" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="2,0" />
                               </Grid>
                             </ControlTemplate>
                           </Slider.Template>

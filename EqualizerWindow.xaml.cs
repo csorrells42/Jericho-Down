@@ -2113,7 +2113,7 @@ public partial class EqualizerWindow : Window
         var width = Math.Max(1d, SpectrumCanvas.ActualWidth);
         var height = Math.Max(1d, SpectrumCanvas.ActualHeight);
         var topInset = 86d;
-        var bottomInset = 270d;
+        var bottomInset = GetAnalyzerBottomInset();
         var usableHeight = Math.Max(1d, height - topInset - bottomInset);
         var graphTop = topInset;
         var graphBottom = graphTop + usableHeight;
@@ -2219,6 +2219,12 @@ public partial class EqualizerWindow : Window
         return Math.Clamp(0.36d - smoothingPercent * 0.0031d, 0.05d, 0.36d);
     }
 
+    private double GetAnalyzerBottomInset()
+    {
+        var faceplateHeight = EqualizerFaceplate?.ActualHeight ?? 0d;
+        return Math.Max(270d, faceplateHeight + 38d);
+    }
+
     private void RenderWaveform(SpectrumFrame frame)
     {
         if (!_showWaveform)
@@ -2229,7 +2235,7 @@ public partial class EqualizerWindow : Window
         var width = Math.Max(1d, WaveformCanvas.ActualWidth);
         var height = Math.Max(1d, WaveformCanvas.ActualHeight);
         var topInset = 86d;
-        var bottomInset = 270d;
+        var bottomInset = GetAnalyzerBottomInset();
         var usableHeight = Math.Max(1d, height - topInset - bottomInset);
         var graphTop = topInset;
         var graphBottom = graphTop + usableHeight;
@@ -3334,8 +3340,7 @@ public partial class EqualizerWindow : Window
     private void SetProcessingSliderDefault(Slider slider, double value)
     {
         _processingSliderDefaults[slider] = value;
-        slider.Ticks.Clear();
-        slider.Ticks.Add(value);
+        slider.Ticks = [value];
         if (!_processingSliderBaseToolTips.TryGetValue(slider, out var baseText))
         {
             baseText = slider.ToolTip is TextBlock textBlock
