@@ -15,6 +15,7 @@ public sealed class SpectrumFrame
         double peakLevel,
         double rawPeakLevel,
         VoiceProcessingTelemetry telemetry,
+        int sampleRate = 44100,
         double[]? input1Magnitudes = null,
         double[]? input2Magnitudes = null,
         double input1PeakLevel = 0d,
@@ -29,6 +30,7 @@ public sealed class SpectrumFrame
         PeakLevel = peakLevel;
         RawPeakLevel = rawPeakLevel;
         Telemetry = telemetry;
+        SampleRate = sampleRate;
         Input1Magnitudes = input1Magnitudes ?? [];
         Input2Magnitudes = input2Magnitudes ?? [];
         Input1PeakLevel = input1PeakLevel;
@@ -50,6 +52,8 @@ public sealed class SpectrumFrame
     public double RawPeakLevel { get; }
 
     public VoiceProcessingTelemetry Telemetry { get; }
+
+    public int SampleRate { get; }
 
     public double[] Input1Magnitudes { get; }
 

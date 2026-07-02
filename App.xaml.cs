@@ -1,5 +1,3 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
 
 namespace PodcastWorkbench;
@@ -10,6 +8,3 @@ namespace PodcastWorkbench;
 public partial class App : Application
 {
 }
-
-
-

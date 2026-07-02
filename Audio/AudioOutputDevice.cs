@@ -1,6 +1,6 @@
 ﻿namespace PodcastWorkbench.Audio;
 
-public sealed record AudioOutputDevice(int DeviceNumber, string Name)
+public sealed record AudioOutputDevice(int DeviceNumber, string Name, string? EndpointId = null)
 {
     public override string ToString()
     {

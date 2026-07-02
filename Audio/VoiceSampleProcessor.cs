@@ -2,178 +2,680 @@
 
 public sealed class VoiceSampleProcessor
 {
-    private const double SampleRate = 44100d;
+    private const double DenormalThreshold = 1.0E-20d;
+    private const double EqualizerQ = 1.35d;
+    private const int EqualizerBypassDrainBlocks = 2;
+    private const double LimiterTruePeakDetectorMarginDb = 0.6d;
+    private static readonly double[] EqualizerFrequenciesHz =
+    [
+        31d, 45d, 63d, 90d, 125d, 180d, 250d, 355d, 500d, 710d,
+        1000d, 1400d, 2000d, 2800d, 4000d, 5600d, 8000d, 11200d, 16000d, 20000d
+    ];
+
     private readonly VoiceProcessorSettings _settings;
+    private readonly double _sampleRate;
+    private double _previousDcBlockerInput;
+    private double _previousDcBlockerOutput;
     private double _previousHighPassInput;
     private double _previousHighPassOutput;
+    private double _highPassWet;
+    private double _highPassX1;
+    private double _highPassX2;
+    private double _highPassY1;
+    private double _highPassY2;
     private double _dePopperLow;
+    private double _dePopperGain = 1d;
+    private double _dePopperWet;
     private double _noiseFloor = 0.0005d;
     private double _noiseSuppressionEnvelope;
+    private double _noiseSuppressionGain = 1d;
+    private double _noiseSuppressionWet;
     private double _echoEnvelope;
     private double _echoRecentPeak;
+    private double _echoReducerGain = 1d;
+    private double _echoReducerWet;
     private double _previousDeEsserInput;
     private double _previousDeEsserOutput;
+    private double _deEsserBand;
+    private double _deEsserDetectorEnvelope;
     private double _previousPresenceInput;
     private double _previousPresenceHigh;
     private double _presenceBand;
+    private double _presenceGuardGain = 1d;
+    private double _presenceWet;
     private double _envelope;
+    private double _compressorRmsEnvelope;
+    private double _compressorSidechainLow;
+    private double _compressorGain = 1d;
+    private double _compressorWet;
     private double _lastGainReductionDb;
+    private double _deEsserGain = 1d;
+    private double _deEsserWet;
+    private double _gateDetectorEnvelope;
     private double _gateOpenness = 1;
+    private double _gateWet;
     private int _gateHoldSamplesRemaining;
+    private double _expanderDetectorEnvelope;
     private double _expanderGain = 1;
+    private double _expanderWet;
     private int _expanderHoldSamplesRemaining;
     private double _limiterEnvelopeReductionDb;
     private double _limiterGain = 1d;
     private double _limiterLookaheadPeak;
+    private double _limiterWet;
+    private double _limiterSoftClipWet;
+    private double _inputTrimGain = 1d;
+    private double _makeupGain = 1d;
+    private double _inputTrimTargetGain = 1d;
+    private double _makeupTargetGain = 1d;
+    private double _levelSmoothingCoefficient;
+    private bool _highPassEnabled;
+    private bool _dePopperEnabled;
+    private bool _noiseGateEnabled;
+    private bool _expanderEnabled;
+    private bool _noiseSuppressionEnabled;
+    private bool _echoReducerEnabled;
+    private bool _compressorEnabled;
+    private bool _deEsserEnabled;
+    private bool _presenceEnhancerEnabled;
+    private bool _limiterEnabled;
+    private bool _limiterSoftClipEnabled;
+    private double _dcBlockerCoefficient;
+    private double _limiterCeiling = 1d;
+    private double _highPassB0 = 1d;
+    private double _highPassWetCoefficient;
+    private double _highPassB1;
+    private double _highPassB2;
+    private double _highPassA1;
+    private double _highPassA2;
+    private double _lastHighPassFrequencyHz;
+    private double _dePopperAlpha;
+    private double _dePopperWetCoefficient;
+    private double _dePopperAttackCoefficient;
+    private double _dePopperReleaseCoefficient;
+    private double _dePopperThresholdDb;
+    private double _dePopperAmountDb;
+    private double _noiseGateThreshold;
+    private double _noiseGateRange;
+    private double _noiseGateDetectorAttackCoefficient;
+    private double _noiseGateDetectorReleaseCoefficient;
+    private double _noiseGateAttackCoefficient;
+    private double _noiseGateReleaseCoefficient;
+    private double _noiseGateWetCoefficient;
+    private int _noiseGateHoldSamples;
+    private double _expanderThresholdDb;
+    private double _expanderDetectorAttackCoefficient;
+    private double _expanderDetectorReleaseCoefficient;
+    private double _expanderAttackCoefficient;
+    private double _expanderReleaseCoefficient;
+    private double _expanderWetCoefficient;
+    private double _expanderMinimumGain;
+    private double _expanderRangeDb;
+    private double _expanderRatio;
+    private int _expanderHoldSamples;
+    private double _noiseSuppressionDepth;
+    private double _noiseSuppressionNoiseFloorMultiplier;
+    private double _noiseSuppressionAttackCoefficient;
+    private double _noiseSuppressionReleaseCoefficient;
+    private double _noiseSuppressionWetCoefficient;
+    private double _echoReducerMaximumReduction;
+    private double _echoReducerTailWindow;
+    private double _echoReducerAttackCoefficient;
+    private double _echoReducerReleaseCoefficient;
+    private double _echoReducerWetCoefficient;
+    private double _compressorAttackCoefficient;
+    private double _compressorReleaseCoefficient;
+    private double _compressorRmsCoefficient;
+    private double _compressorSidechainLowPassCoefficient;
+    private double _compressorWetCoefficient;
+    private double _compressorThresholdDb;
+    private double _compressorRatio;
+    private double _compressorKneeDb;
+    private double _deEsserAttackCoefficient;
+    private double _deEsserReleaseCoefficient;
+    private double _deEsserDetectorAttackCoefficient;
+    private double _deEsserDetectorReleaseCoefficient;
+    private double _deEsserWetCoefficient;
+    private double _deEsserThresholdDb;
+    private double _deEsserRangeDb;
+    private double _deEsserSensitivity;
+    private double _presenceHighPassAlpha;
+    private double _presenceLowPassAlpha;
+    private double _presenceBlend;
+    private double _presenceWetCoefficient;
+    private double _deEsserHighPassAlpha;
+    private double _deEsserLowPassAlpha;
+    private double _limiterTargetCeiling;
+    private double _limiterAttackCoefficient;
+    private double _limiterCeilingCoefficient;
+    private double _limiterReleaseCoefficient;
+    private double _limiterWetCoefficient;
+    private double _limiterSoftClipWetCoefficient;
+    private double _limiterSoftClipKneeFactor = 0.882d;
+    private double _limiterSoftClipCurve = 1.12d;
+    private double _limiterSoftClipCurveDenominator = 0.807568916578614d;
+    private int _limiterLookaheadTargetSamples;
     private int _limiterLookaheadSamples;
-    private readonly Queue<double> _limiterLookaheadBuffer = new();
+    private double[] _limiterLookaheadBuffer = [];
+    private double[] _limiterLookaheadPeakBuffer = [];
+    private int _limiterLookaheadWriteIndex;
+    private int _limiterLookaheadPeakIndex = -1;
+    private int _limiterLookaheadCount;
+    private double _limiterPreviousDetectorSample;
+    private int _coefficientSettingsRevision = -1;
+    private int _coefficientSampleCount = -1;
+    private readonly double[] _equalizerGainsDb = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerSmoothedGainsDb = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerCoefficientGainsDb = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerCosines = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerAlphas = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerB0 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerB1 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerB2 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerA1 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerA2 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerX1 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerX2 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerY1 = new double[EqualizerFrequenciesHz.Length];
+    private readonly double[] _equalizerY2 = new double[EqualizerFrequenciesHz.Length];
+    private readonly bool[] _equalizerBandActive = new bool[EqualizerFrequenciesHz.Length];
+    private readonly int[] _equalizerActiveBandIndices = new int[EqualizerFrequenciesHz.Length];
+    private readonly int[] _equalizerBypassDrainBlocks = new int[EqualizerFrequenciesHz.Length];
+    private int _equalizerActiveBandCount;
+    private int _equalizerSettingsRevision = -1;
+    private bool _equalizerSmoothingSettled;
 
-    public VoiceSampleProcessor(VoiceProcessorSettings settings)
+    public VoiceSampleProcessor(VoiceProcessorSettings settings, int sampleRate)
     {
         _settings = settings;
+        _sampleRate = Math.Max(8000d, sampleRate);
+        InitializeEqualizerFrequencyCache();
     }
 
     public float[] Process(ReadOnlySpan<float> samples)
     {
         var processed = new float[samples.Length];
-        var maxGainReduction = 0d;
-        var maxCompressorInputLevelDb = -100d;
-        var gateOpennessSum = 0d;
-        var maxHighPassActivityDb = 0d;
-        var maxDePopperReductionDb = 0d;
-        var maxNoiseGateReductionDb = 0d;
-        var maxNoiseSuppressionReductionDb = 0d;
-        var maxEchoReducerReductionDb = 0d;
-        var maxDeEsserReductionDb = 0d;
-        var maxPresenceBoostDb = 0d;
-        var maxLimiterReductionDb = 0d;
+        Process(samples, processed);
+        return processed;
+    }
 
-        for (var i = 0; i < samples.Length; i++)
+    public void Process(ReadOnlySpan<float> samples, Span<float> processed)
+    {
+        var maxGainReduction = 0d;
+        var maxCompressorInputLevel = 0d;
+        var gateOpennessSum = 0d;
+        var sampleCount = Math.Min(samples.Length, processed.Length);
+        UpdateBlockCoefficients(sampleCount);
+        var inputTrimTargetGain = _inputTrimTargetGain;
+        var makeupTargetGain = _makeupTargetGain;
+        var levelSmoothingCoefficient = _levelSmoothingCoefficient;
+
+        for (var i = 0; i < sampleCount; i++)
         {
-            double sample = samples[i];
-            sample = ApplyInputTrim(sample);
-            var before = sample;
+            double sample = Math.Clamp(SanitizeAudioSample(samples[i]), -1d, 1d);
+            sample = ApplyDcBlocker(sample);
+            _inputTrimGain = SmoothLevelGain(_inputTrimGain, inputTrimTargetGain, levelSmoothingCoefficient);
+            sample *= _inputTrimGain;
             sample = ApplyDePopper(sample);
-            maxDePopperReductionDb = Math.Max(maxDePopperReductionDb, ReductionDb(before, sample));
-            before = sample;
             sample = ApplyHighPass(sample);
-            maxHighPassActivityDb = Math.Max(maxHighPassActivityDb, ChangeDb(before, sample));
-            before = sample;
+            sample = ApplyEqualizer(sample);
             sample = ApplyNoiseSuppression(sample);
-            maxNoiseSuppressionReductionDb = Math.Max(maxNoiseSuppressionReductionDb, ReductionDb(before, sample));
-            before = sample;
             sample = ApplyExpander(sample);
-            before = sample;
             sample = ApplyNoiseGate(sample);
-            maxNoiseGateReductionDb = Math.Max(maxNoiseGateReductionDb, ReductionDb(before, sample));
-            before = sample;
             sample = ApplyEchoReducer(sample);
-            maxEchoReducerReductionDb = Math.Max(maxEchoReducerReductionDb, ReductionDb(before, sample));
-            before = sample;
             sample = ApplyCompressor(sample);
             sample = ApplyDeEsser(sample);
-            maxDeEsserReductionDb = Math.Max(maxDeEsserReductionDb, ReductionDb(before, sample));
-            before = sample;
             sample = ApplyPresenceEnhancer(sample);
-            maxPresenceBoostDb = Math.Max(maxPresenceBoostDb, BoostDb(before, sample));
             maxGainReduction = Math.Max(maxGainReduction, _lastGainReductionDb);
-            maxCompressorInputLevelDb = Math.Max(maxCompressorInputLevelDb, LinearToDb(Math.Abs(sample)));
+            maxCompressorInputLevel = Math.Max(maxCompressorInputLevel, Math.Abs(sample));
             gateOpennessSum += _gateOpenness;
-            sample = ApplyMakeupGain(sample);
-            before = sample;
+            _makeupGain = SmoothLevelGain(_makeupGain, makeupTargetGain, levelSmoothingCoefficient);
+            sample *= _makeupGain;
             sample = ApplyLimiter(sample);
-            maxLimiterReductionDb = Math.Max(maxLimiterReductionDb, ReductionDb(before, sample));
-            processed[i] = (float)Math.Clamp(sample, -1d, 1d);
+            sample = SanitizeAudioSample(sample);
+            processed[i] = (float)ApplyOutputSafetyClip(sample);
         }
 
-        Telemetry = new VoiceProcessingTelemetry
-        {
-            InputTrimDb = Math.Abs(_settings.InputTrimDb),
-            HighPassActivityDb = maxHighPassActivityDb,
-            DePopperReductionDb = maxDePopperReductionDb,
-            NoiseGateReductionDb = maxNoiseGateReductionDb,
-            NoiseSuppressionReductionDb = maxNoiseSuppressionReductionDb,
-            EchoReducerReductionDb = maxEchoReducerReductionDb,
-            CompressorGainReductionDb = maxGainReduction,
-            CompressorInputLevelDb = maxCompressorInputLevelDb,
-            CompressorThresholdDb = _settings.CompressorThresholdDb,
-            CompressorActive = maxGainReduction > 0.1d,
-            GateOpenness = samples.Length == 0 ? 1d : gateOpennessSum / samples.Length,
-            GateOpen = samples.Length == 0 || gateOpennessSum / samples.Length > 0.55d,
-            DeEsserReductionDb = maxDeEsserReductionDb,
-            PresenceBoostDb = maxPresenceBoostDb,
-            MakeupGainDb = Math.Abs(_settings.MakeupGainDb),
-            LimiterReductionDb = maxLimiterReductionDb
-        };
-
-        return processed;
+        var telemetry = Telemetry;
+        telemetry.InputTrimDb = Math.Abs(_settings.InputTrimDb);
+        telemetry.HighPassActivityDb = 0d;
+        telemetry.DePopperReductionDb = 0d;
+        telemetry.NoiseGateReductionDb = 0d;
+        telemetry.NoiseSuppressionReductionDb = 0d;
+        telemetry.EchoReducerReductionDb = 0d;
+        telemetry.CompressorGainReductionDb = maxGainReduction;
+        telemetry.CompressorInputLevelDb = LinearToDb(maxCompressorInputLevel);
+        telemetry.CompressorThresholdDb = _settings.CompressorThresholdDb;
+        telemetry.CompressorActive = maxGainReduction > 0.1d;
+        telemetry.GateOpenness = sampleCount == 0 ? 1d : gateOpennessSum / sampleCount;
+        telemetry.GateOpen = sampleCount == 0 || gateOpennessSum / sampleCount > 0.55d;
+        telemetry.DeEsserReductionDb = 0d;
+        telemetry.PresenceBoostDb = 0d;
+        telemetry.MakeupGainDb = Math.Abs(_settings.MakeupGainDb);
+        telemetry.LimiterReductionDb = _limiterEnvelopeReductionDb;
     }
 
     public VoiceProcessingTelemetry Telemetry { get; private set; } = new();
 
-    private double ApplyInputTrim(double sample)
+    private void UpdateBlockCoefficients(int sampleCount)
     {
-        return sample * DbToLinear(Math.Clamp(_settings.InputTrimDb, -18d, 18d));
+        var settingsRevision = _settings.SettingsRevision;
+        if (settingsRevision == _coefficientSettingsRevision && sampleCount == _coefficientSampleCount)
+        {
+            UpdateEqualizerCoefficients(sampleCount);
+            return;
+        }
+
+        _coefficientSettingsRevision = settingsRevision;
+        _coefficientSampleCount = sampleCount;
+        var dt = 1d / _sampleRate;
+        _inputTrimTargetGain = DbToLinear(Math.Clamp(_settings.InputTrimDb, -18d, 18d));
+        _makeupTargetGain = DbToLinear(Math.Clamp(_settings.MakeupGainDb, -12d, 18d));
+        _levelSmoothingCoefficient = TimeCoefficient(6d);
+        _highPassEnabled = _settings.HighPassEnabled;
+        _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
+        _noiseGateEnabled = _settings.NoiseGateEnabled;
+        _expanderEnabled = _settings.ExpanderEnabled;
+        _noiseSuppressionEnabled = _settings.NoiseSuppressionEnabled && _settings.NoiseSuppressionAmountDb > 0d;
+        _echoReducerEnabled = _settings.EchoReducerEnabled && _settings.EchoReducerAmountDb > 0d;
+        _compressorEnabled = _settings.CompressorEnabled;
+        _deEsserEnabled = _settings.DeEsserEnabled && _settings.DeEsserAmountDb > 0d;
+        _presenceEnhancerEnabled = _settings.PresenceEnhancerEnabled && _settings.PresenceEnhancerAmountDb > 0d;
+        _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
+        _highPassWetCoefficient = TimeCoefficient(12d);
+        UpdateHighPassCoefficients();
+
+        var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
+        _dePopperAlpha = 1d - Math.Exp(-2d * Math.PI * dePopperCutoffHz / _sampleRate);
+        _dePopperWetCoefficient = TimeCoefficient(10d);
+        _dePopperAttackCoefficient = TimeCoefficient(1.5d);
+        _dePopperReleaseCoefficient = TimeCoefficient(80d);
+        _dePopperThresholdDb = Math.Clamp(_settings.DePopperThresholdDb, -48d, -12d);
+        _dePopperAmountDb = _settings.DePopperAmountDb;
+
+        _noiseGateThreshold = DbToLinear(_settings.NoiseGateThresholdDb);
+        _noiseGateRange = DbToLinear(-Math.Clamp(_settings.NoiseGateRangeDb, 6d, 60d));
+        _noiseGateDetectorAttackCoefficient = TimeCoefficient(Math.Min(3d, Math.Max(0.5d, _settings.NoiseGateAttackMs * 0.5d)));
+        _noiseGateDetectorReleaseCoefficient = TimeCoefficient(45d);
+        _noiseGateAttackCoefficient = TimeCoefficient(_settings.NoiseGateAttackMs);
+        _noiseGateReleaseCoefficient = TimeCoefficient(_settings.NoiseGateReleaseMs);
+        _noiseGateWetCoefficient = TimeCoefficient(14d);
+        _noiseGateHoldSamples = (int)(Math.Clamp(_settings.NoiseGateHoldMs, 0d, 500d) * _sampleRate / 1000d);
+
+        _expanderThresholdDb = Math.Clamp(_settings.ExpanderThresholdDb, -70d, -15d);
+        _expanderDetectorAttackCoefficient = TimeCoefficient(Math.Min(4d, Math.Max(0.5d, _settings.ExpanderAttackMs * 0.5d)));
+        _expanderDetectorReleaseCoefficient = TimeCoefficient(65d);
+        _expanderAttackCoefficient = TimeCoefficient(_settings.ExpanderAttackMs);
+        _expanderReleaseCoefficient = TimeCoefficient(_settings.ExpanderReleaseMs);
+        _expanderWetCoefficient = TimeCoefficient(18d);
+        _expanderRangeDb = Math.Clamp(_settings.ExpanderRangeDb, 0d, 48d);
+        _expanderRatio = Math.Clamp(_settings.ExpanderRatio, 1d, 6d);
+        _expanderHoldSamples = (int)(Math.Clamp(_settings.ExpanderHoldMs, 0d, 500d) * _sampleRate / 1000d);
+        _expanderMinimumGain = DbToLinear(-_expanderRangeDb);
+
+        _noiseSuppressionDepth = DbToLinear(-_settings.NoiseSuppressionAmountDb);
+        _noiseSuppressionNoiseFloorMultiplier = 11d - Math.Clamp(_settings.NoiseSuppressionSensitivity, 1d, 10d);
+        _noiseSuppressionAttackCoefficient = TimeCoefficient(8d);
+        _noiseSuppressionReleaseCoefficient = TimeCoefficient(90d);
+        _noiseSuppressionWetCoefficient = TimeCoefficient(20d);
+        _echoReducerMaximumReduction = DbToLinear(-_settings.EchoReducerAmountDb);
+        var echoSensitivity = Math.Clamp(_settings.EchoReducerSensitivity, 1d, 10d);
+        _echoReducerTailWindow = Math.Clamp(0.7d - echoSensitivity * 0.045d, 0.2d, 0.65d);
+        _echoReducerAttackCoefficient = TimeCoefficient(12d);
+        _echoReducerReleaseCoefficient = TimeCoefficient(160d);
+        _echoReducerWetCoefficient = TimeCoefficient(22d);
+
+        _compressorAttackCoefficient = TimeCoefficient(_settings.CompressorAttackMs);
+        _compressorReleaseCoefficient = TimeCoefficient(_settings.CompressorReleaseMs);
+        _compressorRmsCoefficient = TimeCoefficient(25d);
+        _compressorSidechainLowPassCoefficient = 1d - Math.Exp(-2d * Math.PI * 135d / _sampleRate);
+        _compressorWetCoefficient = TimeCoefficient(18d);
+        _compressorThresholdDb = _settings.CompressorThresholdDb;
+        _compressorRatio = Math.Max(1d, _settings.CompressorRatio);
+        _compressorKneeDb = Math.Clamp(_settings.CompressorKneeDb, 0d, 18d);
+        _deEsserAttackCoefficient = TimeCoefficient(2d);
+        _deEsserReleaseCoefficient = TimeCoefficient(45d);
+        _deEsserDetectorAttackCoefficient = TimeCoefficient(1.2d);
+        _deEsserDetectorReleaseCoefficient = TimeCoefficient(32d);
+        _deEsserWetCoefficient = TimeCoefficient(12d);
+        _deEsserThresholdDb = Math.Clamp(_settings.DeEsserThresholdDb, -60d, -12d);
+        _deEsserRangeDb = Math.Clamp(_settings.DeEsserRangeDb, 1d, 18d);
+        _deEsserSensitivity = Math.Clamp(_settings.DeEsserAmountDb, 0d, 12d) / 12d;
+
+        var centerHz = Math.Clamp(_settings.PresenceEnhancerFrequencyHz, 1500d, 6500d);
+        var widthHz = Math.Clamp(_settings.PresenceEnhancerWidthHz, 800d, 5000d);
+        var presenceHighPassHz = Math.Max(300d, centerHz - widthHz / 2d);
+        var presenceLowPassHz = Math.Min(9000d, centerHz + widthHz / 2d);
+        var presenceHighPassRc = 1d / (2d * Math.PI * presenceHighPassHz);
+        _presenceHighPassAlpha = presenceHighPassRc / (presenceHighPassRc + dt);
+        _presenceLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * presenceLowPassHz / _sampleRate);
+        _presenceBlend = Math.Clamp(DbToLinear(_settings.PresenceEnhancerAmountDb) - 1d, 0d, 1.5d);
+        _presenceWetCoefficient = TimeCoefficient(18d);
+
+        var deEsserCutoffHz = Math.Clamp(_settings.DeEsserFrequencyHz, 3500d, 10000d);
+        var deEsserRc = 1d / (2d * Math.PI * deEsserCutoffHz);
+        _deEsserHighPassAlpha = deEsserRc / (deEsserRc + dt);
+        var deEsserLowPassHz = Math.Clamp(deEsserCutoffHz + 3500d, 6500d, Math.Min(14000d, _sampleRate * 0.45d));
+        _deEsserLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * deEsserLowPassHz / _sampleRate);
+
+        _limiterEnabled = _settings.LimiterEnabled;
+        _limiterSoftClipEnabled = _settings.LimiterSoftClipEnabled;
+        _limiterTargetCeiling = DbToLinear(Math.Clamp(_settings.LimiterCeilingDb, -18d, -0.1d));
+        _limiterAttackCoefficient = TimeCoefficient(1d);
+        _limiterCeilingCoefficient = TimeCoefficient(8d);
+        _limiterReleaseCoefficient = TimeCoefficient(_settings.LimiterReleaseMs);
+        _limiterWetCoefficient = TimeCoefficient(10d);
+        _limiterLookaheadTargetSamples = _settings.LimiterLookaheadEnabled && _settings.LimiterLookaheadMs > 0d
+            ? Math.Clamp((int)(_sampleRate * _settings.LimiterLookaheadMs / 1000d), 1, (int)(_sampleRate * 0.02d))
+            : 0;
+        var limiterSoftClipDriveDb = Math.Clamp(_settings.LimiterSoftClipDriveDb, 0d, 12d);
+        _limiterSoftClipWetCoefficient = TimeCoefficient(12d);
+        _limiterSoftClipKneeFactor = Math.Clamp(0.9d - limiterSoftClipDriveDb * 0.012d, 0.76d, 0.9d);
+        _limiterSoftClipCurve = 1d + limiterSoftClipDriveDb * 0.08d;
+        _limiterSoftClipCurveDenominator = Math.Tanh(_limiterSoftClipCurve);
+        UpdateEqualizerCoefficients(sampleCount);
     }
 
     private double ApplyHighPass(double sample)
     {
-        if (!_settings.HighPassEnabled)
+        if (!_highPassEnabled && _highPassWet <= 0d)
         {
+            ResetHighPassState();
             return sample;
         }
 
-        var rc = 1d / (2d * Math.PI * Math.Max(20d, _settings.HighPassFrequencyHz));
-        var dt = 1d / SampleRate;
-        var alpha = rc / (rc + dt);
-        var output = alpha * (_previousHighPassOutput + sample - _previousHighPassInput);
-        _previousHighPassInput = sample;
+        var output = FlushDenormal(_highPassB0 * sample + _highPassB1 * _highPassX1 + _highPassB2 * _highPassX2 - _highPassA1 * _highPassY1 - _highPassA2 * _highPassY2);
+        _highPassX2 = _highPassX1;
+        _highPassX1 = FlushDenormal(sample);
+        _highPassY2 = _highPassY1;
+        _highPassY1 = output;
+        _previousHighPassInput = _highPassX1;
         _previousHighPassOutput = output;
+
+        var targetWet = _highPassEnabled ? 1d : 0d;
+        _highPassWet = FlushDenormal(_highPassWet + (targetWet - _highPassWet) * _highPassWetCoefficient);
+        if (!_highPassEnabled && _highPassWet < 0.0001d)
+        {
+            _highPassWet = 0d;
+            ResetHighPassState();
+        }
+        else if (_highPassEnabled && _highPassWet > 0.9999d)
+        {
+            _highPassWet = 1d;
+        }
+
+        return sample + (output - sample) * _highPassWet;
+    }
+
+    private double ApplyDcBlocker(double sample)
+    {
+        var output = FlushDenormal(sample - _previousDcBlockerInput + _dcBlockerCoefficient * _previousDcBlockerOutput);
+        _previousDcBlockerInput = FlushDenormal(sample);
+        _previousDcBlockerOutput = output;
         return output;
+    }
+
+    private void ResetHighPassState()
+    {
+        if (_previousHighPassInput == 0d
+            && _previousHighPassOutput == 0d
+            && _highPassX1 == 0d
+            && _highPassX2 == 0d
+            && _highPassY1 == 0d
+            && _highPassY2 == 0d)
+        {
+            return;
+        }
+
+        _previousHighPassInput = 0d;
+        _previousHighPassOutput = 0d;
+        _highPassX1 = 0d;
+        _highPassX2 = 0d;
+        _highPassY1 = 0d;
+        _highPassY2 = 0d;
+    }
+
+    private void UpdateHighPassCoefficients()
+    {
+        var frequencyHz = Math.Clamp(_settings.HighPassFrequencyHz, 20d, Math.Min(240d, _sampleRate * 0.45d));
+        if (Math.Abs(frequencyHz - _lastHighPassFrequencyHz) < 0.01d)
+        {
+            return;
+        }
+
+        _lastHighPassFrequencyHz = frequencyHz;
+        var omega = 2d * Math.PI * frequencyHz / _sampleRate;
+        var sine = Math.Sin(omega);
+        var cosine = Math.Cos(omega);
+        const double q = 0.7071067811865476d;
+        var alpha = sine / (2d * q);
+        var b0 = (1d + cosine) / 2d;
+        var b1 = -(1d + cosine);
+        var b2 = (1d + cosine) / 2d;
+        var a0 = 1d + alpha;
+        var a1 = -2d * cosine;
+        var a2 = 1d - alpha;
+
+        _highPassB0 = b0 / a0;
+        _highPassB1 = b1 / a0;
+        _highPassB2 = b2 / a0;
+        _highPassA1 = a1 / a0;
+        _highPassA2 = a2 / a0;
     }
 
     private double ApplyDePopper(double sample)
     {
-        if (!_settings.DePopperEnabled || _settings.DePopperAmountDb <= 0)
+        if (!_dePopperEnabled && _dePopperWet <= 0d)
         {
+            _dePopperLow = 0d;
+            _dePopperGain = 1d;
             return sample;
         }
 
-        var cutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
-        var alpha = 1d - Math.Exp(-2d * Math.PI * cutoffHz / SampleRate);
-        _dePopperLow += alpha * (sample - _dePopperLow);
+        _dePopperLow = FlushDenormal(_dePopperLow + _dePopperAlpha * (sample - _dePopperLow));
 
         var low = _dePopperLow;
         var high = sample - low;
         var lowLevelDb = LinearToDb(Math.Abs(low));
-        var thresholdDb = Math.Clamp(_settings.DePopperThresholdDb, -48d, -12d);
-        if (lowLevelDb <= thresholdDb)
+        var targetGain = 1d;
+        if (lowLevelDb > _dePopperThresholdDb)
         {
-            return sample;
+            var overThresholdDb = lowLevelDb - _dePopperThresholdDb;
+            var reductionDb = Math.Min(_dePopperAmountDb, overThresholdDb * 0.9d);
+            targetGain = DbToLinear(-reductionDb);
         }
 
-        var overThresholdDb = lowLevelDb - thresholdDb;
-        var reductionDb = Math.Min(_settings.DePopperAmountDb, overThresholdDb * 0.9d);
-        return high + low * DbToLinear(-reductionDb);
+        _dePopperGain = SmoothReductionGain(
+            _dePopperGain,
+            targetGain,
+            _dePopperAttackCoefficient,
+            _dePopperReleaseCoefficient);
+        var processed = high + low * _dePopperGain;
+
+        var targetWet = _dePopperEnabled ? 1d : 0d;
+        _dePopperWet = FlushDenormal(_dePopperWet + (targetWet - _dePopperWet) * _dePopperWetCoefficient);
+        if (!_dePopperEnabled && _dePopperWet < 0.0001d)
+        {
+            _dePopperWet = 0d;
+            _dePopperLow = 0d;
+            _dePopperGain = 1d;
+        }
+        else if (_dePopperEnabled && _dePopperWet > 0.9999d)
+        {
+            _dePopperWet = 1d;
+        }
+
+        return sample + (processed - sample) * _dePopperWet;
+    }
+
+    private void UpdateEqualizerCoefficients(int sampleCount)
+    {
+        var equalizerRevision = _settings.EqualizerRevision;
+        if (equalizerRevision != _equalizerSettingsRevision)
+        {
+            _settings.CopyEqualizerGainsTo(_equalizerGainsDb);
+            _equalizerSettingsRevision = equalizerRevision;
+            _equalizerSmoothingSettled = false;
+        }
+
+        if (_equalizerSmoothingSettled)
+        {
+            return;
+        }
+
+        var smoothingCoefficient = BlockTimeCoefficient(35d, sampleCount);
+        var allBandsSettled = true;
+        _equalizerActiveBandCount = 0;
+        for (var i = 0; i < EqualizerFrequenciesHz.Length; i++)
+        {
+            var targetGainDb = Math.Clamp(_equalizerGainsDb[i], -12d, 12d);
+            _equalizerSmoothedGainsDb[i] += (targetGainDb - _equalizerSmoothedGainsDb[i]) * smoothingCoefficient;
+            if (Math.Abs(targetGainDb - _equalizerSmoothedGainsDb[i]) < 0.005d)
+            {
+                _equalizerSmoothedGainsDb[i] = targetGainDb;
+            }
+            else
+            {
+                allBandsSettled = false;
+            }
+
+            var gainDb = _equalizerSmoothedGainsDb[i];
+            if (Math.Abs(gainDb) < 0.01d)
+            {
+                var previousCoefficientGainDb = _equalizerCoefficientGainsDb[i];
+                _equalizerCoefficientGainsDb[i] = 0d;
+                _equalizerB0[i] = 1d;
+                _equalizerB1[i] = 0d;
+                _equalizerB2[i] = 0d;
+                _equalizerA1[i] = 0d;
+                _equalizerA2[i] = 0d;
+
+                if (_equalizerBandActive[i])
+                {
+                    if (_equalizerBypassDrainBlocks[i] <= 0 && Math.Abs(previousCoefficientGainDb) > 0.002d)
+                    {
+                        _equalizerBypassDrainBlocks[i] = EqualizerBypassDrainBlocks;
+                    }
+
+                    if (_equalizerBypassDrainBlocks[i] > 0)
+                    {
+                        _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
+                        _equalizerBypassDrainBlocks[i]--;
+                        allBandsSettled = false;
+                        continue;
+                    }
+
+                    ResetEqualizerBandState(i);
+                }
+
+                _equalizerBandActive[i] = false;
+                continue;
+            }
+
+            _equalizerBypassDrainBlocks[i] = 0;
+            if (_equalizerBandActive[i] && Math.Abs(gainDb - _equalizerCoefficientGainsDb[i]) < 0.002d)
+            {
+                _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
+                continue;
+            }
+
+            _equalizerBandActive[i] = true;
+            _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
+            _equalizerCoefficientGainsDb[i] = gainDb;
+            var cosine = _equalizerCosines[i];
+            var alpha = _equalizerAlphas[i];
+            var amplitude = Math.Pow(10d, gainDb / 40d);
+            var b0 = 1d + alpha * amplitude;
+            var b1 = -2d * cosine;
+            var b2 = 1d - alpha * amplitude;
+            var a0 = 1d + alpha / amplitude;
+            var a1 = -2d * cosine;
+            var a2 = 1d - alpha / amplitude;
+
+            _equalizerB0[i] = b0 / a0;
+            _equalizerB1[i] = b1 / a0;
+            _equalizerB2[i] = b2 / a0;
+            _equalizerA1[i] = a1 / a0;
+            _equalizerA2[i] = a2 / a0;
+        }
+
+        _equalizerSmoothingSettled = allBandsSettled;
+    }
+
+    private void InitializeEqualizerFrequencyCache()
+    {
+        var nyquist = _sampleRate / 2d;
+        for (var i = 0; i < EqualizerFrequenciesHz.Length; i++)
+        {
+            var frequencyHz = Math.Clamp(EqualizerFrequenciesHz[i], 20d, nyquist * 0.92d);
+            var omega = 2d * Math.PI * frequencyHz / _sampleRate;
+            var sine = Math.Sin(omega);
+            _equalizerCosines[i] = Math.Cos(omega);
+            _equalizerAlphas[i] = sine / (2d * EqualizerQ);
+        }
+    }
+
+    private void ResetEqualizerBandState(int bandIndex)
+    {
+        _equalizerX1[bandIndex] = 0d;
+        _equalizerX2[bandIndex] = 0d;
+        _equalizerY1[bandIndex] = 0d;
+        _equalizerY2[bandIndex] = 0d;
+    }
+
+    private double ApplyEqualizer(double sample)
+    {
+        for (var activeBandIndex = 0; activeBandIndex < _equalizerActiveBandCount; activeBandIndex++)
+        {
+            var i = _equalizerActiveBandIndices[activeBandIndex];
+
+            var output = _equalizerB0[i] * sample
+                + _equalizerB1[i] * _equalizerX1[i]
+                + _equalizerB2[i] * _equalizerX2[i]
+                - _equalizerA1[i] * _equalizerY1[i]
+                - _equalizerA2[i] * _equalizerY2[i];
+            _equalizerX2[i] = _equalizerX1[i];
+            _equalizerX1[i] = FlushDenormal(sample);
+            _equalizerY2[i] = _equalizerY1[i];
+            _equalizerY1[i] = FlushDenormal(output);
+            sample = _equalizerY1[i];
+        }
+
+        return sample;
     }
 
     private double ApplyNoiseGate(double sample)
     {
-        if (!_settings.NoiseGateEnabled)
+        if (!_noiseGateEnabled)
         {
-            _gateOpenness = 1d;
-            _gateHoldSamplesRemaining = 0;
-            return sample;
+            if (_gateWet <= 0d)
+            {
+                ResetNoiseGateState();
+                return sample;
+            }
+
+            _gateWet = FlushDenormal(_gateWet + (0d - _gateWet) * _noiseGateWetCoefficient);
+            _gateOpenness = FlushDenormal(_gateOpenness + (1d - _gateOpenness) * _noiseGateAttackCoefficient);
+            _gateOpenness = Math.Clamp(_gateOpenness, _noiseGateRange, 1d);
+            if (_gateWet < 0.0001d)
+            {
+                _gateWet = 0d;
+                ResetNoiseGateState();
+            }
+
+            return sample + (sample * _gateOpenness - sample) * _gateWet;
         }
 
-        var threshold = DbToLinear(_settings.NoiseGateThresholdDb);
-        var level = Math.Abs(sample);
-        var gateRange = DbToLinear(-Math.Clamp(_settings.NoiseGateRangeDb, 6d, 60d));
+        var level = TrackLevelEnvelope(
+            ref _gateDetectorEnvelope,
+            Math.Abs(sample),
+            _noiseGateDetectorAttackCoefficient,
+            _noiseGateDetectorReleaseCoefficient);
         double targetOpenness;
-        if (level >= threshold)
+        if (level >= _noiseGateThreshold)
         {
             targetOpenness = 1d;
-            _gateHoldSamplesRemaining = (int)(Math.Clamp(_settings.NoiseGateHoldMs, 0d, 500d) * SampleRate / 1000d);
+            _gateHoldSamplesRemaining = _noiseGateHoldSamples;
         }
         else if (_gateHoldSamplesRemaining > 0)
         {
@@ -182,34 +684,77 @@ public sealed class VoiceSampleProcessor
         }
         else
         {
-            var openness = Math.Clamp(level / Math.Max(0.000001d, threshold), 0d, 1d);
-            targetOpenness = gateRange + (1d - gateRange) * openness * openness;
+            var openness = Math.Clamp(level / Math.Max(0.000001d, _noiseGateThreshold), 0d, 1d);
+            targetOpenness = _noiseGateRange + (1d - _noiseGateRange) * openness * openness;
         }
 
         var coefficient = targetOpenness > _gateOpenness
-            ? TimeCoefficient(_settings.NoiseGateAttackMs)
-            : TimeCoefficient(_settings.NoiseGateReleaseMs);
+            ? _noiseGateAttackCoefficient
+            : _noiseGateReleaseCoefficient;
         _gateOpenness += (targetOpenness - _gateOpenness) * coefficient;
-        _gateOpenness = Math.Clamp(_gateOpenness, gateRange, 1d);
-        return sample * _gateOpenness;
+        _gateOpenness = Math.Clamp(_gateOpenness, _noiseGateRange, 1d);
+        _gateWet = FlushDenormal(_gateWet + (1d - _gateWet) * _noiseGateWetCoefficient);
+        if (_gateWet > 0.9999d)
+        {
+            _gateWet = 1d;
+        }
+
+        return sample + (sample * _gateOpenness - sample) * _gateWet;
+    }
+
+    private void ResetNoiseGateState()
+    {
+        if (_gateDetectorEnvelope == 0d
+            && _gateOpenness == 1d
+            && _gateWet == 0d
+            && _gateHoldSamplesRemaining == 0)
+        {
+            return;
+        }
+
+        _gateDetectorEnvelope = 0d;
+        _gateOpenness = 1d;
+        _gateWet = 0d;
+        _gateHoldSamplesRemaining = 0;
     }
 
     private double ApplyExpander(double sample)
     {
-        if (!_settings.ExpanderEnabled)
+        if (!_expanderEnabled)
         {
-            _expanderGain = 1d;
-            _expanderHoldSamplesRemaining = 0;
-            return sample;
+            if (_expanderWet <= 0d)
+            {
+                ResetExpanderState();
+                return sample;
+            }
+
+            _expanderWet = FlushDenormal(_expanderWet + (0d - _expanderWet) * _expanderWetCoefficient);
+            _expanderGain = SmoothReductionGain(
+                _expanderGain,
+                1d,
+                _expanderAttackCoefficient,
+                _expanderReleaseCoefficient);
+
+            if (_expanderWet < 0.0001d)
+            {
+                _expanderWet = 0d;
+                ResetExpanderState();
+            }
+
+            return sample + (sample * Math.Clamp(_expanderGain, _expanderMinimumGain, 1d) - sample) * _expanderWet;
         }
 
-        var levelDb = LinearToDb(Math.Abs(sample));
-        var thresholdDb = Math.Clamp(_settings.ExpanderThresholdDb, -70d, -15d);
+        var level = TrackLevelEnvelope(
+            ref _expanderDetectorEnvelope,
+            Math.Abs(sample),
+            _expanderDetectorAttackCoefficient,
+            _expanderDetectorReleaseCoefficient);
+        var levelDb = LinearToDb(level);
         double targetGain;
-        if (levelDb >= thresholdDb)
+        if (levelDb >= _expanderThresholdDb)
         {
             targetGain = 1d;
-            _expanderHoldSamplesRemaining = (int)(Math.Clamp(_settings.ExpanderHoldMs, 0d, 500d) * SampleRate / 1000d);
+            _expanderHoldSamplesRemaining = _expanderHoldSamples;
         }
         else if (_expanderHoldSamplesRemaining > 0)
         {
@@ -218,32 +763,122 @@ public sealed class VoiceSampleProcessor
         }
         else
         {
-            var distanceBelowThreshold = thresholdDb - levelDb;
-            var ratio = Math.Clamp(_settings.ExpanderRatio, 1d, 6d);
-            var reductionDb = Math.Min(Math.Clamp(_settings.ExpanderRangeDb, 0d, 48d), distanceBelowThreshold * (ratio - 1d));
+            var distanceBelowThreshold = _expanderThresholdDb - levelDb;
+            var reductionDb = Math.Min(_expanderRangeDb, distanceBelowThreshold * (_expanderRatio - 1d));
             targetGain = DbToLinear(-reductionDb);
         }
 
         var coefficient = targetGain > _expanderGain
-            ? TimeCoefficient(_settings.ExpanderAttackMs)
-            : TimeCoefficient(_settings.ExpanderReleaseMs);
+            ? _expanderAttackCoefficient
+            : _expanderReleaseCoefficient;
         _expanderGain += (targetGain - _expanderGain) * coefficient;
-        return sample * Math.Clamp(_expanderGain, DbToLinear(-Math.Clamp(_settings.ExpanderRangeDb, 0d, 48d)), 1d);
+        var gain = Math.Clamp(_expanderGain, _expanderMinimumGain, 1d);
+        _expanderWet = FlushDenormal(_expanderWet + (1d - _expanderWet) * _expanderWetCoefficient);
+        if (_expanderWet > 0.9999d)
+        {
+            _expanderWet = 1d;
+        }
+
+        return sample + (sample * gain - sample) * _expanderWet;
+    }
+
+    private void ResetExpanderState()
+    {
+        if (_expanderDetectorEnvelope == 0d
+            && _expanderGain == 1d
+            && _expanderWet == 0d
+            && _expanderHoldSamplesRemaining == 0)
+        {
+            return;
+        }
+
+        _expanderDetectorEnvelope = 0d;
+        _expanderGain = 1d;
+        _expanderWet = 0d;
+        _expanderHoldSamplesRemaining = 0;
+    }
+
+    private static double TrackLevelEnvelope(ref double envelope, double level, double attackCoefficient, double releaseCoefficient)
+    {
+        var coefficient = level > envelope ? attackCoefficient : releaseCoefficient;
+        envelope = FlushDenormal(envelope + (level - envelope) * coefficient);
+        return envelope;
     }
 
     private double ApplyNoiseSuppression(double sample)
     {
-        if (!_settings.NoiseSuppressionEnabled || _settings.NoiseSuppressionAmountDb <= 0)
+        if (!_noiseSuppressionEnabled)
         {
-            return sample;
+            if (_noiseSuppressionWet <= 0d)
+            {
+                ResetNoiseSuppressionState();
+                return sample;
+            }
+
+            TrackNoiseFloor(Math.Abs(sample));
+            _noiseSuppressionWet = FlushDenormal(_noiseSuppressionWet + (0d - _noiseSuppressionWet) * _noiseSuppressionWetCoefficient);
+            _noiseSuppressionGain = SmoothReductionGain(
+                _noiseSuppressionGain,
+                1d,
+                _noiseSuppressionAttackCoefficient,
+                _noiseSuppressionReleaseCoefficient);
+
+            if (_noiseSuppressionWet < 0.0001d)
+            {
+                _noiseSuppressionWet = 0d;
+                ResetNoiseSuppressionState();
+            }
+
+            return sample + (sample * _noiseSuppressionGain - sample) * _noiseSuppressionWet;
         }
 
         var instantLevel = Math.Abs(sample);
         _noiseSuppressionEnvelope = instantLevel > _noiseSuppressionEnvelope
             ? _noiseSuppressionEnvelope + (instantLevel - _noiseSuppressionEnvelope) * 0.12d
             : _noiseSuppressionEnvelope + (instantLevel - _noiseSuppressionEnvelope) * 0.004d;
+        _noiseSuppressionEnvelope = FlushDenormal(_noiseSuppressionEnvelope);
 
         var level = _noiseSuppressionEnvelope;
+        TrackNoiseFloor(level);
+
+        var noiseThreshold = Math.Max(0.000001d, _noiseFloor * _noiseSuppressionNoiseFloorMultiplier);
+        var targetGain = 1d;
+        if (level < noiseThreshold)
+        {
+            var openness = Math.Clamp(level / noiseThreshold, 0d, 1d);
+            targetGain = _noiseSuppressionDepth + (1d - _noiseSuppressionDepth) * openness * openness;
+        }
+
+        _noiseSuppressionGain = SmoothReductionGain(
+            _noiseSuppressionGain,
+            targetGain,
+            _noiseSuppressionAttackCoefficient,
+            _noiseSuppressionReleaseCoefficient);
+        _noiseSuppressionWet = FlushDenormal(_noiseSuppressionWet + (1d - _noiseSuppressionWet) * _noiseSuppressionWetCoefficient);
+        if (_noiseSuppressionWet > 0.9999d)
+        {
+            _noiseSuppressionWet = 1d;
+        }
+
+        return sample + (sample * _noiseSuppressionGain - sample) * _noiseSuppressionWet;
+    }
+
+    private void ResetNoiseSuppressionState()
+    {
+        if (_noiseSuppressionEnvelope == 0d
+            && _noiseSuppressionGain == 1d
+            && _noiseSuppressionWet == 0d)
+        {
+            return;
+        }
+
+        _noiseSuppressionEnvelope = 0d;
+        _noiseSuppressionGain = 1d;
+        _noiseSuppressionWet = 0d;
+    }
+
+    private void TrackNoiseFloor(double level)
+    {
         if (level < _noiseFloor * 3d)
         {
             _noiseFloor += (level - _noiseFloor) * 0.002d;
@@ -253,74 +888,136 @@ public sealed class VoiceSampleProcessor
             _noiseFloor += (level - _noiseFloor) * 0.00002d;
         }
 
-        var sensitivity = Math.Clamp(_settings.NoiseSuppressionSensitivity, 1d, 10d);
-        var noiseThreshold = Math.Max(0.000001d, _noiseFloor * (11d - sensitivity));
-        if (level >= noiseThreshold)
-        {
-            return sample;
-        }
-
-        var depth = DbToLinear(-_settings.NoiseSuppressionAmountDb);
-        var openness = Math.Clamp(level / noiseThreshold, 0d, 1d);
-        var gain = depth + (1d - depth) * openness * openness;
-        return sample * gain;
+        _noiseFloor = Math.Clamp(FlushDenormal(_noiseFloor), 0.0000001d, 0.25d);
     }
 
     private double ApplyEchoReducer(double sample)
     {
-        if (!_settings.EchoReducerEnabled || _settings.EchoReducerAmountDb <= 0)
+        if (!_echoReducerEnabled)
         {
-            _echoEnvelope = Math.Abs(sample);
-            _echoRecentPeak = Math.Max(_echoRecentPeak * 0.999d, _echoEnvelope);
-            return sample;
+            if (_echoReducerWet <= 0d)
+            {
+                ResetEchoReducerState();
+                return sample;
+            }
+
+            TrackEchoEnvelope(Math.Abs(sample));
+            _echoReducerWet = FlushDenormal(_echoReducerWet + (0d - _echoReducerWet) * _echoReducerWetCoefficient);
+            _echoReducerGain = SmoothReductionGain(
+                _echoReducerGain,
+                1d,
+                _echoReducerAttackCoefficient,
+                _echoReducerReleaseCoefficient);
+
+            if (_echoReducerWet < 0.0001d)
+            {
+                _echoReducerWet = 0d;
+                ResetEchoReducerState();
+            }
+
+            return sample + (sample * _echoReducerGain - sample) * _echoReducerWet;
         }
 
-        var level = Math.Abs(sample);
+        TrackEchoEnvelope(Math.Abs(sample));
+
+        var targetGain = 1d;
+        if (_echoRecentPeak >= 0.0005d && _echoEnvelope <= _echoRecentPeak * _echoReducerTailWindow)
+        {
+            var tailRatio = Math.Clamp(_echoEnvelope / Math.Max(0.000001d, _echoRecentPeak * _echoReducerTailWindow), 0d, 1d);
+            targetGain = _echoReducerMaximumReduction + (1d - _echoReducerMaximumReduction) * tailRatio;
+        }
+
+        _echoReducerGain = SmoothReductionGain(
+            _echoReducerGain,
+            targetGain,
+            _echoReducerAttackCoefficient,
+            _echoReducerReleaseCoefficient);
+        _echoReducerWet = FlushDenormal(_echoReducerWet + (1d - _echoReducerWet) * _echoReducerWetCoefficient);
+        if (_echoReducerWet > 0.9999d)
+        {
+            _echoReducerWet = 1d;
+        }
+
+        return sample + (sample * _echoReducerGain - sample) * _echoReducerWet;
+    }
+
+    private void TrackEchoEnvelope(double level)
+    {
         _echoEnvelope = level > _echoEnvelope
             ? _echoEnvelope + (level - _echoEnvelope) * 0.08d
             : _echoEnvelope + (level - _echoEnvelope) * 0.004d;
+        _echoEnvelope = FlushDenormal(_echoEnvelope);
         _echoRecentPeak = Math.Max(_echoRecentPeak * 0.9995d, _echoEnvelope);
+        _echoRecentPeak = FlushDenormal(_echoRecentPeak);
+    }
 
-        var sensitivity = Math.Clamp(_settings.EchoReducerSensitivity, 1d, 10d);
-        var tailWindow = Math.Clamp(0.7d - sensitivity * 0.045d, 0.2d, 0.65d);
-        if (_echoRecentPeak < 0.0005d || _echoEnvelope > _echoRecentPeak * tailWindow)
+    private void ResetEchoReducerState()
+    {
+        if (_echoEnvelope == 0d
+            && _echoRecentPeak == 0d
+            && _echoReducerGain == 1d
+            && _echoReducerWet == 0d)
         {
-            return sample;
+            return;
         }
 
-        var tailRatio = Math.Clamp(_echoEnvelope / Math.Max(0.000001d, _echoRecentPeak * tailWindow), 0d, 1d);
-        var maxReduction = DbToLinear(-_settings.EchoReducerAmountDb);
-        var gain = maxReduction + (1d - maxReduction) * tailRatio;
-        return sample * gain;
+        _echoEnvelope = 0d;
+        _echoRecentPeak = 0d;
+        _echoReducerGain = 1d;
+        _echoReducerWet = 0d;
     }
 
     private double ApplyCompressor(double sample)
     {
-        if (!_settings.CompressorEnabled)
+        if (!_compressorEnabled)
         {
-            _lastGainReductionDb = 0d;
-            return sample;
+            if (_compressorWet <= 0d)
+            {
+                _lastGainReductionDb = 0d;
+                ResetCompressorState();
+                return sample;
+            }
+
+            _compressorWet = FlushDenormal(_compressorWet + (0d - _compressorWet) * _compressorWetCoefficient);
+            _compressorGain = SmoothReductionGain(
+                _compressorGain,
+                1d,
+                _compressorAttackCoefficient,
+                _compressorReleaseCoefficient);
+
+            if (_compressorWet < 0.0001d)
+            {
+                _compressorWet = 0d;
+                ResetCompressorState();
+            }
+
+            _lastGainReductionDb = _compressorWet > 0d
+                ? Math.Max(0d, -LinearToDb(Math.Clamp(_compressorGain, 0.000001d, 1d))) * _compressorWet
+                : 0d;
+            return sample + (sample * Math.Clamp(_compressorGain, 0d, 1d) - sample) * _compressorWet;
         }
 
-        var level = Math.Abs(sample);
-        var attack = TimeCoefficient(_settings.CompressorAttackMs);
-        var release = TimeCoefficient(_settings.CompressorReleaseMs);
+        var detectorSample = GetCompressorDetectorSample(sample);
+        var level = Math.Abs(detectorSample);
         _envelope = level > _envelope
-            ? _envelope + (level - _envelope) * attack
-            : _envelope + (level - _envelope) * release;
+            ? _envelope + (level - _envelope) * _compressorAttackCoefficient
+            : _envelope + (level - _envelope) * _compressorReleaseCoefficient;
+        _envelope = FlushDenormal(_envelope);
 
-        var levelDb = LinearToDb(_envelope);
-        var overThresholdDb = levelDb - _settings.CompressorThresholdDb;
-        var kneeDb = Math.Clamp(_settings.CompressorKneeDb, 0d, 18d);
+        _compressorRmsEnvelope = FlushDenormal(_compressorRmsEnvelope + (level * level - _compressorRmsEnvelope) * _compressorRmsCoefficient);
+        var rmsLevel = Math.Sqrt(Math.Max(0d, _compressorRmsEnvelope));
+        var detectorLevel = Math.Max(rmsLevel, _envelope * 0.55d);
+
+        var levelDb = LinearToDb(detectorLevel);
+        var overThresholdDb = levelDb - _compressorThresholdDb;
+        var kneeDb = _compressorKneeDb;
+        var ratio = _compressorRatio;
+        var gainDb = 0d;
         if (kneeDb <= 0d && overThresholdDb <= 0d)
         {
-            _lastGainReductionDb = 0d;
-            return sample;
+            gainDb = 0d;
         }
-
-        var ratio = Math.Max(1d, _settings.CompressorRatio);
-        double gainDb;
-        if (kneeDb > 0d && overThresholdDb > -kneeDb / 2d && overThresholdDb < kneeDb / 2d)
+        else if (kneeDb > 0d && overThresholdDb > -kneeDb / 2d && overThresholdDb < kneeDb / 2d)
         {
             var kneePosition = overThresholdDb + kneeDb / 2d;
             gainDb = (1d / ratio - 1d) * kneePosition * kneePosition / (2d * kneeDb);
@@ -331,117 +1028,248 @@ public sealed class VoiceSampleProcessor
         }
         else
         {
-            _lastGainReductionDb = 0d;
-            return sample;
+            gainDb = 0d;
         }
 
-        _lastGainReductionDb = Math.Abs(gainDb);
-        return sample * DbToLinear(gainDb);
+        var targetGain = DbToLinear(gainDb);
+        var gainCoefficient = targetGain < _compressorGain
+            ? _compressorAttackCoefficient
+            : _compressorReleaseCoefficient;
+        _compressorGain = FlushDenormal(_compressorGain + (targetGain - _compressorGain) * gainCoefficient);
+        _compressorGain = Math.Clamp(_compressorGain, 0d, 1d);
+        _lastGainReductionDb = Math.Max(0d, -LinearToDb(_compressorGain));
+        _compressorWet = FlushDenormal(_compressorWet + (1d - _compressorWet) * _compressorWetCoefficient);
+        if (_compressorWet > 0.9999d)
+        {
+            _compressorWet = 1d;
+        }
+
+        return sample + (sample * _compressorGain - sample) * _compressorWet;
+    }
+
+    private void ResetCompressorState()
+    {
+        if (_envelope == 0d
+            && _compressorRmsEnvelope == 0d
+            && _compressorSidechainLow == 0d
+            && _compressorGain == 1d
+            && _compressorWet == 0d
+            && _lastGainReductionDb == 0d)
+        {
+            return;
+        }
+
+        _envelope = 0d;
+        _compressorRmsEnvelope = 0d;
+        _compressorSidechainLow = 0d;
+        _compressorGain = 1d;
+        _compressorWet = 0d;
+        _lastGainReductionDb = 0d;
+    }
+
+    private double GetCompressorDetectorSample(double sample)
+    {
+        _compressorSidechainLow = FlushDenormal(_compressorSidechainLow + (sample - _compressorSidechainLow) * _compressorSidechainLowPassCoefficient);
+        var sidechainHigh = sample - _compressorSidechainLow;
+        return sidechainHigh + sample * 0.35d;
     }
 
     private double ApplyDeEsser(double sample)
     {
-        if (!_settings.DeEsserEnabled || _settings.DeEsserAmountDb <= 0)
+        if (!_deEsserEnabled && _deEsserWet <= 0d)
         {
+            ResetDeEsserState();
             return sample;
         }
 
-        var sibilance = ApplyDeEsserHighPass(sample);
+        var sibilance = ApplyDeEsserBandPass(sample);
         var body = sample - sibilance;
-        var sibilanceLevelDb = LinearToDb(Math.Abs(sibilance));
-        var thresholdDb = Math.Clamp(_settings.DeEsserThresholdDb, -60d, -12d);
-        if (sibilanceLevelDb <= thresholdDb)
+        var sibilanceLevel = TrackLevelEnvelope(
+            ref _deEsserDetectorEnvelope,
+            Math.Abs(sibilance),
+            _deEsserDetectorAttackCoefficient,
+            _deEsserDetectorReleaseCoefficient);
+        var sibilanceLevelDb = LinearToDb(sibilanceLevel);
+        var reductionDb = 0d;
+        if (sibilanceLevelDb > _deEsserThresholdDb)
         {
-            return sample;
+            var overThresholdDb = sibilanceLevelDb - _deEsserThresholdDb;
+            reductionDb = Math.Min(_deEsserRangeDb, overThresholdDb * (0.35d + _deEsserSensitivity * 0.55d));
         }
 
-        var overThresholdDb = sibilanceLevelDb - thresholdDb;
-        var rangeDb = Math.Clamp(_settings.DeEsserRangeDb, 1d, 18d);
-        var sensitivity = Math.Clamp(_settings.DeEsserAmountDb, 0d, 12d) / 12d;
-        var reductionDb = Math.Min(rangeDb, overThresholdDb * (0.35d + sensitivity * 0.55d));
-        return body + sibilance * DbToLinear(-reductionDb);
+        var targetGain = DbToLinear(-reductionDb);
+        var gainCoefficient = targetGain < _deEsserGain
+            ? _deEsserAttackCoefficient
+            : _deEsserReleaseCoefficient;
+        _deEsserGain = FlushDenormal(_deEsserGain + (targetGain - _deEsserGain) * gainCoefficient);
+        _deEsserGain = Math.Clamp(_deEsserGain, 0d, 1d);
+        var processed = body + sibilance * _deEsserGain;
+
+        var targetWet = _deEsserEnabled ? 1d : 0d;
+        _deEsserWet = FlushDenormal(_deEsserWet + (targetWet - _deEsserWet) * _deEsserWetCoefficient);
+        if (!_deEsserEnabled && _deEsserWet < 0.0001d)
+        {
+            _deEsserWet = 0d;
+            ResetDeEsserState();
+        }
+        else if (_deEsserEnabled && _deEsserWet > 0.9999d)
+        {
+            _deEsserWet = 1d;
+        }
+
+        return sample + (processed - sample) * _deEsserWet;
     }
 
     private double ApplyPresenceEnhancer(double sample)
     {
-        if (!_settings.PresenceEnhancerEnabled || _settings.PresenceEnhancerAmountDb <= 0)
+        if (!_presenceEnhancerEnabled && _presenceWet <= 0d)
         {
+            ResetPresenceState();
             return sample;
         }
 
-        var centerHz = Math.Clamp(_settings.PresenceEnhancerFrequencyHz, 1500d, 6500d);
-        var widthHz = Math.Clamp(_settings.PresenceEnhancerWidthHz, 800d, 5000d);
-        var highPassHz = Math.Max(300d, centerHz - widthHz / 2d);
-        var lowPassHz = Math.Min(9000d, centerHz + widthHz / 2d);
-        var highPassRc = 1d / (2d * Math.PI * highPassHz);
-        var dt = 1d / SampleRate;
-        var highPassAlpha = highPassRc / (highPassRc + dt);
-        var high = highPassAlpha * (_previousPresenceHigh + sample - _previousPresenceInput);
-        _previousPresenceInput = sample;
+        var high = FlushDenormal(_presenceHighPassAlpha * (_previousPresenceHigh + sample - _previousPresenceInput));
+        _previousPresenceInput = FlushDenormal(sample);
         _previousPresenceHigh = high;
 
-        var lowPassAlpha = 1d - Math.Exp(-2d * Math.PI * lowPassHz / SampleRate);
-        _presenceBand += lowPassAlpha * (high - _presenceBand);
+        _presenceBand = FlushDenormal(_presenceBand + _presenceLowPassAlpha * (high - _presenceBand));
+        var targetGuardGain = _deEsserEnabled
+            ? Math.Clamp(0.65d + _deEsserGain * 0.35d, 0.65d, 1d)
+            : 1d;
+        var guardCoefficient = targetGuardGain < _presenceGuardGain
+            ? _deEsserAttackCoefficient
+            : _deEsserReleaseCoefficient;
+        _presenceGuardGain = FlushDenormal(_presenceGuardGain + (targetGuardGain - _presenceGuardGain) * guardCoefficient);
 
-        var blend = Math.Clamp(DbToLinear(_settings.PresenceEnhancerAmountDb) - 1d, 0d, 1.5d);
-        return sample + _presenceBand * blend;
+        var processed = sample + _presenceBand * _presenceBlend * _presenceGuardGain;
+        var targetWet = _presenceEnhancerEnabled ? 1d : 0d;
+        _presenceWet = FlushDenormal(_presenceWet + (targetWet - _presenceWet) * _presenceWetCoefficient);
+        if (!_presenceEnhancerEnabled && _presenceWet < 0.0001d)
+        {
+            _presenceWet = 0d;
+            ResetPresenceState();
+        }
+        else if (_presenceEnhancerEnabled && _presenceWet > 0.9999d)
+        {
+            _presenceWet = 1d;
+        }
+
+        return sample + (processed - sample) * _presenceWet;
     }
 
-    private double ApplyDeEsserHighPass(double sample)
+    private void ResetPresenceState()
     {
-        var cutoffHz = Math.Clamp(_settings.DeEsserFrequencyHz, 3500d, 10000d);
-        var rc = 1d / (2d * Math.PI * cutoffHz);
-        var dt = 1d / SampleRate;
-        var alpha = rc / (rc + dt);
-        var output = alpha * (_previousDeEsserOutput + sample - _previousDeEsserInput);
-        _previousDeEsserInput = sample;
+        if (_previousPresenceInput == 0d
+            && _previousPresenceHigh == 0d
+            && _presenceBand == 0d
+            && _presenceGuardGain == 1d
+            && _presenceWet == 0d)
+        {
+            return;
+        }
+
+        _previousPresenceInput = 0d;
+        _previousPresenceHigh = 0d;
+        _presenceBand = 0d;
+        _presenceGuardGain = 1d;
+        _presenceWet = 0d;
+    }
+
+    private double ApplyDeEsserBandPass(double sample)
+    {
+        var output = FlushDenormal(_deEsserHighPassAlpha * (_previousDeEsserOutput + sample - _previousDeEsserInput));
+        _previousDeEsserInput = FlushDenormal(sample);
         _previousDeEsserOutput = output;
-        return output;
+        _deEsserBand = FlushDenormal(_deEsserBand + _deEsserLowPassAlpha * (output - _deEsserBand));
+        return _deEsserBand;
     }
 
-    private double ApplyMakeupGain(double sample)
+    private void ResetDeEsserState()
     {
-        return sample * DbToLinear(_settings.MakeupGainDb);
+        if (_previousDeEsserInput == 0d
+            && _previousDeEsserOutput == 0d
+            && _deEsserBand == 0d
+            && _deEsserDetectorEnvelope == 0d
+            && _deEsserGain == 1d
+            && _deEsserWet == 0d)
+        {
+            return;
+        }
+
+        _previousDeEsserInput = 0d;
+        _previousDeEsserOutput = 0d;
+        _deEsserBand = 0d;
+        _deEsserDetectorEnvelope = 0d;
+        _deEsserGain = 1d;
+        _deEsserWet = 0d;
     }
 
     private double ApplyLimiter(double sample)
     {
-        if (!_settings.LimiterEnabled)
+        var drySample = sample;
+        if (!_limiterEnabled && _limiterWet <= 0d)
         {
-            ResetLimiterLookahead();
-            _limiterGain = 1d;
-            return sample;
+            _limiterSoftClipWet = 0d;
+            ResetLimiterState();
+            return drySample;
         }
 
-        var ceiling = DbToLinear(_settings.LimiterCeilingDb);
-        var desiredGain = Math.Abs(sample) > ceiling
-            ? ceiling / Math.Max(0.000001d, Math.Abs(sample))
-            : 1d;
-        if (_settings.LimiterLookaheadEnabled && _settings.LimiterLookaheadMs > 0)
+        var targetWet = _limiterEnabled ? 1d : 0d;
+        _limiterWet = FlushDenormal(_limiterWet + (targetWet - _limiterWet) * _limiterWetCoefficient);
+        if (!_limiterEnabled && _limiterWet < 0.0001d)
         {
-            var lookaheadSamples = Math.Clamp((int)(SampleRate * _settings.LimiterLookaheadMs / 1000d), 1, (int)(SampleRate * 0.02d));
-            if (_limiterLookaheadSamples != lookaheadSamples)
+            _limiterWet = 0d;
+            _limiterSoftClipWet = 0d;
+            ResetLimiterState();
+            return drySample;
+        }
+        else if (_limiterEnabled && _limiterWet > 0.9999d)
+        {
+            _limiterWet = 1d;
+        }
+
+        _limiterCeiling += (_limiterTargetCeiling - _limiterCeiling) * _limiterCeilingCoefficient;
+        var ceiling = Math.Clamp(_limiterCeiling, 0.001d, 1d);
+        if (!_limiterEnabled)
+        {
+            ResetLimiterLookahead();
+            _limiterGain = SmoothReductionGain(
+                _limiterGain,
+                1d,
+                _limiterAttackCoefficient,
+                _limiterReleaseCoefficient);
+            _limiterSoftClipWet = FlushDenormal(_limiterSoftClipWet + (0d - _limiterSoftClipWet) * _limiterSoftClipWetCoefficient);
+            if (_limiterSoftClipWet < 0.0001d)
             {
-                ResetLimiterLookahead();
-                _limiterLookaheadSamples = lookaheadSamples;
+                _limiterSoftClipWet = 0d;
             }
 
-            _limiterLookaheadBuffer.Enqueue(sample);
-            _limiterLookaheadPeak = Math.Max(_limiterLookaheadPeak, Math.Abs(sample));
-            if (_limiterLookaheadBuffer.Count <= lookaheadSamples)
+            var bypassLimited = Math.Clamp(sample * Math.Clamp(_limiterGain, 0d, 1d), -ceiling, ceiling);
+            var bypassReduction = Math.Max(0d, -LinearToDb(Math.Clamp(_limiterGain, 0.000001d, 1d))) * _limiterWet;
+            _limiterEnvelopeReductionDb = bypassReduction > _limiterEnvelopeReductionDb
+                ? bypassReduction
+                : _limiterEnvelopeReductionDb + (bypassReduction - _limiterEnvelopeReductionDb) * _limiterReleaseCoefficient;
+            _limiterEnvelopeReductionDb = FlushDenormal(_limiterEnvelopeReductionDb);
+            return drySample + (bypassLimited - drySample) * _limiterWet;
+        }
+
+        var detectorPeak = CalculateLimiterDetectorPeak(sample);
+        var desiredGain = detectorPeak > ceiling
+            ? ceiling / Math.Max(0.000001d, detectorPeak)
+            : 1d;
+        var usingLookahead = false;
+        if (_limiterEnabled && _limiterLookaheadTargetSamples > 0)
+        {
+            usingLookahead = true;
+            if (!TryGetLimiterDelayedSample(sample, detectorPeak, _limiterLookaheadTargetSamples, out var delayedSample, out var lookaheadPeak))
             {
                 return 0d;
             }
 
-            desiredGain = _limiterLookaheadPeak > ceiling
-                ? ceiling / Math.Max(0.000001d, _limiterLookaheadPeak)
+            desiredGain = lookaheadPeak > ceiling
+                ? ceiling / Math.Max(0.000001d, lookaheadPeak)
                 : 1d;
-            var delayedSample = _limiterLookaheadBuffer.Dequeue();
             sample = delayedSample;
-            if (Math.Abs(delayedSample) >= _limiterLookaheadPeak - 0.000000001d)
-            {
-                RecalculateLimiterLookaheadPeak();
-            }
         }
         else
         {
@@ -449,48 +1277,218 @@ public sealed class VoiceSampleProcessor
         }
 
         var gainCoefficient = desiredGain < _limiterGain
-            ? TimeCoefficient(1d)
-            : TimeCoefficient(_settings.LimiterReleaseMs);
-        _limiterGain += (desiredGain - _limiterGain) * gainCoefficient;
+            ? _limiterAttackCoefficient
+            : _limiterReleaseCoefficient;
+        _limiterGain = usingLookahead && desiredGain < _limiterGain
+            ? desiredGain
+            : FlushDenormal(_limiterGain + (desiredGain - _limiterGain) * gainCoefficient);
         sample *= Math.Clamp(_limiterGain, 0d, 1d);
 
-        if (_settings.LimiterSoftClipEnabled)
+        var targetSoftClipWet = _limiterEnabled && _limiterSoftClipEnabled ? 1d : 0d;
+        _limiterSoftClipWet = FlushDenormal(_limiterSoftClipWet + (targetSoftClipWet - _limiterSoftClipWet) * _limiterSoftClipWetCoefficient);
+        if (targetSoftClipWet == 0d && _limiterSoftClipWet < 0.0001d)
         {
-            var drive = DbToLinear(Math.Clamp(_settings.LimiterSoftClipDriveDb, 0d, 12d));
-            sample = Math.Tanh(sample * drive / Math.Max(0.000001d, ceiling)) * ceiling;
+            _limiterSoftClipWet = 0d;
+        }
+        else if (targetSoftClipWet == 1d && _limiterSoftClipWet > 0.9999d)
+        {
+            _limiterSoftClipWet = 1d;
+        }
+
+        if (_limiterSoftClipWet > 0d)
+        {
+            var clipped = ApplyTransparentSoftClip(sample, ceiling);
+            sample += (clipped - sample) * _limiterSoftClipWet;
         }
 
         var limited = Math.Clamp(sample, -ceiling, ceiling);
-        var instantReduction = ReductionDb(sample, limited);
-        var coefficient = TimeCoefficient(_settings.LimiterReleaseMs);
+        var sampleAbs = Math.Abs(sample);
+        var limitedAbs = Math.Abs(limited);
+        var instantReduction = sampleAbs > limitedAbs
+            ? Math.Clamp(20d * Math.Log10(sampleAbs / Math.Max(0.0000001d, limitedAbs)), 0d, 60d)
+            : 0d;
+        instantReduction *= _limiterWet;
         _limiterEnvelopeReductionDb = instantReduction > _limiterEnvelopeReductionDb
             ? instantReduction
-            : _limiterEnvelopeReductionDb + (instantReduction - _limiterEnvelopeReductionDb) * coefficient;
-        return limited;
+            : _limiterEnvelopeReductionDb + (instantReduction - _limiterEnvelopeReductionDb) * _limiterReleaseCoefficient;
+        _limiterEnvelopeReductionDb = FlushDenormal(_limiterEnvelopeReductionDb);
+        return drySample + (limited - drySample) * _limiterWet;
+    }
+
+    private void ResetLimiterState()
+    {
+        ResetLimiterLookahead();
+        _limiterPreviousDetectorSample = 0d;
+        _limiterGain = 1d;
+        _limiterEnvelopeReductionDb = 0d;
+    }
+
+    private double CalculateLimiterDetectorPeak(double sample)
+    {
+        var peak = Math.Max(Math.Abs(sample), Math.Abs(_limiterPreviousDetectorSample));
+        _limiterPreviousDetectorSample = sample;
+        return peak * DbToLinear(LimiterTruePeakDetectorMarginDb);
+    }
+
+    private double ApplyTransparentSoftClip(double sample, double ceiling)
+    {
+        var absoluteSample = Math.Abs(sample);
+        if (absoluteSample <= 0d)
+        {
+            return sample;
+        }
+
+        var kneeStart = ceiling * _limiterSoftClipKneeFactor;
+        if (absoluteSample <= kneeStart)
+        {
+            return sample;
+        }
+
+        var kneeDepth = Math.Max(0.000001d, ceiling - kneeStart);
+        var overKnee = Math.Clamp((absoluteSample - kneeStart) / kneeDepth, 0d, 1.5d);
+        var shaped = kneeStart + kneeDepth * Math.Tanh(overKnee * _limiterSoftClipCurve) / _limiterSoftClipCurveDenominator;
+        return Math.CopySign(Math.Min(shaped, ceiling), sample);
+    }
+
+    private static double ApplyOutputSafetyClip(double sample)
+    {
+        const double kneeStart = 0.985d;
+        var absoluteSample = Math.Abs(sample);
+        if (absoluteSample <= kneeStart)
+        {
+            return sample;
+        }
+
+        var kneeDepth = 1d - kneeStart;
+        var overKnee = Math.Clamp((absoluteSample - kneeStart) / kneeDepth, 0d, 8d);
+        var shaped = kneeStart + kneeDepth * Math.Tanh(overKnee);
+        return Math.CopySign(Math.Min(shaped, 1d), sample);
     }
 
     private void ResetLimiterLookahead()
     {
-        _limiterLookaheadBuffer.Clear();
+        if (_limiterLookaheadSamples == 0
+            && _limiterLookaheadWriteIndex == 0
+            && _limiterLookaheadPeakIndex == -1
+            && _limiterLookaheadCount == 0
+            && _limiterLookaheadPeak == 0d)
+        {
+            return;
+        }
+
+        Array.Clear(_limiterLookaheadBuffer);
+        Array.Clear(_limiterLookaheadPeakBuffer);
         _limiterLookaheadPeak = 0d;
         _limiterLookaheadSamples = 0;
+        _limiterLookaheadWriteIndex = 0;
+        _limiterLookaheadPeakIndex = -1;
+        _limiterLookaheadCount = 0;
+    }
+
+    private bool TryGetLimiterDelayedSample(double sample, double detectorPeak, int lookaheadSamples, out double delayedSample, out double lookaheadPeak)
+    {
+        var capacity = lookaheadSamples + 1;
+        if (_limiterLookaheadSamples != lookaheadSamples
+            || _limiterLookaheadBuffer.Length != capacity
+            || _limiterLookaheadPeakBuffer.Length != capacity)
+        {
+            _limiterLookaheadBuffer = new double[capacity];
+            _limiterLookaheadPeakBuffer = new double[capacity];
+            Array.Fill(_limiterLookaheadBuffer, sample);
+            Array.Fill(_limiterLookaheadPeakBuffer, detectorPeak);
+            _limiterLookaheadSamples = lookaheadSamples;
+            _limiterLookaheadWriteIndex = 0;
+            _limiterLookaheadPeakIndex = 0;
+            _limiterLookaheadCount = capacity;
+            _limiterLookaheadPeak = detectorPeak;
+        }
+
+        var insertedIndex = _limiterLookaheadWriteIndex;
+        _limiterLookaheadBuffer[insertedIndex] = sample;
+        _limiterLookaheadPeakBuffer[insertedIndex] = detectorPeak;
+        if (_limiterLookaheadPeakIndex < 0 || detectorPeak >= _limiterLookaheadPeak)
+        {
+            _limiterLookaheadPeak = detectorPeak;
+            _limiterLookaheadPeakIndex = insertedIndex;
+        }
+
+        _limiterLookaheadWriteIndex++;
+        if (_limiterLookaheadWriteIndex == capacity)
+        {
+            _limiterLookaheadWriteIndex = 0;
+        }
+        if (_limiterLookaheadCount < capacity)
+        {
+            _limiterLookaheadCount++;
+        }
+
+        if (_limiterLookaheadCount <= lookaheadSamples)
+        {
+            delayedSample = 0d;
+            lookaheadPeak = _limiterLookaheadPeak;
+            return false;
+        }
+
+        var delayedIndex = _limiterLookaheadWriteIndex;
+        delayedSample = _limiterLookaheadBuffer[delayedIndex];
+        lookaheadPeak = _limiterLookaheadPeak;
+        _limiterLookaheadBuffer[delayedIndex] = 0d;
+        _limiterLookaheadPeakBuffer[delayedIndex] = 0d;
+        if (delayedIndex == _limiterLookaheadPeakIndex)
+        {
+            RecalculateLimiterLookaheadPeak();
+        }
+
+        return true;
     }
 
     private void RecalculateLimiterLookaheadPeak()
     {
         var peak = 0d;
-        foreach (var bufferedSample in _limiterLookaheadBuffer)
+        var peakIndex = -1;
+        for (var i = 0; i < _limiterLookaheadPeakBuffer.Length; i++)
         {
-            peak = Math.Max(peak, Math.Abs(bufferedSample));
+            var bufferedSamplePeak = _limiterLookaheadPeakBuffer[i];
+            if (peakIndex < 0 || bufferedSamplePeak > peak)
+            {
+                peakIndex = i;
+            }
+
+            peak = Math.Max(peak, bufferedSamplePeak);
         }
 
         _limiterLookaheadPeak = peak;
+        _limiterLookaheadPeakIndex = peakIndex;
     }
 
-    private static double TimeCoefficient(double milliseconds)
+    private double BlockTimeCoefficient(double milliseconds, int sampleCount)
     {
         var clampedMs = Math.Clamp(milliseconds, 0.1d, 2000d);
-        return 1d - Math.Exp(-1d / (SampleRate * clampedMs / 1000d));
+        var clampedSampleCount = Math.Max(1, sampleCount);
+        return 1d - Math.Exp(-clampedSampleCount / (_sampleRate * clampedMs / 1000d));
+    }
+
+    private double TimeCoefficient(double milliseconds)
+    {
+        var clampedMs = Math.Clamp(milliseconds, 0.1d, 2000d);
+        return 1d - Math.Exp(-1d / (_sampleRate * clampedMs / 1000d));
+    }
+
+    private static double SmoothReductionGain(double currentGain, double targetGain, double attackCoefficient, double releaseCoefficient)
+    {
+        var coefficient = targetGain < currentGain
+            ? attackCoefficient
+            : releaseCoefficient;
+        var gain = currentGain + (targetGain - currentGain) * coefficient;
+        return Math.Clamp(FlushDenormal(gain), 0d, 1d);
+    }
+
+    private static double SmoothLevelGain(double currentGain, double targetGain, double coefficient)
+    {
+        var gain = FlushDenormal(currentGain + (targetGain - currentGain) * coefficient);
+        return Math.Abs(gain - targetGain) < 0.000001d
+            ? targetGain
+            : gain;
     }
 
     private static double DbToLinear(double db)
@@ -503,34 +1501,26 @@ public sealed class VoiceSampleProcessor
         return 20d * Math.Log10(Math.Max(0.0000001d, linear));
     }
 
-    private static double ReductionDb(double before, double after)
+    private static double SanitizeAudioSample(double sample)
     {
-        var beforeAbs = Math.Abs(before);
-        var afterAbs = Math.Abs(after);
-        if (beforeAbs <= afterAbs)
+        if (!double.IsFinite(sample))
         {
             return 0d;
         }
 
-        return Math.Clamp(LinearToDb(beforeAbs) - LinearToDb(afterAbs), 0d, 60d);
+        return FlushDenormal(sample);
     }
 
-    private static double BoostDb(double before, double after)
+    private static double FlushDenormal(double value)
     {
-        var beforeAbs = Math.Abs(before);
-        var afterAbs = Math.Abs(after);
-        if (afterAbs <= beforeAbs)
+        if (!double.IsFinite(value))
         {
             return 0d;
         }
 
-        return Math.Clamp(LinearToDb(afterAbs) - LinearToDb(beforeAbs), 0d, 24d);
+        return Math.Abs(value) < DenormalThreshold ? 0d : value;
     }
 
-    private static double ChangeDb(double before, double after)
-    {
-        return Math.Clamp(Math.Abs(LinearToDb(Math.Abs(after)) - LinearToDb(Math.Abs(before))), 0d, 60d);
-    }
 }
 
 

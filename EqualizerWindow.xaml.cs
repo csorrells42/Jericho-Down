@@ -17,6 +17,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
+using ShapePath = System.Windows.Shapes.Path;
 
 namespace PodcastWorkbench;
 
@@ -28,22 +29,25 @@ public partial class EqualizerWindow : Window
     private const int DwmwaTextColor = 36;
     private const double MinimumDisplayFrequency = 40d;
     private const double MaximumDisplayFrequency = 20000d;
-    private const int SampleRate = 44100;
-    private const int MaximumWaveformHistorySamples = SampleRate * 3;
+    private const int DefaultWaveformSampleRate = 44100;
+    private const int MaximumWaveformHistorySeconds = 3;
     private const double MicAnalysisDurationSeconds = 8d;
     private const double SequentialMicAnalysisPhaseSeconds = 5d;
+    private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly MicrophoneSpectrumService _spectrumService = new();
     private readonly FfmpegCameraPreviewService _cameraPreviewService = new();
     private readonly FfmpegCameraModeService _cameraModeService = new();
     private readonly DirectShowCameraControlService _cameraControlService = new();
+    private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly List<Line> _waveformGridLines = [];
     private readonly object _waveformLock = new();
     private readonly object _micAnalysisLock = new();
     private readonly Queue<float> _rawWaveformHistory = new();
     private readonly Queue<float> _processedWaveformHistory = new();
+    private int _waveformSampleRate = DefaultWaveformSampleRate;
     private readonly List<Border> _zoneBands = [];
     private readonly List<Border> _zoneLabels = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
@@ -56,68 +60,86 @@ public partial class EqualizerWindow : Window
         new("Sibilance", 5000, 9000, "S, sh, and harsh bite"),
         new("Air", 10000, 16000, "Breath and sparkle")
     ];
-    private readonly Polyline _rawTrace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
-        StrokeThickness = 1.5,
-        Opacity = 0.62,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly Polyline _liveTrace = new()
+    private readonly ShapePath _liveTrace = new()
     {
         Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
         StrokeThickness = 3,
         StrokeLineJoin = PenLineJoin.Round
     };
-    private readonly Polyline _averageTrace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(215, 178, 32)),
-        StrokeThickness = 2,
-        Opacity = 0.9,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly Polyline _input1Trace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
-        StrokeThickness = 2,
-        Opacity = 0.95,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly Polyline _input2Trace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(255, 82, 82)),
-        StrokeThickness = 2,
-        Opacity = 0.95,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly Polyline _rawWaveTrace = new()
+    private readonly ShapePath _averageTrace = new()
     {
         Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
         StrokeThickness = 1.5,
         Opacity = 0.68,
         StrokeLineJoin = PenLineJoin.Round
     };
-    private readonly Polyline _processedWaveTrace = new()
+    private readonly ShapePath _input1Trace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+        StrokeThickness = 2,
+        Opacity = 0.95,
+        StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly ShapePath _input2Trace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
+        StrokeThickness = 2,
+        Opacity = 0.95,
+        StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly ShapePath _rawWaveTrace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
+        StrokeThickness = 1.5,
+        Opacity = 0.68,
+        StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly ShapePath _processedWaveTrace = new()
     {
         Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
         StrokeThickness = 2.5,
         StrokeLineJoin = PenLineJoin.Round
     };
-    private readonly Polyline _recordingSignalTrace = new()
+    private readonly ShapePath _recordingSignalTrace = new()
     {
         Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
         StrokeThickness = 2,
         StrokeLineJoin = PenLineJoin.Round
     };
+    private readonly ShapePath _recordingRawSignalTrace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
+        StrokeThickness = 1.5,
+        Opacity = 0.68,
+        StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
+    private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
+    private readonly SolidColorBrush _waveformGridBrush = new(Color.FromRgb(36, 45, 54));
+    private readonly SolidColorBrush _waveformCenterGridBrush = new(Color.FromRgb(83, 101, 117));
+    private readonly SolidColorBrush _meterMutedBrush = new(Color.FromRgb(105, 132, 156));
+    private readonly SolidColorBrush _meterTextMutedBrush = new(Color.FromRgb(184, 199, 217));
+    private readonly SolidColorBrush _meterGoodBrush = new(Color.FromRgb(66, 215, 125));
+    private readonly SolidColorBrush _meterWarnBrush = new(Color.FromRgb(215, 178, 32));
+    private readonly SolidColorBrush _meterDangerBrush = new(Color.FromRgb(218, 80, 72));
     private SpectrumFrame? _latestFrame;
     private double[] _renderedMagnitudes = [];
-    private double[] _renderedAverageMagnitudes = [];
+    private double[] _renderedRawMagnitudes = [];
     private double[] _renderedRecordingMagnitudes = [];
+    private double[] _renderedRecordingRawMagnitudes = [];
     private double[] _renderedInput1Magnitudes = [];
     private double[] _renderedInput2Magnitudes = [];
     private double _visualCeiling = 0.25d;
     private double _recordingVisualCeiling = 0.25d;
     private double _displayInputPeak;
+    private long _lastAudioStabilityDisplayTimestamp;
+    private double _audioStabilityScore;
+    private double _audioStabilityMeterWidth;
+    private double _displayedAudioFrameIntervalMs;
+    private double _displayedAudioProcessingMs;
+    private int _audioStabilitySeverity;
+    private int _audioStabilityCandidateSeverity = -1;
+    private long _audioStabilityCandidateTimestamp;
     private int _silentFrameCount;
     private readonly Dictionary<Slider, double> _processingSliderDefaults = [];
     private readonly Dictionary<Slider, string> _processingSliderBaseToolTips = [];
@@ -125,6 +147,8 @@ public partial class EqualizerWindow : Window
     private bool _isSnappingVideoDenoiseSlider;
     private AudioInputDevice? _selectedDevice;
     private AudioOutputDevice? _selectedOutputDevice;
+    private AudioDeviceFormat? _selectedDeviceFormat;
+    private bool _isRestartingAudioStream;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
@@ -144,6 +168,9 @@ public partial class EqualizerWindow : Window
     private double _pendingVideoDenoiseStrength = 2d;
     private ImageSource? _pendingCameraFrame;
     private CancellationTokenSource? _cameraModeLoadCancellation;
+    private SpectrumFrame? _pendingSpectrumFrame;
+    private int _spectrumFrameUpdateQueued;
+    private Waveform3DWindow? _waveform3DWindow;
     private bool _showWaveform;
     private bool _showMicCompare;
     private bool _isRecordingSession;
@@ -167,6 +194,7 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
+        FreezeSharedBrushes();
         OrderMainTabs();
         DataContext = Settings;
         Bands =
@@ -194,18 +222,48 @@ public partial class EqualizerWindow : Window
         ];
 
         EqBandPanel.ItemsSource = Bands;
-        SpectrumCanvas.Children.Add(_rawTrace);
+        foreach (var band in Bands)
+        {
+            band.PropertyChanged += EqualizerBandPropertyChanged;
+        }
+
+        SyncEqualizerSettings();
         SpectrumCanvas.Children.Add(_input1Trace);
         SpectrumCanvas.Children.Add(_input2Trace);
         SpectrumCanvas.Children.Add(_averageTrace);
         SpectrumCanvas.Children.Add(_liveTrace);
         WaveformCanvas.Children.Add(_rawWaveTrace);
         WaveformCanvas.Children.Add(_processedWaveTrace);
+        RecordingSignalCanvas.Children.Add(_recordingRawSignalTrace);
         RecordingSignalCanvas.Children.Add(_recordingSignalTrace);
         _spectrumService.SpectrumAvailable += SpectrumAvailable;
+        _spectrumService.StreamStatusChanged += SpectrumServiceStreamStatusChanged;
         _cameraPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged += CameraPreviewStatusChanged;
+        _audioDeviceFormatTimer.Interval = AudioDeviceFormatPollInterval;
+        _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
+    }
+
+    private void FreezeSharedBrushes()
+    {
+        FreezeBrush(_recordingDspActiveBrush);
+        FreezeBrush(_recordingNaturalAudioBrush);
+        FreezeBrush(_waveformGridBrush);
+        FreezeBrush(_waveformCenterGridBrush);
+        FreezeBrush(_meterMutedBrush);
+        FreezeBrush(_meterTextMutedBrush);
+        FreezeBrush(_meterGoodBrush);
+        FreezeBrush(_meterWarnBrush);
+        FreezeBrush(_meterDangerBrush);
+    }
+
+    private static void FreezeBrush(SolidColorBrush brush)
+    {
+        if (brush.CanFreeze)
+        {
+            brush.Freeze();
+        }
     }
 
     private void OrderMainTabs()
@@ -234,6 +292,25 @@ public partial class EqualizerWindow : Window
     public ObservableCollection<EqualizerBand> Bands { get; }
 
     public VoiceProcessorSettings Settings { get; } = new();
+
+    private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(EqualizerBand.GainDb))
+        {
+            SyncEqualizerSettings();
+        }
+    }
+
+    private void SyncEqualizerSettings()
+    {
+        var gains = new double[Bands.Count];
+        for (var i = 0; i < Bands.Count; i++)
+        {
+            gains[i] = Bands[i].GainDb;
+        }
+
+        Settings.SetEqualizerGains(gains);
+    }
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
     {
@@ -284,6 +361,7 @@ public partial class EqualizerWindow : Window
         UpdateRecordingTransportControls();
 
         LoadWarmRadioPreset();
+        _audioDeviceFormatTimer.Start();
     }
 
     private void ApplyDarkTitleBar()
@@ -336,11 +414,20 @@ public partial class EqualizerWindow : Window
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         CompositionTarget.Rendering -= CompositionTargetRendering;
+        _audioDeviceFormatTimer.Stop();
+        _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
+        _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
+        if (_waveform3DWindow is not null)
+        {
+            _waveform3DWindow.Close();
+            _waveform3DWindow = null;
+        }
+
         _cameraPreviewService.Dispose();
         _spectrumService.Dispose();
     }
@@ -1188,6 +1275,8 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = false;
         _showMicCompare = false;
+        _spectrumService.StereoInputAnalysisEnabled = false;
+        UpdateWaveformSampleRetention();
         SpectrumCanvas.Visibility = Visibility.Visible;
         WaveformCanvas.Visibility = Visibility.Collapsed;
         SpectrumViewButton.FontWeight = FontWeights.SemiBold;
@@ -1202,6 +1291,8 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = true;
         _showMicCompare = false;
+        _spectrumService.StereoInputAnalysisEnabled = false;
+        UpdateWaveformSampleRetention();
         SpectrumCanvas.Visibility = Visibility.Collapsed;
         WaveformCanvas.Visibility = Visibility.Visible;
         SpectrumViewButton.FontWeight = FontWeights.Normal;
@@ -1216,6 +1307,8 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = false;
         _showMicCompare = true;
+        _spectrumService.StereoInputAnalysisEnabled = true;
+        UpdateWaveformSampleRetention();
         SpectrumCanvas.Visibility = Visibility.Visible;
         WaveformCanvas.Visibility = Visibility.Collapsed;
         SpectrumViewButton.FontWeight = FontWeights.Normal;
@@ -1224,6 +1317,43 @@ public partial class EqualizerWindow : Window
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
         MicCompareLegendPanel.Visibility = Visibility.Visible;
         UpdateMicCompareUiState();
+    }
+
+    private void Waveform3DClicked(object sender, RoutedEventArgs e)
+    {
+        if (_waveform3DWindow is not null)
+        {
+            _waveform3DWindow.Activate();
+            return;
+        }
+
+        var window = new Waveform3DWindow
+        {
+            Owner = this
+        };
+        _waveform3DWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_waveform3DWindow, window))
+            {
+                _waveform3DWindow = null;
+                UpdateWaveformSampleRetention();
+            }
+        };
+
+        UpdateWaveformSampleRetention();
+        if (_latestFrame is not null)
+        {
+            window.AcceptFrame(_latestFrame);
+        }
+
+        window.Show();
+        window.Activate();
+    }
+
+    private void UpdateWaveformSampleRetention()
+    {
+        _spectrumService.WaveformSamplesEnabled = _showWaveform || _waveform3DWindow is not null;
     }
 
     private void UpdateMicCompareUiState()
@@ -1293,6 +1423,7 @@ public partial class EqualizerWindow : Window
     private void MicrophoneSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
+        _selectedDeviceFormat = GetSelectedDeviceFormat();
         _spectrumService.Stop();
         StartSelectedDevice();
     }
@@ -1329,21 +1460,37 @@ public partial class EqualizerWindow : Window
         var enabled = ProcessedOutputCheckBox.IsChecked == true;
         try
         {
-            _spectrumService.ConfigureProcessedOutput(enabled, _selectedOutputDevice.DeviceNumber);
-            OutputStatusText.Text = enabled
-                ? $"Sending processed mic to {_selectedOutputDevice.Name}. In your podcast app, select the matching virtual cable output as the mic."
-                : "Output off. Pick a virtual cable input when you want podcast routing.";
-
             if (enabled && !_spectrumService.IsRunning)
             {
                 StartSelectedDevice();
             }
+
+            _spectrumService.ConfigureProcessedOutput(enabled, _selectedOutputDevice);
+            OutputStatusText.Text = enabled
+                ? $"Sending DSP processed mic to selected output: {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
+                : "Output off. Pick a virtual cable input when you want podcast routing.";
         }
         catch (Exception ex)
         {
             ProcessedOutputCheckBox.IsChecked = false;
             OutputStatusText.Text = $"Output unavailable: {ex.Message}";
         }
+    }
+
+    private string BuildOutputFormatStatus()
+    {
+        var inputFormat = _selectedDeviceFormat ?? GetSelectedDeviceFormat();
+        var outputFormat = _selectedOutputDevice is null
+            ? null
+            : MicrophoneSpectrumService.TryGetOutputDeviceFormat(_selectedOutputDevice);
+        if (inputFormat is null || outputFormat is null)
+        {
+            return "Virtual audio cables are supported; choose the matching cable output as the mic in your DAW or podcast app.";
+        }
+
+        return inputFormat.Value.SampleRate == outputFormat.Value.SampleRate
+            ? $"Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling."
+            : $"High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
     }
 
     private void StartSelectedDevice()
@@ -1357,10 +1504,82 @@ public partial class EqualizerWindow : Window
         {
             _spectrumService.Start(_selectedDevice.DeviceNumber, Settings, _selectedInputChannelMode);
             StatusText.Text = "Listening";
+            _selectedDeviceFormat ??= GetSelectedDeviceFormat();
         }
         catch (Exception ex)
         {
             StatusText.Text = $"Mic unavailable: {ex.Message}";
+        }
+    }
+
+    private void SpectrumServiceStreamStatusChanged(object? sender, string message)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            StatusText.Text = message;
+            if (message.Contains("recovered", StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedDeviceFormat = GetSelectedDeviceFormat();
+            }
+        });
+    }
+
+    private void AudioDeviceFormatTimerTick(object? sender, EventArgs e)
+    {
+        if (_selectedDevice is null || _isRestartingAudioStream)
+        {
+            return;
+        }
+
+        var currentFormat = GetSelectedDeviceFormat();
+        if (currentFormat is null)
+        {
+            return;
+        }
+
+        if (_selectedDeviceFormat is null)
+        {
+            _selectedDeviceFormat = currentFormat;
+            return;
+        }
+
+        if (currentFormat.Value == _selectedDeviceFormat.Value)
+        {
+            return;
+        }
+
+        var previousFormat = _selectedDeviceFormat.Value;
+        _selectedDeviceFormat = currentFormat;
+        RestartSelectedAudioStream($"Audio device changed from {previousFormat} to {currentFormat.Value}; reopened mic stream.");
+    }
+
+    private AudioDeviceFormat? GetSelectedDeviceFormat()
+    {
+        return _selectedDevice is null
+            ? null
+            : MicrophoneSpectrumService.TryGetInputDeviceFormat(_selectedDevice);
+    }
+
+    private void RestartSelectedAudioStream(string statusMessage)
+    {
+        if (_selectedDevice is null)
+        {
+            return;
+        }
+
+        _isRestartingAudioStream = true;
+        try
+        {
+            _spectrumService.RestartCurrentCapture();
+            StatusText.Text = statusMessage;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Audio stream refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            _isRestartingAudioStream = false;
         }
     }
 
@@ -1655,8 +1874,37 @@ public partial class EqualizerWindow : Window
 
     private void SpectrumAvailable(object? sender, SpectrumFrame frame)
     {
+        System.Threading.Interlocked.Exchange(ref _pendingSpectrumFrame, frame);
+        if (System.Threading.Interlocked.Exchange(ref _spectrumFrameUpdateQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)ProcessPendingSpectrumFrame, DispatcherPriority.Background);
+    }
+
+    private void ProcessPendingSpectrumFrame()
+    {
+        var frame = System.Threading.Interlocked.Exchange(ref _pendingSpectrumFrame, null);
+        if (frame is not null)
+        {
+            AcceptSpectrumFrame(frame);
+        }
+
+        System.Threading.Volatile.Write(ref _spectrumFrameUpdateQueued, 0);
+        if (System.Threading.Volatile.Read(ref _pendingSpectrumFrame) is not null
+            && System.Threading.Interlocked.Exchange(ref _spectrumFrameUpdateQueued, 1) == 0)
+        {
+            Dispatcher.BeginInvoke((Action)ProcessPendingSpectrumFrame, DispatcherPriority.Background);
+        }
+    }
+
+    private void AcceptSpectrumFrame(SpectrumFrame frame)
+    {
         _latestFrame = frame;
+        _waveformSampleRate = Math.Max(8000, frame.SampleRate);
         CollectMicAnalysisFrame(frame);
+        _waveform3DWindow?.AcceptFrame(frame);
         AppendWaveformHistory(frame.RawSamples, frame.ProcessedSamples);
     }
 
@@ -1730,67 +1978,91 @@ public partial class EqualizerWindow : Window
 
         var livePoints = new PointCollection();
         var rawPoints = new PointCollection();
-        var averagePoints = new PointCollection();
         var input1Points = new PointCollection();
         var input2Points = new PointCollection();
-        var frameCeilingSource = _showMicCompare && frame.HasStereoInput
-            ? frame.Input1Magnitudes.Select(ShapeMagnitude).Concat(frame.Input2Magnitudes.Select(ShapeMagnitude))
-            : frame.Magnitudes
-                .Select((magnitude, index) => ShapeMagnitude(magnitude) * GetVisualGainForBar(index, frame.Magnitudes.Length))
-                .Concat(frame.RawMagnitudes.Select(ShapeMagnitude));
-        var frameCeiling = Math.Max(0.08d, frameCeilingSource.DefaultIfEmpty(0.08d).Max());
-        _visualCeiling = frameCeiling > _visualCeiling
-            ? Ease(_visualCeiling, frameCeiling, 0.08d)
-            : Ease(_visualCeiling, frameCeiling, 0.015d);
-        EnsureRenderBuffers(frame.Magnitudes.Length);
-        EnsureInputRenderBuffers(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
-
-        for (var i = 0; i < frame.Magnitudes.Length; i++)
-        {
-            var eqGain = GetVisualGainForBar(i, frame.Magnitudes.Length);
-            var shaped = NormalizeForDisplay(ShapeMagnitude(frame.Magnitudes[i]) * eqGain);
-            var rawShaped = NormalizeForDisplay(ShapeMagnitude(frame.RawMagnitudes[Math.Min(i, frame.RawMagnitudes.Length - 1)]));
-            _renderedMagnitudes[i] = Ease(_renderedMagnitudes[i], shaped, 0.105d);
-            _renderedAverageMagnitudes[i] = Ease(_renderedAverageMagnitudes[i], _renderedMagnitudes[i], 0.022d);
-
-            var x = frame.Magnitudes.Length == 1
-                ? 0d
-                : i / (double)(frame.Magnitudes.Length - 1) * width;
-            rawPoints.Add(new Point(x, graphBottom - usableHeight * rawShaped));
-            livePoints.Add(new Point(x, graphBottom - usableHeight * _renderedMagnitudes[i]));
-            averagePoints.Add(new Point(x, graphBottom - usableHeight * _renderedAverageMagnitudes[i]));
-        }
-
+        var frameCeiling = 0.08d;
         if (_showMicCompare && frame.HasStereoInput)
         {
             for (var i = 0; i < frame.Input1Magnitudes.Length; i++)
             {
+                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Input1Magnitudes[i]));
+            }
+
+            for (var i = 0; i < frame.Input2Magnitudes.Length; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Input2Magnitudes[i]));
+            }
+        }
+        else
+        {
+            for (var i = 0; i < frame.Magnitudes.Length; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Magnitudes[i]));
+            }
+
+            for (var i = 0; i < frame.RawMagnitudes.Length; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.RawMagnitudes[i]));
+            }
+        }
+
+        _visualCeiling = frameCeiling > _visualCeiling
+            ? Ease(_visualCeiling, frameCeiling, 0.08d)
+            : Ease(_visualCeiling, frameCeiling, 0.015d);
+        EnsureRenderBuffers(frame.Magnitudes.Length, frame.RawMagnitudes.Length);
+        EnsureInputRenderBuffers(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
+
+        for (var i = 0; i < frame.Magnitudes.Length; i++)
+        {
+            var shaped = NormalizeForDisplay(ShapeMagnitude(frame.Magnitudes[i]));
+            _renderedMagnitudes[i] = Ease(_renderedMagnitudes[i], shaped, 0.105d);
+
+            var x = frame.Magnitudes.Length == 1
+                ? 0d
+                : i / (double)(frame.Magnitudes.Length - 1) * width;
+            livePoints.Add(new Point(x, graphBottom - usableHeight * _renderedMagnitudes[i]));
+        }
+
+        for (var i = 0; i < frame.RawMagnitudes.Length; i++)
+        {
+            var rawShaped = NormalizeForDisplay(ShapeMagnitude(frame.RawMagnitudes[i]));
+            _renderedRawMagnitudes[i] = Ease(_renderedRawMagnitudes[i], rawShaped, 0.105d);
+            var x = frame.RawMagnitudes.Length == 1
+                ? 0d
+                : i / (double)(frame.RawMagnitudes.Length - 1) * width;
+            rawPoints.Add(new Point(x, graphBottom - usableHeight * _renderedRawMagnitudes[i]));
+        }
+
+        if (_showMicCompare && frame.HasStereoInput)
+        {
+            var compareLength = Math.Min(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
+            for (var i = 0; i < compareLength; i++)
+            {
                 var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input1Magnitudes[i]) + _micAnalysisInput1DisplayOffset, 0d, 1d));
-                var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input2Magnitudes[Math.Min(i, frame.Input2Magnitudes.Length - 1)]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
+                var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input2Magnitudes[i]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
                 _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, 0.09d);
                 _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, 0.09d);
 
-                var x = frame.Input1Magnitudes.Length == 1
+                var x = compareLength == 1
                     ? 0d
-                    : i / (double)(frame.Input1Magnitudes.Length - 1) * width;
+                    : i / (double)(compareLength - 1) * width;
                 input1Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput1Magnitudes[i]));
                 input2Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput2Magnitudes[i]));
             }
         }
 
-        _rawTrace.Points = SmoothPoints(rawPoints);
-        _input1Trace.Points = SmoothPoints(input1Points);
-        _input2Trace.Points = SmoothPoints(input2Points);
-        _rawTrace.Visibility = _showMicCompare ? Visibility.Collapsed : Visibility.Visible;
+        _input1Trace.Data = CreateSmoothedGeometry(input1Points);
+        _input2Trace.Data = CreateSmoothedGeometry(input2Points);
         _averageTrace.Visibility = _showMicCompare ? Visibility.Collapsed : Visibility.Visible;
         _liveTrace.Visibility = _showMicCompare ? Visibility.Collapsed : Visibility.Visible;
         _input1Trace.Visibility = _showMicCompare && frame.HasStereoInput ? Visibility.Visible : Visibility.Collapsed;
         _input2Trace.Visibility = _showMicCompare && frame.HasStereoInput ? Visibility.Visible : Visibility.Collapsed;
-        _liveTrace.Points = SmoothPoints(livePoints);
-        _averageTrace.Points = SmoothPoints(averagePoints);
+        _liveTrace.Data = CreateSmoothedGeometry(livePoints);
+        _averageTrace.Data = CreateSmoothedGeometry(rawPoints);
         PeakText.Text = _showMicCompare && frame.HasStereoInput
             ? $"Mic 1 {frame.Input1PeakLevel:P0}  Mic 2 {frame.Input2PeakLevel:P0}"
             : $"Peak {frame.PeakLevel:P0}";
+        UpdateAudioStability(frame);
         UpdateInputCoach(frame.RawPeakLevel);
         UpdateSignalStatus(frame.PeakLevel);
     }
@@ -1814,21 +2086,25 @@ public partial class EqualizerWindow : Window
 
         EnsureWaveformGrid(width, graphTop, graphBottom, centerY);
 
+        var sampleRate = Math.Max(8000, frame.SampleRate);
+        var requestedSamples = Math.Clamp((int)(sampleRate * WaveformTimeSlider.Value / 1000d), 512, sampleRate);
+        var snapshotSamples = WaveformTriggerCheckBox.IsChecked == true
+            ? Math.Min(sampleRate * MaximumWaveformHistorySeconds, requestedSamples * 2)
+            : requestedSamples;
         float[] rawSamples;
         float[] processedSamples;
         lock (_waveformLock)
         {
-            rawSamples = _rawWaveformHistory.ToArray();
-            processedSamples = _processedWaveformHistory.ToArray();
+            rawSamples = CopyLatestWaveformSamples(_rawWaveformHistory, snapshotSamples);
+            processedSamples = CopyLatestWaveformSamples(_processedWaveformHistory, snapshotSamples);
         }
 
-        var requestedSamples = Math.Clamp((int)(SampleRate * WaveformTimeSlider.Value / 1000d), 512, SampleRate);
         var startIndex = WaveformTriggerCheckBox.IsChecked == true
             ? FindTriggeredStart(processedSamples, requestedSamples)
             : Math.Max(0, processedSamples.Length - requestedSamples);
 
-        _rawWaveTrace.Points = CreateWaveformPoints(rawSamples, startIndex, requestedSamples, width, centerY, halfHeight);
-        _processedWaveTrace.Points = CreateWaveformPoints(processedSamples, startIndex, requestedSamples, width, centerY, halfHeight);
+        _rawWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(rawSamples, startIndex, requestedSamples, width, centerY, halfHeight));
+        _processedWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(processedSamples, startIndex, requestedSamples, width, centerY, halfHeight));
     }
 
     private void RenderRecordingSignalStrip(SpectrumFrame frame)
@@ -1837,8 +2113,8 @@ public partial class EqualizerWindow : Window
             ? "DSP active"
             : "Recording natural audio";
         RecordingDspIndicator.Fill = RecordProcessedAudioCheckBox.IsChecked == true
-            ? new SolidColorBrush(Color.FromRgb(66, 215, 125))
-            : new SolidColorBrush(Color.FromRgb(215, 178, 32));
+            ? _recordingDspActiveBrush
+            : _recordingNaturalAudioBrush;
 
         var width = Math.Max(1d, RecordingSignalCanvas.ActualWidth);
         var height = Math.Max(1d, RecordingSignalCanvas.ActualHeight);
@@ -1846,24 +2122,28 @@ public partial class EqualizerWindow : Window
         var graphBottom = Math.Max(graphTop + 1d, height - 12d);
         var usableHeight = graphBottom - graphTop;
 
-        if (_renderedRecordingMagnitudes.Length != frame.Magnitudes.Length)
+        var frameCeiling = 0.08d;
+        for (var i = 0; i < frame.Magnitudes.Length; i++)
         {
-            _renderedRecordingMagnitudes = new double[frame.Magnitudes.Length];
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Magnitudes[i]));
         }
 
-        var frameCeiling = Math.Max(0.08d, frame.Magnitudes
-            .Select((magnitude, index) => ShapeMagnitude(magnitude) * GetVisualGainForBar(index, frame.Magnitudes.Length))
-            .DefaultIfEmpty(0.08d)
-            .Max());
+        for (var i = 0; i < frame.RawMagnitudes.Length; i++)
+        {
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.RawMagnitudes[i]));
+        }
+
         _recordingVisualCeiling = frameCeiling > _recordingVisualCeiling
             ? Ease(_recordingVisualCeiling, frameCeiling, 0.10d)
             : Ease(_recordingVisualCeiling, frameCeiling, 0.025d);
 
+        EnsureRecordingRenderBuffers(frame.Magnitudes.Length, frame.RawMagnitudes.Length);
+
         var points = new PointCollection();
+        var rawPoints = new PointCollection();
         for (var i = 0; i < frame.Magnitudes.Length; i++)
         {
-            var eqGain = GetVisualGainForBar(i, frame.Magnitudes.Length);
-            var shaped = ShapeMagnitude(frame.Magnitudes[i]) * eqGain;
+            var shaped = ShapeMagnitude(frame.Magnitudes[i]);
             var normalized = Math.Clamp(shaped / Math.Max(0.08d, _recordingVisualCeiling) * 0.78d, 0d, 0.92d);
             _renderedRecordingMagnitudes[i] = Ease(_renderedRecordingMagnitudes[i], normalized, 0.14d);
 
@@ -1873,7 +2153,18 @@ public partial class EqualizerWindow : Window
             points.Add(new Point(x, graphBottom - usableHeight * _renderedRecordingMagnitudes[i]));
         }
 
-        _recordingSignalTrace.Points = SmoothPoints(points);
+        for (var i = 0; i < frame.RawMagnitudes.Length; i++)
+        {
+            var normalized = Math.Clamp(ShapeMagnitude(frame.RawMagnitudes[i]) / Math.Max(0.08d, _recordingVisualCeiling) * 0.78d, 0d, 0.92d);
+            _renderedRecordingRawMagnitudes[i] = Ease(_renderedRecordingRawMagnitudes[i], normalized, 0.14d);
+            var x = frame.RawMagnitudes.Length == 1
+                ? 0d
+                : i / (double)(frame.RawMagnitudes.Length - 1) * width;
+            rawPoints.Add(new Point(x, graphBottom - usableHeight * _renderedRecordingRawMagnitudes[i]));
+        }
+
+        _recordingSignalTrace.Data = CreateSmoothedGeometry(points);
+        _recordingRawSignalTrace.Data = CreateSmoothedGeometry(rawPoints);
         PeakText.Text = $"Peak {frame.PeakLevel:P0}";
     }
 
@@ -1896,17 +2187,43 @@ public partial class EqualizerWindow : Window
                 _processedWaveformHistory.Enqueue(sample);
             }
 
-            TrimWaveformHistory(_rawWaveformHistory);
-            TrimWaveformHistory(_processedWaveformHistory);
+            TrimWaveformHistory(_rawWaveformHistory, _waveformSampleRate);
+            TrimWaveformHistory(_processedWaveformHistory, _waveformSampleRate);
         }
     }
 
-    private static void TrimWaveformHistory(Queue<float> samples)
+    private static void TrimWaveformHistory(Queue<float> samples, int sampleRate)
     {
-        while (samples.Count > MaximumWaveformHistorySamples)
+        var maximumSamples = Math.Max(DefaultWaveformSampleRate, sampleRate) * MaximumWaveformHistorySeconds;
+        while (samples.Count > maximumSamples)
         {
             samples.Dequeue();
         }
+    }
+
+    private static float[] CopyLatestWaveformSamples(Queue<float> samples, int requestedSamples)
+    {
+        var copyCount = Math.Clamp(requestedSamples, 0, samples.Count);
+        if (copyCount == 0)
+        {
+            return [];
+        }
+
+        var snapshot = new float[copyCount];
+        var skipCount = samples.Count - copyCount;
+        var index = 0;
+        var queueIndex = 0;
+        foreach (var sample in samples)
+        {
+            if (queueIndex++ < skipCount)
+            {
+                continue;
+            }
+
+            snapshot[index++] = sample;
+        }
+
+        return snapshot;
     }
 
     private void EnsureWaveformGrid(double width, double graphTop, double graphBottom, double centerY)
@@ -1916,7 +2233,7 @@ public partial class EqualizerWindow : Window
         {
             var line = new Line
             {
-                Stroke = new SolidColorBrush(Color.FromRgb(36, 45, 54)),
+                Stroke = _waveformGridBrush,
                 StrokeThickness = 1,
                 Opacity = 0.82
             };
@@ -1935,8 +2252,8 @@ public partial class EqualizerWindow : Window
             line.Opacity = Math.Abs(y - centerY) < 1d ? 1d : 0.55d;
             line.StrokeThickness = Math.Abs(y - centerY) < 1d ? 2d : 1d;
             line.Stroke = Math.Abs(y - centerY) < 1d
-                ? new SolidColorBrush(Color.FromRgb(83, 101, 117))
-                : new SolidColorBrush(Color.FromRgb(36, 45, 54));
+                ? _waveformCenterGridBrush
+                : _waveformGridBrush;
         }
 
         for (var i = 0; i < 7; i++)
@@ -1949,7 +2266,7 @@ public partial class EqualizerWindow : Window
             line.Y2 = graphBottom;
             line.Opacity = 0.55d;
             line.StrokeThickness = 1d;
-            line.Stroke = new SolidColorBrush(Color.FromRgb(36, 45, 54));
+            line.Stroke = _waveformGridBrush;
         }
     }
 
@@ -1976,20 +2293,20 @@ public partial class EqualizerWindow : Window
 
     private static PointCollection CreateWaveformPoints(float[] samples, int startIndex, int requestedSamples, double width, double centerY, double halfHeight)
     {
-        var points = new PointCollection();
         if (samples.Length == 0)
         {
-            return points;
+            return new PointCollection();
         }
 
         var availableSamples = Math.Clamp(samples.Length - startIndex, 0, requestedSamples);
         if (availableSamples <= 0)
         {
-            return points;
+            return new PointCollection();
         }
 
         var stride = Math.Max(1, availableSamples / 1000);
         var pointCount = (availableSamples + stride - 1) / stride;
+        var points = new PointCollection(pointCount);
         for (var pointIndex = 0; pointIndex < pointCount; pointIndex++)
         {
             var sampleIndex = Math.Min(samples.Length - 1, startIndex + pointIndex * stride);
@@ -2015,54 +2332,130 @@ public partial class EqualizerWindow : Window
         if (peakDb < -36d)
         {
             InputCoachText.Text = $"Input: too quiet ({peakDb:0} dB)";
-            InputCoachText.Foreground = new SolidColorBrush(Color.FromRgb(184, 199, 217));
-            InputLevelMeter.Fill = new SolidColorBrush(Color.FromRgb(105, 132, 156));
+            InputCoachText.Foreground = _meterTextMutedBrush;
+            InputLevelMeter.Fill = _meterMutedBrush;
         }
         else if (peakDb < -12d)
         {
             InputCoachText.Text = $"Input: good ({peakDb:0} dB)";
-            InputCoachText.Foreground = new SolidColorBrush(Color.FromRgb(66, 215, 125));
-            InputLevelMeter.Fill = new SolidColorBrush(Color.FromRgb(66, 215, 125));
+            InputCoachText.Foreground = _meterGoodBrush;
+            InputLevelMeter.Fill = _meterGoodBrush;
         }
         else if (peakDb < -3d)
         {
             InputCoachText.Text = $"Input: hot ({peakDb:0} dB)";
-            InputCoachText.Foreground = new SolidColorBrush(Color.FromRgb(215, 178, 32));
-            InputLevelMeter.Fill = new SolidColorBrush(Color.FromRgb(215, 178, 32));
+            InputCoachText.Foreground = _meterWarnBrush;
+            InputLevelMeter.Fill = _meterWarnBrush;
         }
         else
         {
             InputCoachText.Text = $"Input: clipping risk ({peakDb:0} dB)";
-            InputCoachText.Foreground = new SolidColorBrush(Color.FromRgb(218, 80, 72));
-            InputLevelMeter.Fill = new SolidColorBrush(Color.FromRgb(218, 80, 72));
+            InputCoachText.Foreground = _meterDangerBrush;
+            InputLevelMeter.Fill = _meterDangerBrush;
         }
     }
 
-    private double GetVisualGainForBar(int barIndex, int barCount)
+    private void UpdateAudioStability(SpectrumFrame frame)
     {
-        var frequency = FrequencyForBar(barIndex, barCount);
-        var bandIndex = 0;
-        var bestDistance = double.MaxValue;
-
-        for (var i = 0; i < Bands.Count; i++)
+        var now = Stopwatch.GetTimestamp();
+        if (_lastAudioStabilityDisplayTimestamp != 0)
         {
-            var distance = Math.Abs(Math.Log(frequency) - Math.Log(Bands[i].CenterFrequencyHz));
-            if (distance >= bestDistance)
+            var displayElapsedMs = (now - _lastAudioStabilityDisplayTimestamp) * 1000d / Stopwatch.Frequency;
+            if (displayElapsedMs < 300d)
             {
-                continue;
+                return;
             }
-
-            bestDistance = distance;
-            bandIndex = i;
         }
 
-        return Math.Pow(10d, Bands[bandIndex].GainDb / 20d);
+        _lastAudioStabilityDisplayTimestamp = now;
+        var telemetry = frame.Telemetry;
+        var callbackMs = telemetry.AudioCallbackIntervalMs;
+        var processingMs = telemetry.AudioProcessingTimeMs;
+        var bufferMs = Math.Max(1d, telemetry.AudioBufferDurationMs);
+        var expectedFrameMs = telemetry.AudioExpectedCallbackIntervalMs > 0d
+            ? Math.Max(bufferMs, telemetry.AudioExpectedCallbackIntervalMs)
+            : Math.Max(bufferMs, callbackMs);
+        var frameIntervalMs = callbackMs > 0d ? Math.Max(1d, callbackMs) : expectedFrameMs;
+
+        _displayedAudioFrameIntervalMs = SmoothAudioTiming(_displayedAudioFrameIntervalMs, frameIntervalMs, 0.18d);
+        _displayedAudioProcessingMs = SmoothAudioTiming(_displayedAudioProcessingMs, processingMs, 0.18d);
+
+        var dspLoadRatio = Math.Clamp(_displayedAudioProcessingMs / Math.Max(0.001d, _displayedAudioFrameIntervalMs), 0d, 1.25d);
+        _audioStabilityScore += (dspLoadRatio - _audioStabilityScore) * 0.2d;
+
+        var desiredSeverity = _audioStabilityScore switch
+        {
+            >= 0.85d => 2,
+            >= 0.65d => 1,
+            _ => 0
+        };
+
+        var severity = UpdateAudioStabilitySeverity(desiredSeverity, now);
+        var meterHostWidth = AudioStabilityMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
+            ? meterHost.ActualWidth
+            : 260d;
+        var targetMeterWidth = Math.Clamp(_audioStabilityScore * meterHostWidth, 0d, meterHostWidth);
+        _audioStabilityMeterWidth = _audioStabilityMeterWidth <= 0d
+            ? targetMeterWidth
+            : _audioStabilityMeterWidth + (targetMeterWidth - _audioStabilityMeterWidth) * 0.24d;
+
+        var fill = severity switch
+        {
+            0 => _meterGoodBrush,
+            1 => _meterWarnBrush,
+            _ => _meterDangerBrush
+        };
+        var label = severity switch
+        {
+            0 => "Headroom",
+            1 => "Busy",
+            _ => "Tight"
+        };
+
+        AudioStabilityIndicator.Fill = fill;
+        AudioStabilityMeter.Fill = fill;
+        AudioStabilityMeter.Width = Math.Clamp(_audioStabilityMeterWidth, 0d, meterHostWidth);
+        AudioStabilityText.Foreground = fill;
+        AudioStabilityText.Text = $"{label}: frame {_displayedAudioFrameIntervalMs:0.0} ms ({1000d / Math.Max(0.001d, _displayedAudioFrameIntervalMs):0}/s), DSP avg {_displayedAudioProcessingMs:0.0} ms, load {_audioStabilityScore:P0}";
     }
 
-    private static double FrequencyForBar(int barIndex, int barCount)
+    private static double SmoothAudioTiming(double current, double next, double amount)
     {
-        var position = barIndex / Math.Max(1d, barCount - 1d);
-        return MinimumDisplayFrequency * Math.Pow(MaximumDisplayFrequency / MinimumDisplayFrequency, position);
+        if (current <= 0d)
+        {
+            return Math.Max(0d, next);
+        }
+
+        return current + (Math.Max(0d, next) - current) * amount;
+    }
+
+    private int UpdateAudioStabilitySeverity(int desiredSeverity, long timestamp)
+    {
+        if (desiredSeverity == _audioStabilitySeverity)
+        {
+            _audioStabilityCandidateSeverity = -1;
+            _audioStabilityCandidateTimestamp = 0;
+            return _audioStabilitySeverity;
+        }
+
+        if (_audioStabilityCandidateSeverity != desiredSeverity)
+        {
+            _audioStabilityCandidateSeverity = desiredSeverity;
+            _audioStabilityCandidateTimestamp = timestamp;
+            return _audioStabilitySeverity;
+        }
+
+        var requiredMs = desiredSeverity > _audioStabilitySeverity ? 900d : 1400d;
+        var elapsedMs = (timestamp - _audioStabilityCandidateTimestamp) * 1000d / Stopwatch.Frequency;
+        if (elapsedMs < requiredMs)
+        {
+            return _audioStabilitySeverity;
+        }
+
+        _audioStabilitySeverity = desiredSeverity;
+        _audioStabilityCandidateSeverity = -1;
+        _audioStabilityCandidateTimestamp = 0;
+        return _audioStabilitySeverity;
     }
 
     private static double ShapeMagnitude(double magnitude)
@@ -2077,15 +2470,17 @@ public partial class EqualizerWindow : Window
         return Math.Clamp(magnitude / Math.Max(0.08d, _visualCeiling) * 0.62d * gain / 6d, 0d, 0.88d);
     }
 
-    private void EnsureRenderBuffers(int length)
+    private void EnsureRenderBuffers(int processedLength, int rawLength)
     {
-        if (_renderedMagnitudes.Length == length)
+        if (_renderedMagnitudes.Length != processedLength)
         {
-            return;
+            _renderedMagnitudes = new double[processedLength];
         }
 
-        _renderedMagnitudes = new double[length];
-        _renderedAverageMagnitudes = new double[length];
+        if (_renderedRawMagnitudes.Length != rawLength)
+        {
+            _renderedRawMagnitudes = new double[rawLength];
+        }
     }
 
     private void EnsureInputRenderBuffers(int input1Length, int input2Length)
@@ -2101,20 +2496,53 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void EnsureRecordingRenderBuffers(int processedLength, int rawLength)
+    {
+        if (_renderedRecordingMagnitudes.Length != processedLength)
+        {
+            _renderedRecordingMagnitudes = new double[processedLength];
+        }
+
+        if (_renderedRecordingRawMagnitudes.Length != rawLength)
+        {
+            _renderedRecordingRawMagnitudes = new double[rawLength];
+        }
+    }
+
     private static double Ease(double current, double target, double amount)
     {
         return current + (target - current) * amount;
     }
 
-    private static PointCollection SmoothPoints(PointCollection source)
+    private static Geometry CreatePolylineGeometry(PointCollection source)
+    {
+        if (source.Count < 2)
+        {
+            return Geometry.Empty;
+        }
+
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(source[0], isFilled: false, isClosed: false);
+            context.PolyLineTo(source.Skip(1).ToList(), isStroked: true, isSmoothJoin: false);
+        }
+
+        geometry.Freeze();
+        return geometry;
+    }
+
+    private static Geometry CreateSmoothedGeometry(PointCollection source)
     {
         if (source.Count < 4)
         {
-            return source;
+            return CreatePolylineGeometry(source);
         }
 
-        var smoothed = new PointCollection(source.Count * 2);
-        smoothed.Add(source[0]);
+        var smoothed = new List<Point>(source.Count * 2)
+        {
+            source[0]
+        };
 
         for (var i = 1; i < source.Count - 2; i++)
         {
@@ -2129,7 +2557,16 @@ public partial class EqualizerWindow : Window
 
         smoothed.Add(source[^2]);
         smoothed.Add(source[^1]);
-        return smoothed;
+
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(smoothed[0], isFilled: false, isClosed: false);
+            context.PolyLineTo(smoothed.Skip(1).ToList(), isStroked: true, isSmoothJoin: true);
+        }
+
+        geometry.Freeze();
+        return geometry;
     }
 
     private static Point CatmullRom(Point p0, Point p1, Point p2, Point p3, double t)
@@ -2419,6 +2856,7 @@ public partial class EqualizerWindow : Window
             Bands[i].GainDb = gains[i];
         }
 
+        SyncEqualizerSettings();
         SetProcessingSliderDefaults(description);
         StatusText.Text = $"{name} preset loaded";
     }

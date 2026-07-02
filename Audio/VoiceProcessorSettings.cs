@@ -5,6 +5,10 @@ namespace PodcastWorkbench.Audio;
 
 public sealed class VoiceProcessorSettings : INotifyPropertyChanged
 {
+    private readonly object _equalizerLock = new();
+    private readonly double[] _equalizerGainsDb = new double[20];
+    private int _settingsRevision;
+    private int _equalizerRevision;
     private double _inputTrimDb;
     private bool _highPassEnabled = true;
     private double _highPassFrequencyHz = 80;
@@ -349,6 +353,48 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
         set => SetField(ref _limiterReleaseMs, value);
     }
 
+    public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);
+
+    public int SettingsRevision => System.Threading.Volatile.Read(ref _settingsRevision);
+
+    public void SetEqualizerGains(IReadOnlyList<double> gainsDb)
+    {
+        var changed = false;
+        lock (_equalizerLock)
+        {
+            for (var i = 0; i < _equalizerGainsDb.Length; i++)
+            {
+                var gainDb = i < gainsDb.Count
+                    ? Math.Clamp(gainsDb[i], -12d, 12d)
+                    : 0d;
+                if (Math.Abs(_equalizerGainsDb[i] - gainDb) < 0.000001d)
+                {
+                    continue;
+                }
+
+                _equalizerGainsDb[i] = gainDb;
+                changed = true;
+            }
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        System.Threading.Interlocked.Increment(ref _equalizerRevision);
+        System.Threading.Interlocked.Increment(ref _settingsRevision);
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SetEqualizerGains)));
+    }
+
+    public void CopyEqualizerGainsTo(Span<double> destination)
+    {
+        lock (_equalizerLock)
+        {
+            _equalizerGainsDb.AsSpan(0, Math.Min(_equalizerGainsDb.Length, destination.Length)).CopyTo(destination);
+        }
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -359,6 +405,7 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
         }
 
         field = value;
+        System.Threading.Interlocked.Increment(ref _settingsRevision);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }

@@ -33,5 +33,49 @@ public sealed class VoiceProcessingTelemetry
     public double MakeupGainDb { get; set; }
 
     public double LimiterReductionDb { get; set; }
+
+    public double AudioCallbackIntervalMs { get; set; }
+
+    public double AudioProcessingTimeMs { get; set; }
+
+    public double AudioBufferDurationMs { get; set; }
+
+    public double AudioExpectedCallbackIntervalMs { get; set; }
+
+    public int AudioLateFrameCount { get; set; }
+
+    public int AudioBufferResetCount { get; set; }
+
+    public int SpectrumSkippedFrameCount { get; set; }
+
+    public VoiceProcessingTelemetry Snapshot()
+    {
+        return new VoiceProcessingTelemetry
+        {
+            InputTrimDb = InputTrimDb,
+            HighPassActivityDb = HighPassActivityDb,
+            DePopperReductionDb = DePopperReductionDb,
+            NoiseGateReductionDb = NoiseGateReductionDb,
+            NoiseSuppressionReductionDb = NoiseSuppressionReductionDb,
+            EchoReducerReductionDb = EchoReducerReductionDb,
+            CompressorGainReductionDb = CompressorGainReductionDb,
+            CompressorInputLevelDb = CompressorInputLevelDb,
+            CompressorThresholdDb = CompressorThresholdDb,
+            CompressorActive = CompressorActive,
+            GateOpen = GateOpen,
+            GateOpenness = GateOpenness,
+            DeEsserReductionDb = DeEsserReductionDb,
+            PresenceBoostDb = PresenceBoostDb,
+            MakeupGainDb = MakeupGainDb,
+            LimiterReductionDb = LimiterReductionDb,
+            AudioCallbackIntervalMs = AudioCallbackIntervalMs,
+            AudioProcessingTimeMs = AudioProcessingTimeMs,
+            AudioBufferDurationMs = AudioBufferDurationMs,
+            AudioExpectedCallbackIntervalMs = AudioExpectedCallbackIntervalMs,
+            AudioLateFrameCount = AudioLateFrameCount,
+            AudioBufferResetCount = AudioBufferResetCount,
+            SpectrumSkippedFrameCount = SpectrumSkippedFrameCount
+        };
+    }
 }
 
