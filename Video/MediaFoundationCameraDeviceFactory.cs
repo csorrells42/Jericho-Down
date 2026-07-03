@@ -106,6 +106,70 @@ internal static class MediaFoundationCameraDeviceFactory
         }
     }
 
+    public static IMFSourceReader CreateTextureSourceReader(
+        string cameraName,
+        CameraVideoMode? mode,
+        IMFDXGIDeviceManager d3dManager,
+        out object mediaSource,
+        bool enableAdvancedVideoProcessing = true,
+        Guid? preferredSubtype = null,
+        bool configureMediaType = true)
+    {
+        mediaSource = null!;
+        var activate = FindCameraActivate(cameraName)
+            ?? throw new InvalidOperationException($"Media Foundation could not find camera: {cameraName}");
+
+        try
+        {
+            mediaSource = CreateMediaSource(activate, cameraName);
+            MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFCreateAttributes(out var attributes, 5));
+            try
+            {
+                MediaFoundationInterop.ThrowIfFailed(attributes.SetUINT32(
+                    MediaFoundationGuids.MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
+                    1));
+                if (enableAdvancedVideoProcessing)
+                {
+                    MediaFoundationInterop.ThrowIfFailed(attributes.SetUINT32(
+                        MediaFoundationGuids.MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
+                        1));
+                }
+
+                MediaFoundationInterop.ThrowIfFailed(attributes.SetUnknown(
+                    MediaFoundationGuids.MF_SOURCE_READER_D3D_MANAGER,
+                    d3dManager));
+
+                MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFCreateSourceReaderFromMediaSource(
+                    mediaSource,
+                    attributes,
+                    out var reader));
+
+                try
+                {
+                    if (configureMediaType)
+                    {
+                        ConfigureTextureReader(reader, mode, preferredSubtype);
+                    }
+
+                    return reader;
+                }
+                catch
+                {
+                    MediaFoundationInterop.ReleaseComObject(reader);
+                    throw;
+                }
+            }
+            finally
+            {
+                MediaFoundationInterop.ReleaseComObject(attributes);
+            }
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(activate);
+        }
+    }
+
     public static object CreateMediaSource(IMFActivate activate, string cameraName)
     {
         var mediaSourceId = new Guid("279a808d-aec7-40c8-9c6b-a6b492c78a66");
@@ -276,6 +340,67 @@ internal static class MediaFoundationCameraDeviceFactory
                     throw new InvalidOperationException($"Media Foundation RGB32 preview type failed: 0x{result:X8}; fallback failed: 0x{fallbackResult:X8}");
                 }
             }
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(mediaType);
+        }
+    }
+
+    private static void ConfigureTextureReader(IMFSourceReader reader, CameraVideoMode? mode, Guid? preferredSubtype)
+    {
+        Guid[] subtypes = preferredSubtype is Guid selectedSubtype
+            ? [selectedSubtype]
+            : [MediaFoundationGuids.MFVideoFormat_NV12, MediaFoundationGuids.MFVideoFormat_P010];
+
+        foreach (var candidateSubtype in subtypes)
+        {
+            if (TrySetTextureMediaType(reader, mode, candidateSubtype, exactMode: true)
+                || TrySetTextureMediaType(reader, mode, candidateSubtype, exactMode: false))
+            {
+                return;
+            }
+        }
+    }
+
+    private static bool TrySetTextureMediaType(
+        IMFSourceReader reader,
+        CameraVideoMode? mode,
+        Guid subtype,
+        bool exactMode)
+    {
+        var width = mode?.Width ?? 1280;
+        var height = mode?.Height ?? 720;
+        var fps = mode?.FramesPerSecond ?? 30d;
+        var (fpsNumerator, fpsDenominator) = CreateFrameRateRatio(fps);
+
+        MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFCreateMediaType(out var mediaType));
+        try
+        {
+            MediaFoundationInterop.ThrowIfFailed(mediaType.SetGUID(
+                MediaFoundationGuids.MF_MT_MAJOR_TYPE,
+                MediaFoundationGuids.MFMediaType_Video));
+            MediaFoundationInterop.ThrowIfFailed(mediaType.SetGUID(
+                MediaFoundationGuids.MF_MT_SUBTYPE,
+                subtype));
+            MediaFoundationInterop.ThrowIfFailed(mediaType.SetUINT32(
+                MediaFoundationGuids.MF_MT_INTERLACE_MODE,
+                MediaFoundationInterop.MFVideoInterlace_Progressive));
+
+            if (exactMode)
+            {
+                MediaFoundationInterop.ThrowIfFailed(mediaType.SetUINT64(
+                    MediaFoundationGuids.MF_MT_FRAME_SIZE,
+                    MediaFoundationInterop.PackRatio(width, height)));
+                MediaFoundationInterop.ThrowIfFailed(mediaType.SetUINT64(
+                    MediaFoundationGuids.MF_MT_FRAME_RATE,
+                    MediaFoundationInterop.PackRatio(fpsNumerator, fpsDenominator)));
+            }
+
+            return !MediaFoundationInterop.Failed(reader.SetCurrentMediaType(
+                MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                IntPtr.Zero,
+                mediaType));
         }
         finally
         {

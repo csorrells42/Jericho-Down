@@ -103,6 +103,8 @@ internal static class MediaFoundationInterop
     public static string FormatSubtype(Guid subtype)
     {
         return subtype == MediaFoundationGuids.MFVideoFormat_RGB32 ? "rgb32"
+            : subtype == MediaFoundationGuids.MFVideoFormat_NV12 ? "nv12"
+            : subtype == MediaFoundationGuids.MFVideoFormat_P010 ? "p010"
             : subtype == MediaFoundationGuids.MFVideoFormat_H264 ? "h264"
             : TryFormatFourCc(subtype, out var fourCc) ? fourCc
             : subtype.ToString("N")[..8];
@@ -188,6 +190,19 @@ internal static class MediaFoundationInterop
         int minimumFeatureLevel,
         in Guid riid,
         out IntPtr device);
+
+    [DllImport("d3d11.dll", ExactSpelling = true)]
+    public static extern int D3D11CreateDevice(
+        IntPtr adapter,
+        int driverType,
+        IntPtr software,
+        int flags,
+        int[]? featureLevels,
+        int featureLevelsCount,
+        int sdkVersion,
+        out IntPtr device,
+        out int featureLevel,
+        out IntPtr immediateContext);
 }
 
 [ComImport]
@@ -309,6 +324,17 @@ internal interface IMFMediaBuffer
 
 [ComImport]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[Guid("e7174cfa-1c9e-48b1-8866-626226bfc258")]
+internal interface IMFDXGIBuffer
+{
+    [PreserveSig] int GetResource(in Guid riid, out IntPtr resource);
+    [PreserveSig] int GetSubresourceIndex(out int subresource);
+    [PreserveSig] int GetUnknown(in Guid guid, in Guid riid, out IntPtr unknown);
+    [PreserveSig] int SetUnknown(in Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object? unknown);
+}
+
+[ComImport]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 [Guid("70ae66f2-c809-4e4f-8915-bdcb406b7993")]
 internal interface IMFSourceReader
 {
@@ -318,7 +344,13 @@ internal interface IMFSourceReader
     [PreserveSig] int GetCurrentMediaType(int streamIndex, out IMFMediaType mediaType);
     [PreserveSig] int SetCurrentMediaType(int streamIndex, IntPtr reserved, IMFMediaType mediaType);
     [PreserveSig] int SetCurrentPosition(in Guid timeFormat, IntPtr position);
-    [PreserveSig] int ReadSample(int streamIndex, int controlFlags, out int actualStreamIndex, out int streamFlags, out long timestamp, out IMFSample? sample);
+    [PreserveSig] int ReadSample(
+        int streamIndex,
+        int controlFlags,
+        out int actualStreamIndex,
+        out int streamFlags,
+        out long timestamp,
+        [MarshalAs(UnmanagedType.IUnknown)] out object? sample);
     [PreserveSig] int Flush(int streamIndex);
     [PreserveSig] int GetServiceForStream(int streamIndex, in Guid service, in Guid riid, out IntPtr value);
     [PreserveSig] int GetPresentationAttribute(int streamIndex, in Guid attribute, IntPtr value);

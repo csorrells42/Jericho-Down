@@ -165,7 +165,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                     out _,
                     out var streamFlags,
                     out _,
-                    out var sample);
+                    out var sampleObject);
 
                 if (MediaFoundationInterop.Failed(result))
                 {
@@ -180,8 +180,9 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                     break;
                 }
 
-                if (sample is null)
+                if (sampleObject is not IMFSample sample)
                 {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                     continue;
                 }
 
@@ -218,7 +219,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                 }
                 finally
                 {
-                    MediaFoundationInterop.ReleaseComObject(sample);
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                 }
             }
         }

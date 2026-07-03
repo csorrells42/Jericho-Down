@@ -6,6 +6,7 @@ internal sealed class Direct3D12DeviceManager : IDisposable
 {
     private const int D3D_FEATURE_LEVEL_12_0 = 0xc000;
     private static readonly Guid ID3D12Device = new("189819f1-1db6-4b57-be54-1821339b85f7");
+    public static readonly Guid ID3D12Resource = new("696442be-a72e-4059-bc79-5b5c98040fad");
 
     private IntPtr _device;
     private IMFDXGIDeviceManager? _manager;
