@@ -67,9 +67,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         try
         {
+            string? directTextureFailureReason = null;
             if (frame.IsValid
                 && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
-                && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength))
+                && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength, out directTextureFailureReason))
             {
                 ReportPreviewPath("direct DX12 texture");
                 return;
@@ -86,7 +87,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     denoiseEnabled,
                     denoiseStrength))
                 {
-                    ReportPreviewPath("DX12 NV12 upload fallback");
+                    ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", directTextureFailureReason));
                     return;
                 }
             }
@@ -99,12 +100,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     frame.Height,
                     frame.BgraPreviewStride,
                     frame.FrameNumber);
-                ReportPreviewPath("DX12 BGRA upload fallback");
+                ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", directTextureFailureReason));
                 return;
             }
 
             _renderer.RenderProofFrame(frame.FrameNumber);
-            ReportPreviewPath("DX12 proof-frame fallback");
+            ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", directTextureFailureReason));
         }
         catch (Exception ex)
         {
@@ -121,6 +122,22 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         _previewPathDescription = description;
         StatusChanged?.Invoke(this, $"DX12 preview path: {description}");
+    }
+
+    private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
+    {
+        if (string.IsNullOrWhiteSpace(directTextureFailureReason))
+        {
+            return path;
+        }
+
+        var reason = directTextureFailureReason.Trim();
+        if (reason.Length > 160)
+        {
+            reason = reason[..157] + "...";
+        }
+
+        return $"{path}; direct unavailable: {reason}";
     }
 
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
@@ -304,6 +321,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private bool _shaderPreviewUnavailable;
         private bool _nv12PreviewUnavailable;
         private bool _nativeTexturePreviewUnavailable;
+        private string? _nativeTexturePreviewFailureReason;
         private readonly bool _usesSharedCaptureDevice;
 
         public Direct3D12SwapChainRenderer(IntPtr hwnd, int width, int height, IntPtr nativeD3D12Device = default)
@@ -455,16 +473,46 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             return TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, denoiseEnabled, denoiseStrength);
         }
 
-        public bool RenderNativeTextureFrame(TextureNativeFrameLease frame, bool denoiseEnabled, double denoiseStrength)
+        public bool RenderNativeTextureFrame(
+            TextureNativeFrameLease frame,
+            bool denoiseEnabled,
+            double denoiseStrength,
+            out string? failureReason)
         {
-            if (_disposed
-                || !_usesSharedCaptureDevice
-                || _nativeTexturePreviewUnavailable
-                || _nv12PreviewRootSignature is null
-                || _nv12PreviewPipelineState is null
-                || frame.Resource == IntPtr.Zero
-                || !frame.MediaSubtype.Contains("NV12", StringComparison.OrdinalIgnoreCase))
+            failureReason = null;
+            if (_disposed)
             {
+                failureReason = "renderer disposed";
+                return false;
+            }
+
+            if (!_usesSharedCaptureDevice)
+            {
+                failureReason = "presenter is not using the capture D3D12 device";
+                return false;
+            }
+
+            if (_nativeTexturePreviewUnavailable)
+            {
+                failureReason = _nativeTexturePreviewFailureReason ?? "direct texture rendering disabled after an earlier failure";
+                return false;
+            }
+
+            if (_nv12PreviewRootSignature is null || _nv12PreviewPipelineState is null)
+            {
+                failureReason = "NV12 shader pipeline unavailable";
+                return false;
+            }
+
+            if (frame.Resource == IntPtr.Zero)
+            {
+                failureReason = "frame texture resource is missing";
+                return false;
+            }
+
+            if (!frame.MediaSubtype.Contains("NV12", StringComparison.OrdinalIgnoreCase))
+            {
+                failureReason = $"media subtype {frame.MediaSubtype} is not NV12";
                 return false;
             }
 
@@ -478,11 +526,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 Marshal.AddRef(frame.Resource);
                 using var nativeResource = new ID3D12Resource(frame.Resource);
                 RenderNativeNv12Resource(nativeResource, frame.Width, frame.Height, denoiseEnabled, denoiseStrength);
+                _nativeTexturePreviewFailureReason = null;
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
                 _nativeTexturePreviewUnavailable = true;
+                _nativeTexturePreviewFailureReason = ex.Message;
+                failureReason = ex.Message;
                 return false;
             }
         }
