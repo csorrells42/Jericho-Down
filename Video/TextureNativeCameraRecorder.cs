@@ -12,6 +12,14 @@ public sealed record TextureNativeRecordingResult(
     double FramesPerSecond,
     string Status);
 
+public sealed record TextureNativeFrameInfo(
+    int Width,
+    int Height,
+    double FramesPerSecond,
+    string DeviceMode,
+    string MediaSubtype,
+    long FrameNumber);
+
 public static class TextureNativeCameraRecorder
 {
     public static TextureNativeCameraRecordingSession StartSession(
@@ -180,6 +188,325 @@ public static class TextureNativeCameraRecorder
             height,
             fps,
             status);
+    }
+
+    private static (int Width, int Height, double Fps, Guid Subtype) ReadCurrentFormat(
+        IMFSourceReader reader,
+        CameraVideoMode? requestedMode)
+    {
+        var width = requestedMode?.Width ?? 1280;
+        var height = requestedMode?.Height ?? 720;
+        var fps = requestedMode?.FramesPerSecond ?? 30d;
+        var subtype = MediaFoundationGuids.MFVideoFormat_NV12;
+
+        var result = reader.GetCurrentMediaType(
+            MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            out var currentType);
+        if (MediaFoundationInterop.Failed(result))
+        {
+            return (width, height, fps, subtype);
+        }
+
+        try
+        {
+            if (MediaFoundationInterop.TryGetFrameSize(currentType, out var activeWidth, out var activeHeight))
+            {
+                width = activeWidth;
+                height = activeHeight;
+            }
+
+            if (MediaFoundationInterop.TryGetFrameRate(currentType, out var activeFps))
+            {
+                fps = activeFps;
+            }
+
+            currentType.GetGUID(MediaFoundationGuids.MF_MT_SUBTYPE, out subtype);
+            return (width, height, fps, subtype);
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(currentType);
+        }
+    }
+}
+
+public sealed class TextureNativeCameraStream : IDisposable
+{
+    private readonly object _stateLock = new();
+    private readonly MediaFoundationCameraDeviceFactory.MediaFoundationScope _mediaFoundationScope;
+    private readonly Direct3D11DeviceManager _deviceManager;
+    private readonly object _mediaSource;
+    private readonly IMFSourceReader _reader;
+    private readonly CancellationTokenSource _cancellation = new();
+    private readonly Task _captureTask;
+    private readonly int _width;
+    private readonly int _height;
+    private readonly double _fps;
+    private readonly Guid _subtype;
+    private readonly long _sampleDuration;
+    private MediaFoundationTextureVideoRecorder? _recorder;
+    private string? _recordingPath;
+    private bool _isPaused;
+    private bool _isStopping;
+    private long _nextSampleTime;
+    private long _framesRead;
+    private string _status = "Texture-native camera stream started.";
+
+    public TextureNativeCameraStream(string cameraName, CameraVideoMode? mode)
+    {
+        _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
+        _deviceManager = Direct3D11DeviceManager.Create();
+        _reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
+            cameraName,
+            mode,
+            _deviceManager.Manager,
+            out _mediaSource,
+            enableAdvancedVideoProcessing: true,
+            preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
+            configureMediaType: true);
+        (_width, _height, _fps, _subtype) = ReadCurrentFormat(_reader, mode);
+        _sampleDuration = Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / Math.Clamp(_fps, 1d, 120d)));
+        _captureTask = Task.Run(() => CaptureLoop(_cancellation.Token));
+    }
+
+    public event EventHandler<TextureNativeFrameInfo>? FrameAvailable;
+    public event EventHandler<string>? StatusChanged;
+
+    public int Width => _width;
+
+    public int Height => _height;
+
+    public double FramesPerSecond => _fps;
+
+    public string DeviceMode => _deviceManager.ModeName;
+
+    public string MediaSubtype => MediaFoundationInterop.FormatSubtype(_subtype);
+
+    public long FramesRead => Interlocked.Read(ref _framesRead);
+
+    public bool IsRecording
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _recorder is not null;
+            }
+        }
+    }
+
+    public bool StartRecording(string path)
+    {
+        lock (_stateLock)
+        {
+            if (_recorder is not null)
+            {
+                return true;
+            }
+
+            _recorder = new MediaFoundationTextureVideoRecorder(
+                path,
+                _width,
+                _height,
+                _fps,
+                _subtype,
+                _deviceManager.Manager);
+            _recordingPath = path;
+            _nextSampleTime = 0;
+            _isPaused = false;
+            _status = $"Texture-native GPU recording started: {System.IO.Path.GetFileName(path)}";
+            StatusChanged?.Invoke(this, _status);
+            return true;
+        }
+    }
+
+    public void PauseRecording()
+    {
+        lock (_stateLock)
+        {
+            _isPaused = true;
+            _status = "Texture-native GPU recording paused.";
+            StatusChanged?.Invoke(this, _status);
+        }
+    }
+
+    public void ResumeRecording()
+    {
+        lock (_stateLock)
+        {
+            _isPaused = false;
+            _status = "Texture-native GPU recording resumed.";
+            StatusChanged?.Invoke(this, _status);
+        }
+    }
+
+    public TextureNativeRecordingResult? StopRecording()
+    {
+        MediaFoundationTextureVideoRecorder? recorder;
+        string? path;
+        string status;
+        lock (_stateLock)
+        {
+            recorder = _recorder;
+            path = _recordingPath;
+            status = _status;
+            _recorder = null;
+            _recordingPath = null;
+            _isPaused = false;
+        }
+
+        if (recorder is null || string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            recorder.Stop();
+            var bytes = System.IO.File.Exists(path) ? new System.IO.FileInfo(path).Length : 0;
+            var success = recorder.SamplesWritten > 0 && bytes > 4096;
+            status = success
+                ? "Texture-native shared stream recording completed."
+                : status;
+            return new TextureNativeRecordingResult(
+                success,
+                path,
+                recorder.SamplesWritten,
+                bytes,
+                _deviceManager.ModeName,
+                MediaFoundationInterop.FormatSubtype(_subtype),
+                _width,
+                _height,
+                _fps,
+                status);
+        }
+        finally
+        {
+            recorder.Dispose();
+        }
+    }
+
+    public void Stop()
+    {
+        lock (_stateLock)
+        {
+            if (_isStopping)
+            {
+                return;
+            }
+
+            _isStopping = true;
+        }
+
+        _cancellation.Cancel();
+        try
+        {
+            _captureTask.Wait(TimeSpan.FromSeconds(3));
+        }
+        catch
+        {
+        }
+
+        StopRecording();
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        _cancellation.Dispose();
+        MediaFoundationInterop.ReleaseComObject(_reader);
+        MediaFoundationInterop.ReleaseComObject(_mediaSource);
+        _deviceManager.Dispose();
+        _mediaFoundationScope.Dispose();
+    }
+
+    private void CaptureLoop(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var result = _reader.ReadSample(
+                    MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                    0,
+                    out _,
+                    out var streamFlags,
+                    out _,
+                    out var sampleObject);
+
+                if (MediaFoundationInterop.Failed(result))
+                {
+                    ReportStatus($"Texture-native shared stream read failed: 0x{result:X8}");
+                    break;
+                }
+
+                if ((streamFlags & MediaFoundationInterop.MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+                {
+                    ReportStatus("Texture-native shared stream ended.");
+                    break;
+                }
+
+                if (sampleObject is not IMFSample sample)
+                {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
+                    continue;
+                }
+
+                try
+                {
+                    var frameNumber = Interlocked.Increment(ref _framesRead);
+                    FrameAvailable?.Invoke(
+                        this,
+                        new TextureNativeFrameInfo(
+                            _width,
+                            _height,
+                            _fps,
+                            _deviceManager.ModeName,
+                            MediaFoundationInterop.FormatSubtype(_subtype),
+                            frameNumber));
+                    WriteRecordingSample(sample);
+                }
+                finally
+                {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportStatus(ex.Message);
+        }
+    }
+
+    private void WriteRecordingSample(IMFSample sample)
+    {
+        MediaFoundationTextureVideoRecorder? recorder;
+        bool isPaused;
+        lock (_stateLock)
+        {
+            recorder = _recorder;
+            isPaused = _isPaused;
+        }
+
+        if (recorder is null || isPaused)
+        {
+            return;
+        }
+
+        MediaFoundationInterop.ThrowIfFailed(sample.SetSampleTime(_nextSampleTime));
+        MediaFoundationInterop.ThrowIfFailed(sample.SetSampleDuration(_sampleDuration));
+        recorder.WriteSample(sample);
+        _nextSampleTime += _sampleDuration;
+    }
+
+    private void ReportStatus(string status)
+    {
+        lock (_stateLock)
+        {
+            _status = status;
+        }
+
+        StatusChanged?.Invoke(this, status);
     }
 
     private static (int Width, int Height, double Fps, Guid Subtype) ReadCurrentFormat(
