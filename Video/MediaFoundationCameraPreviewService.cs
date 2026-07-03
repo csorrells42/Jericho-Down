@@ -8,6 +8,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _mediaFoundationScope;
     private IMFSourceReader? _reader;
     private object? _mediaSource;
+    private Direct3D12DeviceManager? _direct3D12;
     private CancellationTokenSource? _cancellation;
     private Task? _captureTask;
     private byte[]? _previousDenoiseFrame;
@@ -50,10 +51,9 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         try
         {
             _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
-            _reader = MediaFoundationCameraDeviceFactory.CreateSourceReader(
+            _reader = CreateSourceReaderWithAccelerationFallback(
                 cameraName,
                 mode,
-                d3dManager: null,
                 out _mediaSource);
             UpdateActiveFormat(_reader, mode);
             _cancellation = new CancellationTokenSource();
@@ -307,6 +307,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         MediaFoundationInterop.ReleaseComObject(_mediaSource);
         _reader = null;
         _mediaSource = null;
+        _direct3D12?.Dispose();
+        _direct3D12 = null;
         _mediaFoundationScope?.Dispose();
         _mediaFoundationScope = null;
     }
@@ -341,5 +343,50 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         {
             MediaFoundationInterop.ReleaseComObject(currentType);
         }
+    }
+
+    private IMFSourceReader CreateSourceReaderWithAccelerationFallback(
+        string cameraName,
+        CameraVideoMode? mode,
+        out object mediaSource)
+    {
+        if (ShouldTryDirect3D12Preview())
+        {
+            object? acceleratedMediaSource = null;
+            try
+            {
+                _direct3D12 = Direct3D12DeviceManager.Create();
+                StatusChanged?.Invoke(this, $"Direct3D 12 camera acceleration ready ({_direct3D12.ModeName})");
+                var reader = MediaFoundationCameraDeviceFactory.CreateSourceReader(
+                    cameraName,
+                    mode,
+                    _direct3D12.Manager,
+                    out acceleratedMediaSource);
+                mediaSource = acceleratedMediaSource;
+                return reader;
+            }
+            catch (Exception ex)
+            {
+                MediaFoundationInterop.ReleaseComObject(acceleratedMediaSource);
+                _direct3D12?.Dispose();
+                _direct3D12 = null;
+                StatusChanged?.Invoke(this, $"Direct3D 12 preview path unavailable; using CPU preview path: {ex.Message}");
+            }
+        }
+
+        return MediaFoundationCameraDeviceFactory.CreateSourceReader(
+            cameraName,
+            mode,
+            d3dManager: null,
+            out mediaSource);
+    }
+
+    private static bool ShouldTryDirect3D12Preview()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_CAMERA_D3D12_PREVIEW");
+        return !string.Equals(value, "0", StringComparison.Ordinal)
+            && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(value, "no", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -10,14 +10,24 @@ internal sealed class Direct3D12DeviceManager : IDisposable
     private IntPtr _device;
     private IMFDXGIDeviceManager? _manager;
 
-    private Direct3D12DeviceManager(IntPtr device, IMFDXGIDeviceManager manager)
+    private Direct3D12DeviceManager(IntPtr device, IMFDXGIDeviceManager manager, int mode)
     {
         _device = device;
         _manager = manager;
+        Mode = mode;
     }
 
     public IMFDXGIDeviceManager Manager => _manager
         ?? throw new ObjectDisposedException(nameof(Direct3D12DeviceManager));
+
+    public int Mode { get; }
+
+    public string ModeName => Mode switch
+    {
+        2 => "D3D12",
+        1 => "D3D11",
+        _ => $"mode {Mode}"
+    };
 
     public static Direct3D12DeviceManager Create()
     {
@@ -33,7 +43,15 @@ internal sealed class Direct3D12DeviceManager : IDisposable
                 out var resetToken,
                 out var manager));
             MediaFoundationInterop.ThrowIfFailed(manager.ResetDevice(device, resetToken));
-            return new Direct3D12DeviceManager(device, manager);
+            MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFGetDXGIDeviceManageMode(
+                manager,
+                out var mode));
+            if (mode != 2)
+            {
+                throw new InvalidOperationException($"Media Foundation created a DXGI device manager in {FormatMode(mode)} mode instead of D3D12.");
+            }
+
+            return new Direct3D12DeviceManager(device, manager, mode);
         }
         catch
         {
@@ -44,6 +62,16 @@ internal sealed class Direct3D12DeviceManager : IDisposable
 
             throw;
         }
+    }
+
+    private static string FormatMode(int mode)
+    {
+        return mode switch
+        {
+            2 => "D3D12",
+            1 => "D3D11",
+            _ => $"unknown {mode}"
+        };
     }
 
     public void Dispose()

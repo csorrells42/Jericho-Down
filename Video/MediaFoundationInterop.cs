@@ -150,6 +150,11 @@ internal static class MediaFoundationInterop
     [DllImport("mfplat.dll", ExactSpelling = true)]
     public static extern int MFCreateDXGIDeviceManager(out int resetToken, out IMFDXGIDeviceManager deviceManager);
 
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    public static extern int MFGetDXGIDeviceManageMode(
+        [MarshalAs(UnmanagedType.IUnknown)] object deviceManager,
+        out int mode);
+
     [DllImport("mf.dll", ExactSpelling = true)]
     public static extern int MFEnumDeviceSources(
         IMFAttributes attributes,
