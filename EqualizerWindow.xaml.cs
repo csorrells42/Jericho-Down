@@ -227,6 +227,8 @@ public partial class EqualizerWindow : Window
     private double _pendingVideoDenoiseStrength = 2d;
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
+    private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
+    private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -551,6 +553,8 @@ public partial class EqualizerWindow : Window
             _waveform3DWindow = null;
         }
 
+        _textureNativeRecordingSession?.Dispose();
+        _textureNativeRecordingSession = null;
         _cameraPreviewService.Dispose();
         _spectrumService.Dispose();
     }
@@ -898,12 +902,16 @@ public partial class EqualizerWindow : Window
         }
 
         var videoPath = GetActiveRecordingVideoPath();
-        var videoStarted = _isCameraEnabled
-            && videoPath is not null
-            && _cameraPreviewService.StartRecording(videoPath, GetSelectedCameraMode());
+        var textureVideoStarted = TryStartTextureNativeRecording(videoPath);
+        var videoStarted = textureVideoStarted
+            || (_isCameraEnabled
+                && videoPath is not null
+                && _cameraPreviewService.StartRecording(videoPath, GetSelectedCameraMode()));
 
-        RecordingStatusText.Text = videoStarted
-            ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+        RecordingStatusText.Text = textureVideoStarted
+            ? $"Recording GPU video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+            : videoStarted
+                ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
             : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
         UpdateRecordingTransportControls();
     }
@@ -920,14 +928,30 @@ public partial class EqualizerWindow : Window
             _recordingPausedDuration += DateTime.UtcNow - _recordingPausedAt;
             _recordingPausedAt = DateTime.MinValue;
             _isRecordingPaused = false;
-            _cameraPreviewService.ResumeRecording();
+            if (_textureNativeRecordingSession is not null)
+            {
+                _textureNativeRecordingSession.Resume();
+            }
+            else
+            {
+                _cameraPreviewService.ResumeRecording();
+            }
+
             RecordingStatusText.Text = "Recording resumed.";
         }
         else
         {
             _recordingPausedAt = DateTime.UtcNow;
             _isRecordingPaused = true;
-            _cameraPreviewService.PauseRecording();
+            if (_textureNativeRecordingSession is not null)
+            {
+                _textureNativeRecordingSession.Pause();
+            }
+            else
+            {
+                _cameraPreviewService.PauseRecording();
+            }
+
             RecordingStatusText.Text = "Recording paused.";
         }
 
@@ -944,7 +968,8 @@ public partial class EqualizerWindow : Window
         var elapsed = GetRecordingElapsed();
         var sessionFolder = _activeRecordingSessionFolder;
         var setNumber = _activeRecordingSetNumber;
-        var videoPath = _cameraPreviewService.StopRecording();
+        var textureResult = StopTextureNativeRecording();
+        var videoPath = textureResult?.Path ?? _cameraPreviewService.StopRecording();
         _isRecordingSession = false;
         _isRecordingPaused = false;
         _recordingPausedAt = DateTime.MinValue;
@@ -954,10 +979,14 @@ public partial class EqualizerWindow : Window
         RecordingTimerText.Text = "00:00:00";
         if (sessionFolder is not null)
         {
-            WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed);
+            WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed, textureResult);
         }
 
-        RecordingStatusText.Text = !string.IsNullOrWhiteSpace(videoPath)
+        RecordingStatusText.Text = textureResult is { Success: true }
+            ? $"Recording stopped at {FormatDuration(elapsed)}. GPU saved {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
+            : textureResult is not null
+                ? $"Recording stopped at {FormatDuration(elapsed)}. GPU recording issue: {textureResult.Status}"
+                : !string.IsNullOrWhiteSpace(videoPath)
             ? $"Recording stopped at {FormatDuration(elapsed)}. Saved {System.IO.Path.GetFileName(videoPath)}."
             : sessionFolder is null
                 ? $"Recording stopped at {FormatDuration(elapsed)}."
@@ -965,6 +994,62 @@ public partial class EqualizerWindow : Window
 
         UpdateOutputFolderText();
         UpdateRecordingTransportControls();
+    }
+
+    private bool TryStartTextureNativeRecording(string? videoPath)
+    {
+        _lastTextureNativeRecordingResult = null;
+        if (!ShouldUseTextureNativeRecording()
+            || !_isCameraEnabled
+            || string.IsNullOrWhiteSpace(videoPath)
+            || CameraComboBox.SelectedItem is not CameraDevice camera)
+        {
+            return false;
+        }
+
+        try
+        {
+            _textureNativeRecordingSession = TextureNativeCameraRecorder.StartSession(
+                camera.Name,
+                GetSelectedCameraMode(),
+                videoPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _textureNativeRecordingSession?.Dispose();
+            _textureNativeRecordingSession = null;
+            RecordingStatusText.Text = $"GPU recording path unavailable, falling back to CPU Media Foundation: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool ShouldUseTextureNativeRecording()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
+        return string.Equals(value, "1", StringComparison.Ordinal)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private TextureNativeRecordingResult? StopTextureNativeRecording()
+    {
+        var session = _textureNativeRecordingSession;
+        if (session is null)
+        {
+            return null;
+        }
+
+        _textureNativeRecordingSession = null;
+        try
+        {
+            _lastTextureNativeRecordingResult = session.Stop();
+            return _lastTextureNativeRecordingResult;
+        }
+        finally
+        {
+            session.Dispose();
+        }
     }
 
     private void CameraEnabledChanged(object sender, RoutedEventArgs e)
@@ -1737,7 +1822,12 @@ public partial class EqualizerWindow : Window
             $"video_{FormatRecordingSetNumber(_activeRecordingSetNumber)}.mp4");
     }
 
-    private void WriteRecordingSessionMetadata(string sessionFolder, int setNumber, string? videoPath, TimeSpan elapsed)
+    private void WriteRecordingSessionMetadata(
+        string sessionFolder,
+        int setNumber,
+        string? videoPath,
+        TimeSpan elapsed,
+        TextureNativeRecordingResult? textureResult)
     {
         try
         {
@@ -1752,7 +1842,23 @@ public partial class EqualizerWindow : Window
                 denoiseEnabled = _pendingVideoDenoiseEnabled,
                 denoiseStrength = _pendingVideoDenoiseStrength,
                 video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
-                engine = "Windows Media Foundation"
+                engine = textureResult is not null
+                    ? "Windows Media Foundation texture-native GPU samples"
+                    : "Windows Media Foundation CPU frames",
+                textureNative = textureResult is null
+                    ? null
+                    : new
+                    {
+                        textureResult.Success,
+                        textureResult.DeviceMode,
+                        textureResult.MediaSubtype,
+                        textureResult.Width,
+                        textureResult.Height,
+                        textureResult.FramesPerSecond,
+                        textureResult.SamplesWritten,
+                        textureResult.BytesWritten,
+                        textureResult.Status
+                    }
             };
             File.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, UserPresetJsonOptions));
         }
