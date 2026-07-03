@@ -1058,7 +1058,11 @@ public partial class EqualizerWindow : Window
             _textureNativeRecordingSession = TextureNativeCameraRecorder.StartSession(
                 camera.Name,
                 GetSelectedCameraMode(),
-                videoPath);
+                videoPath,
+                new TextureNativeRecordingOptions(
+                    _processedTextureRecordingEnabled,
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength));
             return true;
         }
         catch (Exception ex)
