@@ -337,6 +337,7 @@ public static class TextureNativeCameraRecorder
 public sealed class TextureNativeCameraStream : IDisposable
 {
     private readonly object _stateLock = new();
+    private readonly object _processedDenoiseLock = new();
     private readonly MediaFoundationCameraDeviceFactory.MediaFoundationScope _mediaFoundationScope;
     private readonly Direct3D11DeviceManager _deviceManager;
     private readonly object _mediaSource;
@@ -425,7 +426,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     d3dManager: null);
                 _processedRecordingDenoiseEnabled = options.DenoiseEnabled;
                 _processedRecordingDenoiseStrength = options.DenoiseStrength;
-                _previousProcessedDenoiseFrame = null;
+                ResetProcessedDenoiseHistory();
                 _recordingPipeline = "Texture-native processed BGRA bridge";
                 _recordingMatchesPreviewDenoise = true;
             }
@@ -439,7 +440,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _subtype,
                     _deviceManager.Manager);
                 _processedRecordingDenoiseEnabled = false;
-                _previousProcessedDenoiseFrame = null;
+                ResetProcessedDenoiseHistory();
                 _recordingPipeline = "Media Foundation texture-native raw camera samples";
                 _recordingMatchesPreviewDenoise = options?.DenoiseEnabled != true;
             }
@@ -497,7 +498,7 @@ public sealed class TextureNativeCameraStream : IDisposable
             _processedRecorder = null;
             _recordingPath = null;
             _isPaused = false;
-            _previousProcessedDenoiseFrame = null;
+            ResetProcessedDenoiseHistory();
             _processedRecordingDenoiseEnabled = false;
             _recordingMatchesPreviewDenoise = false;
             _recordingPipeline = "Media Foundation texture-native raw camera samples";
@@ -670,11 +671,14 @@ public sealed class TextureNativeCameraStream : IDisposable
 
             if (processedDenoiseEnabled)
             {
-                ApplyTemporalDenoise(bgraBytes, processedDenoiseStrength, ref _previousProcessedDenoiseFrame);
+                lock (_processedDenoiseLock)
+                {
+                    ApplyTemporalDenoise(bgraBytes, processedDenoiseStrength, ref _previousProcessedDenoiseFrame);
+                }
             }
             else
             {
-                _previousProcessedDenoiseFrame = null;
+                ResetProcessedDenoiseHistory();
             }
 
             processedRecorder.WriteFrame(bgraBytes);
@@ -697,6 +701,14 @@ public sealed class TextureNativeCameraStream : IDisposable
         }
 
         StatusChanged?.Invoke(this, status);
+    }
+
+    private void ResetProcessedDenoiseHistory()
+    {
+        lock (_processedDenoiseLock)
+        {
+            _previousProcessedDenoiseFrame = null;
+        }
     }
 
     private bool TryCreateBgraFrame(IMFSample sample, out byte[] bgraBytes)
