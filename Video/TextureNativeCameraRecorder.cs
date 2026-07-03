@@ -32,7 +32,9 @@ public sealed class TextureNativeFrameLease : IDisposable
         double framesPerSecond,
         string deviceMode,
         string mediaSubtype,
-        long frameNumber)
+        long frameNumber,
+        byte[]? bgraPreviewBytes = null,
+        int bgraPreviewStride = 0)
     {
         _resource = resource;
         Subresource = subresource;
@@ -42,6 +44,8 @@ public sealed class TextureNativeFrameLease : IDisposable
         DeviceMode = deviceMode;
         MediaSubtype = mediaSubtype;
         FrameNumber = frameNumber;
+        BgraPreviewBytes = bgraPreviewBytes;
+        BgraPreviewStride = bgraPreviewStride;
     }
 
     public IntPtr Resource => _resource;
@@ -59,6 +63,10 @@ public sealed class TextureNativeFrameLease : IDisposable
     public string MediaSubtype { get; }
 
     public long FrameNumber { get; }
+
+    public byte[]? BgraPreviewBytes { get; }
+
+    public int BgraPreviewStride { get; }
 
     public bool IsValid => _resource != IntPtr.Zero;
 
@@ -597,6 +605,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     return null;
                 }
 
+                var bgraPreviewBytes = TryCreateBgraPreview(buffer, frameNumber, out var bgraPreviewStride);
                 return new TextureNativeFrameLease(
                     resource,
                     subresource,
@@ -605,7 +614,9 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _fps,
                     _deviceManager.ModeName,
                     MediaFoundationInterop.FormatSubtype(_subtype),
-                    frameNumber);
+                    frameNumber,
+                    bgraPreviewBytes,
+                    bgraPreviewStride);
             }
             finally
             {
@@ -616,6 +627,82 @@ public sealed class TextureNativeCameraStream : IDisposable
         {
             MediaFoundationInterop.ReleaseComObject(buffer);
         }
+    }
+
+    private byte[]? TryCreateBgraPreview(IMFMediaBuffer buffer, long frameNumber, out int bgraStride)
+    {
+        bgraStride = 0;
+        if (frameNumber % 4 != 0 || _subtype != MediaFoundationGuids.MFVideoFormat_NV12)
+        {
+            return null;
+        }
+
+        var result = buffer.Lock(out var source, out _, out var currentLength);
+        if (MediaFoundationInterop.Failed(result) || source == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            return ConvertNv12ToBgra(source, currentLength, _width, _height, out bgraStride);
+        }
+        finally
+        {
+            buffer.Unlock();
+        }
+    }
+
+    private static byte[]? ConvertNv12ToBgra(IntPtr source, int sourceLength, int width, int height, out int bgraStride)
+    {
+        bgraStride = width * 4;
+        if (width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        var pitch = Math.Max(width, sourceLength * 2 / Math.Max(1, height * 3));
+        var requiredLength = pitch * height + pitch * ((height + 1) / 2);
+        if (sourceLength < requiredLength)
+        {
+            return null;
+        }
+
+        var nv12 = new byte[sourceLength];
+        System.Runtime.InteropServices.Marshal.Copy(source, nv12, 0, sourceLength);
+        var bgra = new byte[bgraStride * height];
+        var uvOffset = pitch * height;
+        for (var y = 0; y < height; y++)
+        {
+            var yRow = y * pitch;
+            var uvRow = uvOffset + (y / 2) * pitch;
+            var outputRow = y * bgraStride;
+            for (var x = 0; x < width; x++)
+            {
+                var yy = nv12[yRow + x];
+                var uvIndex = uvRow + (x & ~1);
+                var u = nv12[uvIndex];
+                var v = nv12[uvIndex + 1];
+                var c = yy - 16;
+                var d = u - 128;
+                var e = v - 128;
+                var r = ClampToByte((298 * c + 409 * e + 128) >> 8);
+                var g = ClampToByte((298 * c - 100 * d - 208 * e + 128) >> 8);
+                var b = ClampToByte((298 * c + 516 * d + 128) >> 8);
+                var output = outputRow + x * 4;
+                bgra[output] = b;
+                bgra[output + 1] = g;
+                bgra[output + 2] = r;
+                bgra[output + 3] = 255;
+            }
+        }
+
+        return bgra;
+    }
+
+    private static byte ClampToByte(int value)
+    {
+        return (byte)Math.Clamp(value, 0, 255);
     }
 
     private static IMFDXGIBuffer? QueryDxgiBuffer(IMFMediaBuffer buffer)

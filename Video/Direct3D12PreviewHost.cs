@@ -47,6 +47,28 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
     }
 
+    public void RenderBgraFrame(TextureNativeFrameLease frame)
+    {
+        if (_renderer is null || frame.BgraPreviewBytes is null || frame.BgraPreviewStride <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _renderer.RenderBgraFrame(
+                frame.BgraPreviewBytes,
+                frame.Width,
+                frame.Height,
+                frame.BgraPreviewStride,
+                frame.FrameNumber);
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke(this, $"DX12 camera frame upload failed: {ex.Message}");
+        }
+    }
+
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
         _hwnd = CreateWindowEx(
@@ -262,6 +284,55 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             var toPresent = ResourceBarrier.BarrierTransition(
                 renderTarget,
                 ResourceStates.RenderTarget,
+                ResourceStates.Present);
+            _commandList.ResourceBarrier([toPresent]);
+            _commandList.Close();
+            _commandQueue.ExecuteCommandList(_commandList);
+            _swapChain.Present(0, PresentFlags.None);
+            WaitForGpu();
+        }
+
+        public unsafe void RenderBgraFrame(byte[] bgraBytes, int width, int height, int stride, long frameNumber)
+        {
+            if (_disposed || bgraBytes.Length < stride * height)
+            {
+                return;
+            }
+
+            if (width != _width || height != _height)
+            {
+                Resize(width, height);
+            }
+
+            var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
+            _commandAllocator.Reset();
+            _commandList.Reset(_commandAllocator);
+
+            var toCommon = ResourceBarrier.BarrierTransition(
+                renderTarget,
+                ResourceStates.Present,
+                ResourceStates.Common);
+            _commandList.ResourceBarrier([toCommon]);
+            _commandList.Close();
+            _commandQueue.ExecuteCommandList(_commandList);
+            WaitForGpu();
+
+            fixed (byte* source = bgraBytes)
+            {
+                renderTarget.WriteToSubresource(
+                    0,
+                    null,
+                    (IntPtr)source,
+                    (uint)stride,
+                    (uint)(stride * height));
+            }
+
+            _commandAllocator.Reset();
+            _commandList.Reset(_commandAllocator);
+            var toPresent = ResourceBarrier.BarrierTransition(
+                renderTarget,
+                ResourceStates.Common,
                 ResourceStates.Present);
             _commandList.ResourceBarrier([toPresent]);
             _commandList.Close();

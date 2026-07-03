@@ -234,6 +234,7 @@ public partial class EqualizerWindow : Window
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private int _textureNativeFrameUpdateQueued;
     private bool _textureNativeFrameLeaseActive;
+    private bool _textureNativeBgraPreviewAvailable;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -1344,6 +1345,7 @@ public partial class EqualizerWindow : Window
             stream.Dispose();
             _pendingTextureNativeFrameInfo = null;
             _textureNativeFrameLeaseActive = false;
+            _textureNativeBgraPreviewAvailable = false;
             System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
             HideDirect3D12PreviewHost();
         }
@@ -1472,7 +1474,9 @@ public partial class EqualizerWindow : Window
         {
             CameraPreviewImage.Visibility = Visibility.Collapsed;
             CameraPlaceholder.Visibility = Visibility.Visible;
-            if (_direct3D12PreviewHost is not null && frame.FrameNumber % 4 == 0)
+            if (!_textureNativeBgraPreviewAvailable
+                && _direct3D12PreviewHost is not null
+                && frame.FrameNumber % 4 == 0)
             {
                 _direct3D12PreviewHost.RenderProofFrame(frame);
             }
@@ -1494,6 +1498,19 @@ public partial class EqualizerWindow : Window
     private void TextureNativeCameraTextureFrameAvailable(object? sender, TextureNativeFrameLease frame)
     {
         _textureNativeFrameLeaseActive = frame.IsValid;
+        if (frame.BgraPreviewBytes is null)
+        {
+            return;
+        }
+
+        _textureNativeBgraPreviewAvailable = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isCameraEnabled && _textureNativeCameraStream is not null)
+            {
+                _direct3D12PreviewHost?.RenderBgraFrame(frame);
+            }
+        }, DispatcherPriority.Background);
     }
 
     private void TextureNativeCameraStatusChanged(object? sender, string status)
