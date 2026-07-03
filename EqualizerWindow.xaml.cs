@@ -1000,7 +1000,7 @@ public partial class EqualizerWindow : Window
         }
 
         RecordingStatusText.Text = textureResult is { Success: true }
-            ? $"Recording stopped at {FormatDuration(elapsed)}. GPU saved {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
+            ? $"Recording stopped at {FormatDuration(elapsed)}. GPU saved raw texture-native video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
             : textureResult is not null
                 ? $"Recording stopped at {FormatDuration(elapsed)}. GPU recording issue: {textureResult.Status}"
                 : !string.IsNullOrWhiteSpace(videoPath)
@@ -2147,6 +2147,7 @@ public partial class EqualizerWindow : Window
                         ? "Windows Media Foundation shared texture-native GPU stream"
                         : "Windows Media Foundation texture-native GPU samples"
                     : "Windows Media Foundation CPU frames",
+                videoProcessing = BuildVideoProcessingMetadata(textureResult),
                 textureNative = textureResult is null
                     ? null
                     : new
@@ -2168,6 +2169,38 @@ public partial class EqualizerWindow : Window
         {
             RecordingStatusText.Text = $"Recording stopped, but session metadata could not be written: {ex.Message}";
         }
+    }
+
+    private object BuildVideoProcessingMetadata(TextureNativeRecordingResult? textureResult)
+    {
+        if (textureResult is not null)
+        {
+            return new
+            {
+                previewPipeline = "Direct3D 12 NV12 shader preview",
+                previewDenoiseApplied = _pendingVideoDenoiseEnabled,
+                previewDenoiseStrength = _pendingVideoDenoiseStrength,
+                recordingPipeline = "Media Foundation texture-native raw camera samples",
+                recordingDenoiseApplied = false,
+                recordingMatchesPreviewDenoise = !_pendingVideoDenoiseEnabled,
+                note = _pendingVideoDenoiseEnabled
+                    ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
+                    : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
+            };
+        }
+
+        return new
+        {
+            previewPipeline = "Media Foundation CPU preview",
+            previewDenoiseApplied = _pendingVideoDenoiseEnabled,
+            previewDenoiseStrength = _pendingVideoDenoiseStrength,
+            recordingPipeline = "Media Foundation CPU frame writer",
+            recordingDenoiseApplied = _pendingVideoDenoiseEnabled,
+            recordingMatchesPreviewDenoise = true,
+            note = _pendingVideoDenoiseEnabled
+                ? "CPU preview denoise was applied before recording frames were written."
+                : "CPU preview denoise was off."
+        };
     }
 
     private static string CreateAudioRecordingFileName(DateTime timestamp)
