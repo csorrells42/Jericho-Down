@@ -237,7 +237,7 @@ public partial class EqualizerWindow : Window
     private int _textureNativePreviewRenderQueued;
     private bool _textureNativeFrameLeaseActive;
     private bool _textureNativeBgraPreviewAvailable;
-    private TextureNativePreviewFrame? _pendingTextureNativePreviewFrame;
+    private TextureNativeFrameLease? _pendingTextureNativePreviewFrame;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -1376,7 +1376,7 @@ public partial class EqualizerWindow : Window
         {
             stream.Dispose();
             _pendingTextureNativeFrameInfo = null;
-            _pendingTextureNativePreviewFrame = null;
+            System.Threading.Interlocked.Exchange(ref _pendingTextureNativePreviewFrame, null)?.Dispose();
             _textureNativeFrameLeaseActive = false;
             _textureNativeBgraPreviewAvailable = false;
             System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
@@ -1532,7 +1532,8 @@ public partial class EqualizerWindow : Window
     private void TextureNativeCameraTextureFrameAvailable(object? sender, TextureNativeFrameLease frame)
     {
         _textureNativeFrameLeaseActive = frame.IsValid;
-        if (frame.Nv12PreviewBytes is null && frame.BgraPreviewBytes is null)
+        var pendingFrame = frame.Duplicate();
+        if (pendingFrame is null)
         {
             return;
         }
@@ -1540,7 +1541,7 @@ public partial class EqualizerWindow : Window
         _textureNativeBgraPreviewAvailable = true;
         System.Threading.Interlocked.Exchange(
             ref _pendingTextureNativePreviewFrame,
-            TextureNativePreviewFrame.FromLease(frame));
+            pendingFrame)?.Dispose();
         if (System.Threading.Interlocked.Exchange(ref _textureNativePreviewRenderQueued, 1) != 0)
         {
             return;
@@ -1554,9 +1555,16 @@ public partial class EqualizerWindow : Window
         var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativePreviewFrame, null);
         if (frame is not null)
         {
-            if (_isCameraEnabled && _textureNativeCameraStream is not null)
+            try
             {
-                _direct3D12PreviewHost?.RenderTextureFrame(frame, _pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+                if (_isCameraEnabled && _textureNativeCameraStream is not null)
+                {
+                    _direct3D12PreviewHost?.RenderTextureFrame(frame, _pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+                }
+            }
+            finally
+            {
+                frame.Dispose();
             }
         }
 

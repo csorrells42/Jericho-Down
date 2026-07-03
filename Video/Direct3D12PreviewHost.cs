@@ -49,7 +49,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
     }
 
-    public void RenderTextureFrame(TextureNativePreviewFrame frame, bool denoiseEnabled, double denoiseStrength)
+    public void RenderTextureFrame(TextureNativeFrameLease frame, bool denoiseEnabled, double denoiseStrength)
     {
         if (_renderer is null)
         {

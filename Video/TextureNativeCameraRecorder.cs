@@ -114,6 +114,30 @@ public sealed class TextureNativeFrameLease : IDisposable
 
     public bool IsValid => _resource != IntPtr.Zero;
 
+    public TextureNativeFrameLease? Duplicate()
+    {
+        var resource = _resource;
+        if (resource == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        System.Runtime.InteropServices.Marshal.AddRef(resource);
+        return new TextureNativeFrameLease(
+            resource,
+            Subresource,
+            Width,
+            Height,
+            FramesPerSecond,
+            DeviceMode,
+            MediaSubtype,
+            FrameNumber,
+            Nv12PreviewBytes,
+            Nv12PreviewStride,
+            BgraPreviewBytes,
+            BgraPreviewStride);
+    }
+
     public void Dispose()
     {
         var resource = Interlocked.Exchange(ref _resource, IntPtr.Zero);
