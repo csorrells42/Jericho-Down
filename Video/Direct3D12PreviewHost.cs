@@ -49,21 +49,40 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
     }
 
-    public void RenderBgraFrame(TextureNativeFrameLease frame)
+    public void RenderTextureFrame(TextureNativeFrameLease frame)
     {
-        if (_renderer is null || frame.BgraPreviewBytes is null || frame.BgraPreviewStride <= 0)
+        if (_renderer is null)
         {
             return;
         }
 
         try
         {
-            _renderer.RenderBgraFrame(
-                frame.BgraPreviewBytes,
-                frame.Width,
-                frame.Height,
-                frame.BgraPreviewStride,
-                frame.FrameNumber);
+            if (frame.Nv12PreviewBytes is not null && frame.Nv12PreviewStride > 0)
+            {
+                if (_renderer.RenderNv12Frame(
+                    frame.Nv12PreviewBytes,
+                    frame.Width,
+                    frame.Height,
+                    frame.Nv12PreviewStride,
+                    frame.FrameNumber))
+                {
+                    return;
+                }
+            }
+
+            if (frame.BgraPreviewBytes is not null && frame.BgraPreviewStride > 0)
+            {
+                _renderer.RenderBgraFrame(
+                    frame.BgraPreviewBytes,
+                    frame.Width,
+                    frame.Height,
+                    frame.BgraPreviewStride,
+                    frame.FrameNumber);
+                return;
+            }
+
+            _renderer.RenderProofFrame(frame.FrameNumber);
         }
         catch (Exception ex)
         {
@@ -202,21 +221,35 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private readonly ID3D12DescriptorHeap _rtvHeap;
         private readonly ID3D12DescriptorHeap _srvHeap;
         private readonly int _rtvDescriptorSize;
+        private readonly int _srvDescriptorSize;
         private readonly ID3D12Resource?[] _renderTargets = new ID3D12Resource?[FrameCount];
         private ID3D12RootSignature? _previewRootSignature;
         private ID3D12PipelineState? _previewPipelineState;
+        private ID3D12RootSignature? _nv12PreviewRootSignature;
+        private ID3D12PipelineState? _nv12PreviewPipelineState;
         private ID3D12Resource? _cameraTexture;
         private ID3D12Resource? _cameraUploadBuffer;
         private PlacedSubresourceFootPrint _cameraTextureFootprint;
         private ResourceStates _cameraTextureState;
+        private ID3D12Resource? _nv12YTexture;
+        private ID3D12Resource? _nv12UvTexture;
+        private ID3D12Resource? _nv12YUploadBuffer;
+        private ID3D12Resource? _nv12UvUploadBuffer;
+        private PlacedSubresourceFootPrint _nv12YFootprint;
+        private PlacedSubresourceFootPrint _nv12UvFootprint;
+        private ResourceStates _nv12YTextureState;
+        private ResourceStates _nv12UvTextureState;
         private IDXGISwapChain3 _swapChain;
         private ulong _fenceValue;
         private int _cameraTextureWidth;
         private int _cameraTextureHeight;
+        private int _nv12TextureWidth;
+        private int _nv12TextureHeight;
         private int _width;
         private int _height;
         private bool _disposed;
         private bool _shaderPreviewUnavailable;
+        private bool _nv12PreviewUnavailable;
 
         public Direct3D12SwapChainRenderer(IntPtr hwnd, int width, int height)
         {
@@ -255,11 +288,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _srvHeap = _device.CreateDescriptorHeap<ID3D12DescriptorHeap>(
                 new DescriptorHeapDescription(
                     DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView,
-                    1,
+                    3,
                     DescriptorHeapFlags.ShaderVisible));
             _rtvDescriptorSize = (int)_device.GetDescriptorHandleIncrementSize(DescriptorHeapType.RenderTargetView);
+            _srvDescriptorSize = (int)_device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
             CreateRenderTargetViews();
             TryCreatePreviewShaderPipeline();
+            TryCreateNv12PreviewShaderPipeline();
 
             _commandAllocator = _device.CreateCommandAllocator<ID3D12CommandAllocator>(CommandListType.Direct);
             _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList>(
@@ -329,6 +364,132 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
 
             RenderBgraFrameToBackBuffer(bgraBytes, height, stride);
+        }
+
+        public unsafe bool RenderNv12Frame(byte[] nv12Bytes, int width, int height, int stride, long frameNumber)
+        {
+            var uvHeight = (height + 1) / 2;
+            if (_disposed || stride < width || nv12Bytes.Length < stride * height + stride * uvHeight)
+            {
+                return false;
+            }
+
+            if (width != _width || height != _height)
+            {
+                Resize(width, height);
+            }
+
+            return TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride);
+        }
+
+        private unsafe bool TryRenderNv12FrameWithShader(byte[] nv12Bytes, int width, int height, int stride)
+        {
+            if (_nv12PreviewUnavailable || _nv12PreviewRootSignature is null || _nv12PreviewPipelineState is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                EnsureNv12Textures(width, height);
+                var yTexture = _nv12YTexture;
+                var uvTexture = _nv12UvTexture;
+                var yUploadBuffer = _nv12YUploadBuffer;
+                var uvUploadBuffer = _nv12UvUploadBuffer;
+                if (yTexture is null || uvTexture is null || yUploadBuffer is null || uvUploadBuffer is null)
+                {
+                    return false;
+                }
+
+                CopyNv12FrameToUploadBuffers(yUploadBuffer, uvUploadBuffer, nv12Bytes, width, height, stride);
+
+                var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+                var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
+                _commandAllocator.Reset();
+                _commandList.Reset(_commandAllocator);
+
+                if (_nv12YTextureState != ResourceStates.CopyDest)
+                {
+                    var toCopyDestination = ResourceBarrier.BarrierTransition(
+                        yTexture,
+                        _nv12YTextureState,
+                        ResourceStates.CopyDest);
+                    _commandList.ResourceBarrier([toCopyDestination]);
+                    _nv12YTextureState = ResourceStates.CopyDest;
+                }
+
+                if (_nv12UvTextureState != ResourceStates.CopyDest)
+                {
+                    var toCopyDestination = ResourceBarrier.BarrierTransition(
+                        uvTexture,
+                        _nv12UvTextureState,
+                        ResourceStates.CopyDest);
+                    _commandList.ResourceBarrier([toCopyDestination]);
+                    _nv12UvTextureState = ResourceStates.CopyDest;
+                }
+
+                _commandList.CopyTextureRegion(
+                    new TextureCopyLocation(yTexture, 0),
+                    0,
+                    0,
+                    0,
+                    new TextureCopyLocation(yUploadBuffer, _nv12YFootprint),
+                    null);
+                _commandList.CopyTextureRegion(
+                    new TextureCopyLocation(uvTexture, 0),
+                    0,
+                    0,
+                    0,
+                    new TextureCopyLocation(uvUploadBuffer, _nv12UvFootprint),
+                    null);
+
+                var yToPixelShaderResource = ResourceBarrier.BarrierTransition(
+                    yTexture,
+                    ResourceStates.CopyDest,
+                    ResourceStates.PixelShaderResource);
+                var uvToPixelShaderResource = ResourceBarrier.BarrierTransition(
+                    uvTexture,
+                    ResourceStates.CopyDest,
+                    ResourceStates.PixelShaderResource);
+                _commandList.ResourceBarrier([yToPixelShaderResource, uvToPixelShaderResource]);
+                _nv12YTextureState = ResourceStates.PixelShaderResource;
+                _nv12UvTextureState = ResourceStates.PixelShaderResource;
+
+                var toRenderTarget = ResourceBarrier.BarrierTransition(
+                    renderTarget,
+                    ResourceStates.Present,
+                    ResourceStates.RenderTarget);
+                _commandList.ResourceBarrier([toRenderTarget]);
+
+                var rtvHandle = GetRtvHandle(frameIndex);
+                _commandList.SetGraphicsRootSignature(_nv12PreviewRootSignature);
+                _commandList.SetPipelineState(_nv12PreviewPipelineState);
+                _commandList.SetDescriptorHeaps([_srvHeap]);
+                _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
+                var viewport = new Viewport(0, 0, _width, _height);
+                var scissor = new RawRect(0, 0, _width, _height);
+                _commandList.RSSetViewports(viewport);
+                _commandList.RSSetScissorRects(scissor);
+                _commandList.OMSetRenderTargets(rtvHandle, null);
+                _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+                _commandList.DrawInstanced(3, 1, 0, 0);
+
+                var toPresent = ResourceBarrier.BarrierTransition(
+                    renderTarget,
+                    ResourceStates.RenderTarget,
+                    ResourceStates.Present);
+                _commandList.ResourceBarrier([toPresent]);
+                _commandList.Close();
+                _commandQueue.ExecuteCommandList(_commandList);
+                _swapChain.Present(0, PresentFlags.None);
+                WaitForGpu();
+                return true;
+            }
+            catch
+            {
+                _nv12PreviewUnavailable = true;
+                return false;
+            }
         }
 
         private unsafe bool TryRenderBgraFrameWithShader(byte[] bgraBytes, int width, int height, int stride)
@@ -525,6 +686,119 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _srvHeap.GetCPUDescriptorHandleForHeapStart());
         }
 
+        private void EnsureNv12Textures(int width, int height)
+        {
+            if (_nv12YTexture is not null
+                && _nv12UvTexture is not null
+                && _nv12YUploadBuffer is not null
+                && _nv12UvUploadBuffer is not null
+                && _nv12TextureWidth == width
+                && _nv12TextureHeight == height)
+            {
+                return;
+            }
+
+            WaitForGpu();
+            _nv12YTexture?.Dispose();
+            _nv12UvTexture?.Dispose();
+            _nv12YUploadBuffer?.Dispose();
+            _nv12UvUploadBuffer?.Dispose();
+            _nv12YTexture = null;
+            _nv12UvTexture = null;
+            _nv12YUploadBuffer = null;
+            _nv12UvUploadBuffer = null;
+            _nv12TextureWidth = width;
+            _nv12TextureHeight = height;
+
+            var yDescription = new ResourceDescription(
+                ResourceDimension.Texture2D,
+                0,
+                (ulong)width,
+                (uint)height,
+                1,
+                1,
+                Format.R8_UNorm,
+                1,
+                0,
+                TextureLayout.Unknown,
+                ResourceFlags.None);
+            var uvDescription = new ResourceDescription(
+                ResourceDimension.Texture2D,
+                0,
+                (ulong)Math.Max(1, width / 2),
+                (uint)Math.Max(1, height / 2),
+                1,
+                1,
+                Format.R8G8_UNorm,
+                1,
+                0,
+                TextureLayout.Unknown,
+                ResourceFlags.None);
+
+            _nv12YTexture = _device.CreateCommittedResource<ID3D12Resource>(
+                new HeapProperties(HeapType.Default),
+                HeapFlags.None,
+                yDescription,
+                ResourceStates.CopyDest);
+            _nv12UvTexture = _device.CreateCommittedResource<ID3D12Resource>(
+                new HeapProperties(HeapType.Default),
+                HeapFlags.None,
+                uvDescription,
+                ResourceStates.CopyDest);
+            _nv12YTextureState = ResourceStates.CopyDest;
+            _nv12UvTextureState = ResourceStates.CopyDest;
+
+            _nv12YFootprint = CreateUploadBufferForTexture(yDescription, out _nv12YUploadBuffer);
+            _nv12UvFootprint = CreateUploadBufferForTexture(uvDescription, out _nv12UvUploadBuffer);
+
+            var ySrvDescription = new ShaderResourceViewDescription
+            {
+                Format = Format.R8_UNorm,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Shader4ComponentMapping = D3D12DefaultShader4ComponentMappingValue,
+                Texture2D = new Texture2DShaderResourceView
+                {
+                    MipLevels = 1
+                }
+            };
+            var uvSrvDescription = new ShaderResourceViewDescription
+            {
+                Format = Format.R8G8_UNorm,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Shader4ComponentMapping = D3D12DefaultShader4ComponentMappingValue,
+                Texture2D = new Texture2DShaderResourceView
+                {
+                    MipLevels = 1
+                }
+            };
+            _device.CreateShaderResourceView(_nv12YTexture, ySrvDescription, GetSrvCpuHandle(1));
+            _device.CreateShaderResourceView(_nv12UvTexture, uvSrvDescription, GetSrvCpuHandle(2));
+        }
+
+        private PlacedSubresourceFootPrint CreateUploadBufferForTexture(
+            ResourceDescription description,
+            out ID3D12Resource uploadBuffer)
+        {
+            var layouts = new PlacedSubresourceFootPrint[1];
+            var numRows = new uint[1];
+            var rowSizesInBytes = new ulong[1];
+            _device.GetCopyableFootprints(
+                description,
+                0,
+                1,
+                0,
+                layouts,
+                numRows,
+                rowSizesInBytes,
+                out var uploadBytes);
+            uploadBuffer = _device.CreateCommittedResource<ID3D12Resource>(
+                new HeapProperties(HeapType.Upload),
+                HeapFlags.None,
+                ResourceDescription.Buffer(uploadBytes, ResourceFlags.None, 0),
+                ResourceStates.GenericRead);
+            return layouts[0];
+        }
+
         private unsafe void CopyBgraFrameToUploadBuffer(ID3D12Resource uploadBuffer, byte[] bgraBytes, int width, int height, int stride)
         {
             void* mappedPointer = null;
@@ -550,6 +824,54 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             finally
             {
                 uploadBuffer.Unmap(0, null);
+            }
+        }
+
+        private unsafe void CopyNv12FrameToUploadBuffers(
+            ID3D12Resource yUploadBuffer,
+            ID3D12Resource uvUploadBuffer,
+            byte[] nv12Bytes,
+            int width,
+            int height,
+            int stride)
+        {
+            var uvHeight = Math.Max(1, height / 2);
+            var uvOffset = stride * height;
+            void* mappedYPointer = null;
+            void* mappedUvPointer = null;
+            yUploadBuffer.Map(0, null, &mappedYPointer).CheckError();
+            uvUploadBuffer.Map(0, null, &mappedUvPointer).CheckError();
+            try
+            {
+                fixed (byte* sourceStart = nv12Bytes)
+                {
+                    var yDestinationStart = (byte*)mappedYPointer + (nint)_nv12YFootprint.Offset;
+                    var yDestinationStride = (nint)_nv12YFootprint.Footprint.RowPitch;
+                    for (var row = 0; row < height; row++)
+                    {
+                        Buffer.MemoryCopy(
+                            sourceStart + row * stride,
+                            yDestinationStart + row * yDestinationStride,
+                            yDestinationStride,
+                            width);
+                    }
+
+                    var uvDestinationStart = (byte*)mappedUvPointer + (nint)_nv12UvFootprint.Offset;
+                    var uvDestinationStride = (nint)_nv12UvFootprint.Footprint.RowPitch;
+                    for (var row = 0; row < uvHeight; row++)
+                    {
+                        Buffer.MemoryCopy(
+                            sourceStart + uvOffset + row * stride,
+                            uvDestinationStart + row * uvDestinationStride,
+                            uvDestinationStride,
+                            width);
+                    }
+                }
+            }
+            finally
+            {
+                uvUploadBuffer.Unmap(0, null);
+                yUploadBuffer.Unmap(0, null);
             }
         }
 
@@ -611,10 +933,73 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
         }
 
+        private void TryCreateNv12PreviewShaderPipeline()
+        {
+            try
+            {
+                var vertexShader = CompileShader(Nv12PreviewShaderSource, "VSMain", "vs_5_0");
+                var pixelShader = CompileShader(Nv12PreviewShaderSource, "PSMain", "ps_5_0");
+                var ranges = new[]
+                {
+                    new DescriptorRange(DescriptorRangeType.ShaderResourceView, 2, 0)
+                };
+                var parameters = new[]
+                {
+                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel)
+                };
+                var samplers = new[]
+                {
+                    new StaticSamplerDescription(
+                        0,
+                        Filter.MinMagMipLinear,
+                        TextureAddressMode.Clamp,
+                        TextureAddressMode.Clamp,
+                        TextureAddressMode.Clamp,
+                        0,
+                        0,
+                        ComparisonFunction.Never,
+                        StaticBorderColor.TransparentBlack,
+                        0,
+                        float.MaxValue,
+                        ShaderVisibility.Pixel,
+                        0)
+                };
+                var rootDescription = new RootSignatureDescription(
+                    RootSignatureFlags.AllowInputAssemblerInputLayout,
+                    parameters,
+                    samplers);
+                _nv12PreviewRootSignature = _device.CreateRootSignature(in rootDescription, RootSignatureVersion.Version1);
+
+                var pipelineDescription = new GraphicsPipelineStateDescription
+                {
+                    RootSignature = _nv12PreviewRootSignature,
+                    VertexShader = vertexShader,
+                    PixelShader = pixelShader,
+                    BlendState = BlendDescription.Opaque,
+                    RasterizerState = RasterizerDescription.CullNone,
+                    DepthStencilState = DepthStencilDescription.None,
+                    SampleMask = uint.MaxValue,
+                    PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
+                    RenderTargetFormats = [Format.B8G8R8A8_UNorm],
+                    SampleDescription = new SampleDescription(1, 0)
+                };
+                _nv12PreviewPipelineState = _device.CreateGraphicsPipelineState<ID3D12PipelineState>(pipelineDescription);
+            }
+            catch
+            {
+                _nv12PreviewUnavailable = true;
+            }
+        }
+
         private static byte[] CompileShader(string entryPoint, string profile)
         {
+            return CompileShader(PreviewShaderSource, entryPoint, profile);
+        }
+
+        private static byte[] CompileShader(string shaderSource, string entryPoint, string profile)
+        {
             return Compiler.Compile(
-                    PreviewShaderSource,
+                    shaderSource,
                     entryPoint,
                     "PodcastWorkbenchPreview.hlsl",
                     profile,
@@ -661,6 +1046,50 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
             """;
 
+        private const string Nv12PreviewShaderSource = """
+            Texture2D<float> CameraLuma : register(t0);
+            Texture2D<float2> CameraChroma : register(t1);
+            SamplerState CameraSampler : register(s0);
+
+            struct VertexOutput
+            {
+                float4 Position : SV_POSITION;
+                float2 TexCoord : TEXCOORD0;
+            };
+
+            VertexOutput VSMain(uint vertexId : SV_VertexID)
+            {
+                float2 positions[3] =
+                {
+                    float2(-1.0, -1.0),
+                    float2(-1.0, 3.0),
+                    float2(3.0, -1.0)
+                };
+                float2 texCoords[3] =
+                {
+                    float2(0.0, 1.0),
+                    float2(0.0, -1.0),
+                    float2(2.0, 1.0)
+                };
+
+                VertexOutput output;
+                output.Position = float4(positions[vertexId], 0.0, 1.0);
+                output.TexCoord = texCoords[vertexId];
+                return output;
+            }
+
+            float4 PSMain(VertexOutput input) : SV_TARGET
+            {
+                float y = saturate((CameraLuma.Sample(CameraSampler, input.TexCoord) - (16.0 / 255.0)) * (255.0 / 219.0));
+                float2 uv = CameraChroma.Sample(CameraSampler, input.TexCoord) - float2(0.5, 0.5);
+                float3 rgb = float3(
+                    y + 1.5748 * uv.y,
+                    y - 0.1873 * uv.x - 0.4681 * uv.y,
+                    y + 1.8556 * uv.x);
+                return float4(saturate(rgb), 1.0);
+            }
+            """;
+
         public void Resize(int width, int height)
         {
             if (_disposed || width == _width && height == _height)
@@ -692,8 +1121,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _srvHeap.Dispose();
             _cameraTexture?.Dispose();
             _cameraUploadBuffer?.Dispose();
+            _nv12YTexture?.Dispose();
+            _nv12UvTexture?.Dispose();
+            _nv12YUploadBuffer?.Dispose();
+            _nv12UvUploadBuffer?.Dispose();
             _previewPipelineState?.Dispose();
             _previewRootSignature?.Dispose();
+            _nv12PreviewPipelineState?.Dispose();
+            _nv12PreviewRootSignature?.Dispose();
             _fence.Dispose();
             _fenceEvent.Dispose();
             _commandList.Dispose();
@@ -717,6 +1152,16 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private CpuDescriptorHandle GetRtvHandle(int frameIndex)
         {
             return _rtvHeap.GetCPUDescriptorHandleForHeapStart() + frameIndex * _rtvDescriptorSize;
+        }
+
+        private CpuDescriptorHandle GetSrvCpuHandle(int descriptorIndex)
+        {
+            return _srvHeap.GetCPUDescriptorHandleForHeapStart() + descriptorIndex * _srvDescriptorSize;
+        }
+
+        private GpuDescriptorHandle GetSrvGpuHandle(int descriptorIndex)
+        {
+            return _srvHeap.GetGPUDescriptorHandleForHeapStart() + descriptorIndex * _srvDescriptorSize;
         }
 
         private void ReleaseRenderTargets()

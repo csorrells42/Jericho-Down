@@ -1498,7 +1498,7 @@ public partial class EqualizerWindow : Window
     private void TextureNativeCameraTextureFrameAvailable(object? sender, TextureNativeFrameLease frame)
     {
         _textureNativeFrameLeaseActive = frame.IsValid;
-        if (frame.BgraPreviewBytes is null)
+        if (frame.Nv12PreviewBytes is null && frame.BgraPreviewBytes is null)
         {
             return;
         }
@@ -1508,7 +1508,7 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled && _textureNativeCameraStream is not null)
             {
-                _direct3D12PreviewHost?.RenderBgraFrame(frame);
+                _direct3D12PreviewHost?.RenderTextureFrame(frame);
             }
         }, DispatcherPriority.Background);
     }

@@ -33,6 +33,8 @@ public sealed class TextureNativeFrameLease : IDisposable
         string deviceMode,
         string mediaSubtype,
         long frameNumber,
+        byte[]? nv12PreviewBytes = null,
+        int nv12PreviewStride = 0,
         byte[]? bgraPreviewBytes = null,
         int bgraPreviewStride = 0)
     {
@@ -44,6 +46,8 @@ public sealed class TextureNativeFrameLease : IDisposable
         DeviceMode = deviceMode;
         MediaSubtype = mediaSubtype;
         FrameNumber = frameNumber;
+        Nv12PreviewBytes = nv12PreviewBytes;
+        Nv12PreviewStride = nv12PreviewStride;
         BgraPreviewBytes = bgraPreviewBytes;
         BgraPreviewStride = bgraPreviewStride;
     }
@@ -63,6 +67,10 @@ public sealed class TextureNativeFrameLease : IDisposable
     public string MediaSubtype { get; }
 
     public long FrameNumber { get; }
+
+    public byte[]? Nv12PreviewBytes { get; }
+
+    public int Nv12PreviewStride { get; }
 
     public byte[]? BgraPreviewBytes { get; }
 
@@ -605,7 +613,12 @@ public sealed class TextureNativeCameraStream : IDisposable
                     return null;
                 }
 
-                var bgraPreviewBytes = TryCreateBgraPreview(buffer, frameNumber, out var bgraPreviewStride);
+                var nv12PreviewBytes = TryCreateNv12Preview(buffer, out var nv12PreviewStride);
+                var bgraPreviewStride = 0;
+                var bgraPreviewBytes = frameNumber % 16 == 0
+                    ? TryCreateBgraPreview(buffer, frameNumber, out bgraPreviewStride)
+                    : null;
+
                 return new TextureNativeFrameLease(
                     resource,
                     subresource,
@@ -615,6 +628,8 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _deviceManager.ModeName,
                     MediaFoundationInterop.FormatSubtype(_subtype),
                     frameNumber,
+                    nv12PreviewBytes,
+                    nv12PreviewStride,
                     bgraPreviewBytes,
                     bgraPreviewStride);
             }
@@ -626,6 +641,40 @@ public sealed class TextureNativeCameraStream : IDisposable
         finally
         {
             MediaFoundationInterop.ReleaseComObject(buffer);
+        }
+    }
+
+    private byte[]? TryCreateNv12Preview(IMFMediaBuffer buffer, out int nv12Stride)
+    {
+        nv12Stride = 0;
+        if (_subtype != MediaFoundationGuids.MFVideoFormat_NV12)
+        {
+            return null;
+        }
+
+        var result = buffer.Lock(out var source, out _, out var currentLength);
+        if (MediaFoundationInterop.Failed(result) || source == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var pitch = Math.Max(_width, currentLength * 2 / Math.Max(1, _height * 3));
+            var requiredLength = pitch * _height + pitch * ((_height + 1) / 2);
+            if (currentLength < requiredLength)
+            {
+                return null;
+            }
+
+            var nv12 = new byte[requiredLength];
+            System.Runtime.InteropServices.Marshal.Copy(source, nv12, 0, requiredLength);
+            nv12Stride = pitch;
+            return nv12;
+        }
+        finally
+        {
+            buffer.Unlock();
         }
     }
 
