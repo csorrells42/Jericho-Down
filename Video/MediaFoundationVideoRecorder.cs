@@ -45,6 +45,8 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
 
     public double FramesPerSecond { get; }
 
+    public int SamplesWritten => _samplesWritten;
+
     private long SampleDuration => Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / FramesPerSecond));
 
     public void Pause()

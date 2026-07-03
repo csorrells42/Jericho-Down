@@ -10,7 +10,15 @@ public sealed record TextureNativeRecordingResult(
     int Width,
     int Height,
     double FramesPerSecond,
-    string Status);
+    string Status,
+    string RecordingPipeline = "Media Foundation texture-native raw camera samples",
+    bool RecordingDenoiseApplied = false,
+    bool RecordingMatchesPreviewDenoise = false);
+
+public sealed record TextureNativeRecordingOptions(
+    bool ProcessedOutputEnabled,
+    bool DenoiseEnabled,
+    double DenoiseStrength);
 
 public sealed record TextureNativeFrameInfo(
     int Width,
@@ -341,7 +349,13 @@ public sealed class TextureNativeCameraStream : IDisposable
     private readonly Guid _subtype;
     private readonly long _sampleDuration;
     private MediaFoundationTextureVideoRecorder? _recorder;
+    private MediaFoundationVideoRecorder? _processedRecorder;
+    private byte[]? _previousProcessedDenoiseFrame;
     private string? _recordingPath;
+    private string _recordingPipeline = "Media Foundation texture-native raw camera samples";
+    private bool _recordingMatchesPreviewDenoise;
+    private bool _processedRecordingDenoiseEnabled;
+    private double _processedRecordingDenoiseStrength = 2d;
     private bool _isPaused;
     private bool _isStopping;
     private long _nextSampleTime;
@@ -387,27 +401,49 @@ public sealed class TextureNativeCameraStream : IDisposable
         {
             lock (_stateLock)
             {
-                return _recorder is not null;
+                return _recorder is not null || _processedRecorder is not null;
             }
         }
     }
 
-    public bool StartRecording(string path)
+    public bool StartRecording(string path, TextureNativeRecordingOptions? options = null)
     {
         lock (_stateLock)
         {
-            if (_recorder is not null)
+            if (_recorder is not null || _processedRecorder is not null)
             {
                 return true;
             }
 
-            _recorder = new MediaFoundationTextureVideoRecorder(
-                path,
-                _width,
-                _height,
-                _fps,
-                _subtype,
-                _deviceManager.Manager);
+            if (options?.ProcessedOutputEnabled == true)
+            {
+                _processedRecorder = new MediaFoundationVideoRecorder(
+                    path,
+                    _width,
+                    _height,
+                    _fps,
+                    d3dManager: null);
+                _processedRecordingDenoiseEnabled = options.DenoiseEnabled;
+                _processedRecordingDenoiseStrength = options.DenoiseStrength;
+                _previousProcessedDenoiseFrame = null;
+                _recordingPipeline = "Texture-native processed BGRA bridge";
+                _recordingMatchesPreviewDenoise = true;
+            }
+            else
+            {
+                _recorder = new MediaFoundationTextureVideoRecorder(
+                    path,
+                    _width,
+                    _height,
+                    _fps,
+                    _subtype,
+                    _deviceManager.Manager);
+                _processedRecordingDenoiseEnabled = false;
+                _previousProcessedDenoiseFrame = null;
+                _recordingPipeline = "Media Foundation texture-native raw camera samples";
+                _recordingMatchesPreviewDenoise = options?.DenoiseEnabled != true;
+            }
+
             _recordingPath = path;
             _nextSampleTime = 0;
             _isPaused = false;
@@ -422,6 +458,7 @@ public sealed class TextureNativeCameraStream : IDisposable
         lock (_stateLock)
         {
             _isPaused = true;
+            _processedRecorder?.Pause();
             _status = "Texture-native GPU recording paused.";
             StatusChanged?.Invoke(this, _status);
         }
@@ -432,6 +469,7 @@ public sealed class TextureNativeCameraStream : IDisposable
         lock (_stateLock)
         {
             _isPaused = false;
+            _processedRecorder?.Resume();
             _status = "Texture-native GPU recording resumed.";
             StatusChanged?.Invoke(this, _status);
         }
@@ -440,46 +478,67 @@ public sealed class TextureNativeCameraStream : IDisposable
     public TextureNativeRecordingResult? StopRecording()
     {
         MediaFoundationTextureVideoRecorder? recorder;
+        MediaFoundationVideoRecorder? processedRecorder;
         string? path;
         string status;
+        string recordingPipeline;
+        bool processedDenoiseEnabled;
+        bool recordingMatchesPreviewDenoise;
         lock (_stateLock)
         {
             recorder = _recorder;
+            processedRecorder = _processedRecorder;
             path = _recordingPath;
             status = _status;
+            recordingPipeline = _recordingPipeline;
+            processedDenoiseEnabled = _processedRecordingDenoiseEnabled;
+            recordingMatchesPreviewDenoise = _recordingMatchesPreviewDenoise;
             _recorder = null;
+            _processedRecorder = null;
             _recordingPath = null;
             _isPaused = false;
+            _previousProcessedDenoiseFrame = null;
+            _processedRecordingDenoiseEnabled = false;
+            _recordingMatchesPreviewDenoise = false;
+            _recordingPipeline = "Media Foundation texture-native raw camera samples";
         }
 
-        if (recorder is null || string.IsNullOrWhiteSpace(path))
+        if ((recorder is null && processedRecorder is null) || string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
         try
         {
-            recorder.Stop();
+            recorder?.Stop();
+            processedRecorder?.Stop();
             var bytes = System.IO.File.Exists(path) ? new System.IO.FileInfo(path).Length : 0;
-            var success = recorder.SamplesWritten > 0 && bytes > 4096;
+            var samplesWritten = recorder?.SamplesWritten ?? processedRecorder?.SamplesWritten ?? 0;
+            var success = samplesWritten > 0 && bytes > 4096;
             status = success
-                ? "Texture-native shared stream recording completed."
+                ? processedRecorder is not null
+                    ? "Texture-native processed bridge recording completed."
+                    : "Texture-native shared stream recording completed."
                 : status;
             return new TextureNativeRecordingResult(
                 success,
                 path,
-                recorder.SamplesWritten,
+                samplesWritten,
                 bytes,
                 _deviceManager.ModeName,
-                MediaFoundationInterop.FormatSubtype(_subtype),
+                processedRecorder is not null ? "rgb32" : MediaFoundationInterop.FormatSubtype(_subtype),
                 _width,
                 _height,
                 _fps,
-                status);
+                status,
+                recordingPipeline,
+                processedDenoiseEnabled,
+                recordingMatchesPreviewDenoise);
         }
         finally
         {
-            recorder.Dispose();
+            recorder?.Dispose();
+            processedRecorder?.Dispose();
         }
     }
 
@@ -584,21 +643,49 @@ public sealed class TextureNativeCameraStream : IDisposable
     private void WriteRecordingSample(IMFSample sample)
     {
         MediaFoundationTextureVideoRecorder? recorder;
+        MediaFoundationVideoRecorder? processedRecorder;
         bool isPaused;
+        bool processedDenoiseEnabled;
+        double processedDenoiseStrength;
         lock (_stateLock)
         {
             recorder = _recorder;
+            processedRecorder = _processedRecorder;
             isPaused = _isPaused;
+            processedDenoiseEnabled = _processedRecordingDenoiseEnabled;
+            processedDenoiseStrength = _processedRecordingDenoiseStrength;
         }
 
-        if (recorder is null || isPaused)
+        if (isPaused || (recorder is null && processedRecorder is null))
         {
             return;
         }
 
-        MediaFoundationInterop.ThrowIfFailed(sample.SetSampleTime(_nextSampleTime));
-        MediaFoundationInterop.ThrowIfFailed(sample.SetSampleDuration(_sampleDuration));
-        recorder.WriteSample(sample);
+        if (processedRecorder is not null)
+        {
+            if (!TryCreateBgraFrame(sample, out var bgraBytes))
+            {
+                return;
+            }
+
+            if (processedDenoiseEnabled)
+            {
+                ApplyTemporalDenoise(bgraBytes, processedDenoiseStrength, ref _previousProcessedDenoiseFrame);
+            }
+            else
+            {
+                _previousProcessedDenoiseFrame = null;
+            }
+
+            processedRecorder.WriteFrame(bgraBytes);
+        }
+        else if (recorder is not null)
+        {
+            MediaFoundationInterop.ThrowIfFailed(sample.SetSampleTime(_nextSampleTime));
+            MediaFoundationInterop.ThrowIfFailed(sample.SetSampleDuration(_sampleDuration));
+            recorder.WriteSample(sample);
+        }
+
         _nextSampleTime += _sampleDuration;
     }
 
@@ -610,6 +697,79 @@ public sealed class TextureNativeCameraStream : IDisposable
         }
 
         StatusChanged?.Invoke(this, status);
+    }
+
+    private bool TryCreateBgraFrame(IMFSample sample, out byte[] bgraBytes)
+    {
+        bgraBytes = [];
+        IMFMediaBuffer? buffer = null;
+        try
+        {
+            var bufferResult = sample.GetBufferByIndex(0, out buffer);
+            if (MediaFoundationInterop.Failed(bufferResult) || buffer is null)
+            {
+                return false;
+            }
+
+            if (_subtype != MediaFoundationGuids.MFVideoFormat_NV12)
+            {
+                return false;
+            }
+
+            var result = buffer.Lock(out var source, out _, out var currentLength);
+            if (MediaFoundationInterop.Failed(result) || source == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            try
+            {
+                var converted = ConvertNv12ToBgra(source, currentLength, _width, _height, out _);
+                if (converted is null)
+                {
+                    return false;
+                }
+
+                bgraBytes = converted;
+                return true;
+            }
+            finally
+            {
+                buffer.Unlock();
+            }
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(buffer);
+        }
+    }
+
+    private static void ApplyTemporalDenoise(byte[] current, double denoiseStrength, ref byte[]? previousFrame)
+    {
+        var previous = previousFrame;
+        if (previous is null || previous.Length != current.Length)
+        {
+            previousFrame = (byte[])current.Clone();
+            return;
+        }
+
+        var strength = Math.Clamp(denoiseStrength, 0.5d, 8d);
+        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
+        var currentWeight = 1d - previousWeight;
+        for (var i = 0; i < current.Length; i += 4)
+        {
+            current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
+            current[i + 1] = Blend(current[i + 1], previous[i + 1], currentWeight, previousWeight);
+            current[i + 2] = Blend(current[i + 2], previous[i + 2], currentWeight, previousWeight);
+            current[i + 3] = 255;
+        }
+
+        Buffer.BlockCopy(current, 0, previous, 0, current.Length);
+    }
+
+    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
+    {
+        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
     }
 
     private TextureNativeFrameLease? TryCreateFrameLease(IMFSample sample, long frameNumber)

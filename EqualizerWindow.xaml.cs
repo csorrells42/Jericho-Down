@@ -1000,7 +1000,9 @@ public partial class EqualizerWindow : Window
         }
 
         RecordingStatusText.Text = textureResult is { Success: true }
-            ? $"Recording stopped at {FormatDuration(elapsed)}. GPU saved raw texture-native video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
+            ? textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                ? $"Recording stopped at {FormatDuration(elapsed)}. GPU stream saved processed texture bridge video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} frames)."
+                : $"Recording stopped at {FormatDuration(elapsed)}. GPU saved raw texture-native video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
             : textureResult is not null
                 ? $"Recording stopped at {FormatDuration(elapsed)}. GPU recording issue: {textureResult.Status}"
                 : !string.IsNullOrWhiteSpace(videoPath)
@@ -1022,7 +1024,12 @@ public partial class EqualizerWindow : Window
         {
             try
             {
-                return _textureNativeCameraStream.StartRecording(videoPath);
+                return _textureNativeCameraStream.StartRecording(
+                    videoPath,
+                    new TextureNativeRecordingOptions(
+                        ShouldUseProcessedTextureNativeRecording(),
+                        _pendingVideoDenoiseEnabled,
+                        _pendingVideoDenoiseStrength));
             }
             catch (Exception ex)
             {
@@ -1065,6 +1072,12 @@ public partial class EqualizerWindow : Window
     private static bool ShouldUseSharedTextureCameraStream()
     {
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
+        return IsEnabledEnvironmentValue(value);
+    }
+
+    private static bool ShouldUseProcessedTextureNativeRecording()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_PROCESSED_TEXTURE_RECORDING");
         return IsEnabledEnvironmentValue(value);
     }
 
@@ -2180,12 +2193,14 @@ public partial class EqualizerWindow : Window
                 previewPipeline = "Direct3D 12 NV12 shader preview",
                 previewDenoiseApplied = _pendingVideoDenoiseEnabled,
                 previewDenoiseStrength = _pendingVideoDenoiseStrength,
-                recordingPipeline = "Media Foundation texture-native raw camera samples",
-                recordingDenoiseApplied = false,
-                recordingMatchesPreviewDenoise = !_pendingVideoDenoiseEnabled,
-                note = _pendingVideoDenoiseEnabled
-                    ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
-                    : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
+                recordingPipeline = textureResult.RecordingPipeline,
+                recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
+                recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
+                note = textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                    ? "Texture-native recording matched the preview denoise setting through the processed bridge."
+                    : _pendingVideoDenoiseEnabled
+                        ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
+                        : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
             };
         }
 
