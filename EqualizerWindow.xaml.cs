@@ -225,6 +225,7 @@ public partial class EqualizerWindow : Window
     private bool _isCameraFrameUpdateQueued;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = 2d;
+    private bool _processedTextureRecordingEnabled;
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
     private TextureNativeCameraStream? _textureNativeCameraStream;
@@ -390,6 +391,12 @@ public partial class EqualizerWindow : Window
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
     {
+        _processedTextureRecordingEnabled = GetDefaultProcessedTextureNativeRecording();
+        if (ProcessedTextureRecordingCheckBox is not null)
+        {
+            ProcessedTextureRecordingCheckBox.IsChecked = _processedTextureRecordingEnabled;
+        }
+
         ApplyDarkTitleBar();
         InputChannelComboBox.ItemsSource = new[]
         {
@@ -1027,7 +1034,7 @@ public partial class EqualizerWindow : Window
                 return _textureNativeCameraStream.StartRecording(
                     videoPath,
                     new TextureNativeRecordingOptions(
-                        ShouldUseProcessedTextureNativeRecording(),
+                        _processedTextureRecordingEnabled,
                         _pendingVideoDenoiseEnabled,
                         _pendingVideoDenoiseStrength));
             }
@@ -1075,7 +1082,7 @@ public partial class EqualizerWindow : Window
         return IsEnabledEnvironmentValue(value);
     }
 
-    private static bool ShouldUseProcessedTextureNativeRecording()
+    private static bool GetDefaultProcessedTextureNativeRecording()
     {
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_PROCESSED_TEXTURE_RECORDING");
         return IsEnabledEnvironmentValue(value);
@@ -1163,6 +1170,12 @@ public partial class EqualizerWindow : Window
     private void VideoDenoiseChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateVideoDenoiseSettings(restartPreview: false);
+    }
+
+    private void ProcessedTextureRecordingChanged(object sender, RoutedEventArgs e)
+    {
+        _processedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true;
+        UpdateProcessedTextureRecordingStatus();
     }
 
     private void CameraModeSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1660,7 +1673,8 @@ public partial class EqualizerWindow : Window
         var textureStatus = _textureNativeFrameLeaseActive ? "texture lease active" : "waiting for texture lease";
         var presenterStatus = _direct3D12PreviewHost?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
         var denoiseStatus = _pendingVideoDenoiseEnabled ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}" : "DX12 denoise off";
-        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {denoiseStatus}, frame {frame.FrameNumber})";
+        var recordingStatus = _processedTextureRecordingEnabled ? "processed recording armed" : "raw recording armed";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
     }
 
     private static string FormatCameraMode(CameraVideoMode mode)
@@ -1985,6 +1999,26 @@ public partial class EqualizerWindow : Window
                 ? "Video grain reduction is live on the preview and CPU recording path."
                 : "Video grain reduction is off on the preview and CPU recording path.";
         }
+    }
+
+    private void UpdateProcessedTextureRecordingStatus()
+    {
+        if (CameraControlStatusText is null)
+        {
+            return;
+        }
+
+        if (_isRecordingSession)
+        {
+            CameraControlStatusText.Text = _processedTextureRecordingEnabled
+                ? "Processed DX12 video recording will apply to the next recording."
+                : "Raw texture-native video recording will apply to the next recording.";
+            return;
+        }
+
+        CameraControlStatusText.Text = _processedTextureRecordingEnabled
+            ? "Processed DX12 bridge recording is enabled for shared GPU camera recordings."
+            : "Raw texture-native recording is enabled for shared GPU camera recordings.";
     }
 
     private static int RoundToCameraStep(double value, CameraControlItem control)

@@ -935,6 +935,11 @@
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Applies temporal/spatial denoise to the preview. It can smooth grain from low light, but too much can make motion look waxy." />
                     </CheckBox.ToolTip>
                   </CheckBox>
+                  <CheckBox x:Name="ProcessedTextureRecordingCheckBox" Content="Record processed DX12 video" Foreground="#F8FAFC" Margin="0,0,0,8" Checked="ProcessedTextureRecordingChanged" Unchecked="ProcessedTextureRecordingChanged">
+                    <CheckBox.ToolTip>
+                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Uses the processed texture bridge for shared GPU camera recordings so saved video can follow the denoise setting. Leave off for the fastest raw camera sample path." />
+                    </CheckBox.ToolTip>
+                  </CheckBox>
                   <Grid Margin="0,0,0,16">
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
