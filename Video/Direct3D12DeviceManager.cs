@@ -2,7 +2,16 @@ using System.Runtime.InteropServices;
 
 namespace PodcastWorkbench.Video;
 
-internal sealed class Direct3D12DeviceManager : IDisposable
+internal interface ITextureNativeDeviceManager : IDisposable
+{
+    IMFDXGIDeviceManager Manager { get; }
+
+    string ModeName { get; }
+
+    Guid TextureResourceId { get; }
+}
+
+internal sealed class Direct3D12DeviceManager : ITextureNativeDeviceManager
 {
     private const int D3D_FEATURE_LEVEL_12_0 = 0xc000;
     private static readonly Guid ID3D12Device = new("189819f1-1db6-4b57-be54-1821339b85f7");
@@ -29,6 +38,8 @@ internal sealed class Direct3D12DeviceManager : IDisposable
         1 => "D3D11",
         _ => $"mode {Mode}"
     };
+
+    public Guid TextureResourceId => ID3D12Resource;
 
     public static Direct3D12DeviceManager Create()
     {
