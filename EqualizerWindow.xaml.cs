@@ -1694,9 +1694,10 @@ public partial class EqualizerWindow : Window
     {
         var textureStatus = _textureNativeFrameLeaseActive ? "texture lease active" : "waiting for texture lease";
         var presenterStatus = _direct3D12PreviewHost?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
+        var previewPathStatus = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 preview path pending";
         var denoiseStatus = _pendingVideoDenoiseEnabled ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}" : "DX12 denoise off";
         var recordingStatus = _processedTextureRecordingEnabled ? "processed recording armed" : "raw recording armed";
-        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
     }
 
     private static string FormatCameraMode(CameraVideoMode mode)

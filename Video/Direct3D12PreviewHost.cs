@@ -25,6 +25,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     private IntPtr _hwnd;
     private IntPtr _nativeD3D12Device;
     private Direct3D12SwapChainRenderer? _renderer;
+    private string _previewPathDescription = "DX12 preview path pending";
     private bool _disposed;
 
     public Direct3D12PreviewHost(IntPtr nativeD3D12Device = default)
@@ -37,6 +38,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     public bool IsReady => _renderer is not null;
 
     public string DeviceDescription => _renderer?.DeviceDescription ?? "DX12 preview not initialized";
+
+    public string PreviewPathDescription => _previewPathDescription;
 
     public void RenderProofFrame(TextureNativeFrameInfo frame)
     {
@@ -68,6 +71,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
                 && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength))
             {
+                ReportPreviewPath("direct DX12 texture");
                 return;
             }
 
@@ -82,6 +86,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     denoiseEnabled,
                     denoiseStrength))
                 {
+                    ReportPreviewPath("DX12 NV12 upload fallback");
                     return;
                 }
             }
@@ -94,15 +99,28 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     frame.Height,
                     frame.BgraPreviewStride,
                     frame.FrameNumber);
+                ReportPreviewPath("DX12 BGRA upload fallback");
                 return;
             }
 
             _renderer.RenderProofFrame(frame.FrameNumber);
+            ReportPreviewPath("DX12 proof-frame fallback");
         }
         catch (Exception ex)
         {
             StatusChanged?.Invoke(this, $"DX12 camera frame upload failed: {ex.Message}");
         }
+    }
+
+    private void ReportPreviewPath(string description)
+    {
+        if (string.Equals(_previewPathDescription, description, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _previewPathDescription = description;
+        StatusChanged?.Invoke(this, $"DX12 preview path: {description}");
     }
 
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
