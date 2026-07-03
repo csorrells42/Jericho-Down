@@ -17,6 +17,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using NAudio.Wave;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
 using ShapePath = System.Windows.Shapes.Path;
@@ -29,6 +30,8 @@ public partial class EqualizerWindow : Window
     private const int DwmwaUseImmersiveDarkModeBefore20H1 = 19;
     private const int DwmwaCaptionColor = 35;
     private const int DwmwaTextColor = 36;
+    private const uint SeeMaskInvokeIdList = 0x0000000C;
+    private const int SwShowNormal = 1;
     private const double MinimumDisplayFrequency = 40d;
     private const double MaximumDisplayFrequency = 20000d;
     private const double EqualizerHoverQ = 1.35d;
@@ -36,6 +39,11 @@ public partial class EqualizerWindow : Window
     private const int MaximumWaveformHistorySeconds = 3;
     private const double MicAnalysisDurationSeconds = 8d;
     private const double SequentialMicAnalysisPhaseSeconds = 5d;
+    private const double ExpandedControlRailWidth = 360d;
+    private const double CollapsedControlRailWidth = 44d;
+    private const double RightControlRailWidth = 360d;
+    private const double EqualizerFaceplateOuterGap = 18d;
+    private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -187,6 +195,23 @@ public partial class EqualizerWindow : Window
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "Podcast Workbench Sessions");
+    private string _audioRecordingFolder = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        "Podcast Workbench Audio Recordings");
+    private string? _activeAudioRecordingPath;
+    private DateTime _audioRecordingStartedAt;
+    private DateTime _audioRecordingPausedAt;
+    private TimeSpan _audioRecordingPausedDuration;
+    private bool _isStandaloneAudioRecording;
+    private bool _isStandaloneAudioRecordingPaused;
+    private string? _lastAudioRecordingPath;
+    private readonly ObservableCollection<AudioRecordingFileItem> _audioRecordingFiles = [];
+    private FileSystemWatcher? _audioRecordingFolderWatcher;
+    private int _audioRecordingFolderRefreshQueued;
+    private WaveOutEvent? _audioPlaybackOutput;
+    private AudioFileReader? _audioPlaybackReader;
+    private string? _audioPlaybackPath;
+    private bool _isStoppingAudioPlayback;
     private string? _activeRecordingSessionFolder;
     private int _activeRecordingSetNumber;
     private DateTime _recordingStartedAt;
@@ -209,6 +234,7 @@ public partial class EqualizerWindow : Window
     private bool _showWaveform;
     private bool _showWaveform3D;
     private bool _showMicCompare;
+    private bool _isLeftControlRailCollapsed;
     private bool _isRecordingSession;
     private bool _isRecordingPaused;
     private bool _isMicAnalysisRunning;
@@ -399,7 +425,10 @@ public partial class EqualizerWindow : Window
         ResetCameraControlPanel("Camera controls are available after mode loading. Use Refresh if you want to query the selected camera.");
         UpdateCameraEnabledState();
         UpdateOutputFolderText();
+        RecordingFilesListBox.ItemsSource = _audioRecordingFiles;
+        UpdateAudioRecordingFolderText();
         UpdateRecordingTransportControls();
+        UpdateStandaloneAudioRecordingTransportControls();
 
         LoadWarmRadioPreset();
         _audioDeviceFormatTimer.Start();
@@ -438,9 +467,51 @@ public partial class EqualizerWindow : Window
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int attributeValue, int attributeSize);
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ShellExecuteEx(ref ShellExecuteInfo executeInfo);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ShellExecuteInfo
+    {
+        public int Size;
+        public uint Mask;
+        public IntPtr WindowHandle;
+        public string Verb;
+        public string File;
+        public string? Parameters;
+        public string? Directory;
+        public int Show;
+        public IntPtr InstanceHandle;
+        public IntPtr ItemIdList;
+        public string? Class;
+        public IntPtr ClassKey;
+        public uint HotKey;
+        public IntPtr IconOrMonitor;
+        public IntPtr ProcessHandle;
+    }
+
+    private void ShowWindowsFileProperties(string path)
+    {
+        var executeInfo = new ShellExecuteInfo
+        {
+            Size = Marshal.SizeOf<ShellExecuteInfo>(),
+            Mask = SeeMaskInvokeIdList,
+            WindowHandle = new WindowInteropHelper(this).Handle,
+            Verb = "properties",
+            File = path,
+            Show = SwShowNormal
+        };
+
+        if (!ShellExecuteEx(ref executeInfo))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
     private void WindowActivated(object? sender, EventArgs e)
     {
         StartSelectedDevice();
+        RefreshAudioRecordingFiles(_lastAudioRecordingPath);
     }
 
     private void WindowDeactivated(object? sender, EventArgs e)
@@ -462,6 +533,8 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
+        DisposeAudioRecordingFolderWatcher();
+        StopAudioPlayback();
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
         _cameraModeLoadCancellation?.Cancel();
@@ -489,6 +562,36 @@ public partial class EqualizerWindow : Window
         Close();
     }
 
+    private void LeftControlRailToggleClicked(object sender, RoutedEventArgs e)
+    {
+        _isLeftControlRailCollapsed = !_isLeftControlRailCollapsed;
+        ApplyLeftControlRailLayout();
+    }
+
+    private void ApplyLeftControlRailLayout()
+    {
+        var leftWidth = _isLeftControlRailCollapsed
+            ? CollapsedControlRailWidth
+            : ExpandedControlRailWidth;
+        var centerMargin = new Thickness(leftWidth, 0, RightControlRailWidth, 0);
+
+        LeftControlRail.Width = leftWidth;
+        LeftControlContent.Visibility = _isLeftControlRailCollapsed
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        LeftControlRailToggle.Content = _isLeftControlRailCollapsed ? ">" : "<";
+
+        SpectrumCanvas.Margin = centerMargin;
+        WaveformCanvas.Margin = centerMargin;
+        AnalyzerToolbar.Margin = centerMargin;
+        InlineWaveform3DHost.Margin = new Thickness(leftWidth, 58, RightControlRailWidth, 280);
+        EqualizerFaceplate.Margin = new Thickness(
+            leftWidth + EqualizerFaceplateOuterGap,
+            0,
+            RightControlRailWidth + EqualizerFaceplateOuterGap,
+            EqualizerFaceplateOuterGap);
+    }
+
     private void BrowseOutputFolderClicked(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFolderDialog
@@ -507,6 +610,263 @@ public partial class EqualizerWindow : Window
 
         _outputFolder = dialog.FolderName;
         UpdateOutputFolderText();
+    }
+
+    private void BrowseAudioRecordingFolderClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Choose audio recording folder",
+            InitialDirectory = Directory.Exists(_audioRecordingFolder)
+                ? _audioRecordingFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        _audioRecordingFolder = dialog.FolderName;
+        UpdateAudioRecordingFolderText();
+    }
+
+    private void StartAudioRecordingClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isStandaloneAudioRecording)
+        {
+            return;
+        }
+
+        if (!_spectrumService.IsRunning)
+        {
+            AudioRecordingStatusText.Text = "Select a microphone before recording.";
+            return;
+        }
+
+        try
+        {
+            var path = CreateAudioRecordingFilePath(DateTime.Now);
+            _spectrumService.StartProcessedAudioRecording(path);
+            _activeAudioRecordingPath = path;
+            _audioRecordingStartedAt = DateTime.UtcNow;
+            _audioRecordingPausedAt = default;
+            _audioRecordingPausedDuration = TimeSpan.Zero;
+            _isStandaloneAudioRecording = true;
+            _isStandaloneAudioRecordingPaused = false;
+            AudioRecordingStatusText.Text = $"Recording processed audio: {System.IO.Path.GetFileName(path)}";
+        }
+        catch (Exception ex)
+        {
+            AudioRecordingStatusText.Text = $"Audio recording failed: {ex.Message}";
+            _activeAudioRecordingPath = null;
+            _isStandaloneAudioRecording = false;
+            _isStandaloneAudioRecordingPaused = false;
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void PauseAudioRecordingClicked(object sender, RoutedEventArgs e)
+    {
+        if (!_isStandaloneAudioRecording)
+        {
+            return;
+        }
+
+        if (_isStandaloneAudioRecordingPaused)
+        {
+            _audioRecordingPausedDuration += DateTime.UtcNow - _audioRecordingPausedAt;
+            _isStandaloneAudioRecordingPaused = false;
+            _spectrumService.ResumeProcessedAudioRecording();
+            AudioRecordingStatusText.Text = "Audio recording resumed.";
+        }
+        else
+        {
+            _audioRecordingPausedAt = DateTime.UtcNow;
+            _isStandaloneAudioRecordingPaused = true;
+            _spectrumService.PauseProcessedAudioRecording();
+            AudioRecordingStatusText.Text = "Audio recording paused.";
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void StopAudioRecordingClicked(object sender, RoutedEventArgs e)
+    {
+        if (!_isStandaloneAudioRecording)
+        {
+            return;
+        }
+
+        var elapsed = GetStandaloneAudioRecordingElapsed();
+        var savedPath = _spectrumService.StopProcessedAudioRecording() ?? _activeAudioRecordingPath;
+        _activeAudioRecordingPath = null;
+        _audioRecordingStartedAt = default;
+        _audioRecordingPausedAt = default;
+        _audioRecordingPausedDuration = TimeSpan.Zero;
+        _isStandaloneAudioRecording = false;
+        _isStandaloneAudioRecordingPaused = false;
+
+        AudioRecordingStatusText.Text = string.IsNullOrWhiteSpace(savedPath)
+            ? $"Audio recording stopped at {FormatDuration(elapsed)}."
+            : $"Saved {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
+        _lastAudioRecordingPath = savedPath;
+        RefreshAudioRecordingFiles(savedPath);
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void PlayAudioFileClicked(object sender, RoutedEventArgs e)
+    {
+        if (_audioPlaybackOutput is not null)
+        {
+            StopAudioPlayback();
+            AudioRecordingStatusText.Text = "Playback stopped.";
+            UpdateStandaloneAudioRecordingTransportControls();
+            return;
+        }
+
+        RefreshAudioRecordingFiles(GetSelectedAudioRecordingPath());
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            AudioRecordingStatusText.Text = "Choose a saved recording above.";
+            return;
+        }
+
+        StartAudioPlayback(selectedPath);
+    }
+
+    private void RecordingFilesSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void RecordingFileDoubleClicked(object sender, MouseButtonEventArgs e)
+    {
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
+        {
+            StartAudioPlayback(selectedPath);
+        }
+    }
+
+    private void RecordingFileRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem item)
+        {
+            item.IsSelected = true;
+            item.Focus();
+            e.Handled = false;
+        }
+    }
+
+    private void PlaySelectedRecordingMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            AudioRecordingStatusText.Text = "Choose a saved recording above.";
+            return;
+        }
+
+        StartAudioPlayback(selectedPath);
+    }
+
+    private void ShowSelectedRecordingPropertiesMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            AudioRecordingStatusText.Text = "Choose a saved recording above.";
+            return;
+        }
+
+        try
+        {
+            ShowWindowsFileProperties(selectedPath);
+            AudioRecordingStatusText.Text = $"Opened properties for {System.IO.Path.GetFileName(selectedPath)}.";
+        }
+        catch (Exception ex)
+        {
+            AudioRecordingStatusText.Text = $"Properties failed: {ex.Message}";
+        }
+    }
+
+    private void DeleteSelectedRecordingMenuClicked(object sender, RoutedEventArgs e)
+    {
+        DeleteSelectedAudioRecording();
+    }
+
+    private void OpenAudioRecordingLocationClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(_audioRecordingFolder);
+            var selectedPath = GetSelectedAudioRecordingPath();
+            if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
+            {
+                Process.Start("explorer.exe", $"/select,\"{selectedPath}\"");
+                AudioRecordingStatusText.Text = $"Opened location for {System.IO.Path.GetFileName(selectedPath)}.";
+                return;
+            }
+
+            Process.Start("explorer.exe", $"\"{_audioRecordingFolder}\"");
+            AudioRecordingStatusText.Text = "Opened recording folder.";
+        }
+        catch (Exception ex)
+        {
+            AudioRecordingStatusText.Text = $"Open location failed: {ex.Message}";
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void DeleteSelectedAudioRecording()
+    {
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            AudioRecordingStatusText.Text = "Choose a saved recording to delete.";
+            return;
+        }
+
+        var fileName = System.IO.Path.GetFileName(selectedPath);
+        var result = MessageBox.Show(
+            this,
+            $"Delete this recording?{Environment.NewLine}{fileName}",
+            "Delete recording",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (string.Equals(_audioPlaybackPath, selectedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                StopAudioPlayback();
+            }
+
+            File.Delete(selectedPath);
+            if (string.Equals(_lastAudioRecordingPath, selectedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _lastAudioRecordingPath = null;
+            }
+
+            RefreshAudioRecordingFiles();
+            AudioRecordingStatusText.Text = $"Deleted {fileName}.";
+        }
+        catch (Exception ex)
+        {
+            AudioRecordingStatusText.Text = $"Delete failed: {ex.Message}";
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
     }
 
     private void StartRecordingClicked(object sender, RoutedEventArgs e)
@@ -1315,6 +1675,24 @@ public partial class EqualizerWindow : Window
         return $"video_{number}.mp4{Environment.NewLine}mix_{number}.wav{Environment.NewLine}raw_backup_{number}.wav{Environment.NewLine}session.json";
     }
 
+    private static string CreateAudioRecordingFileName(DateTime timestamp)
+    {
+        return $"pwRecording_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
+    }
+
+    private string CreateAudioRecordingFilePath(DateTime timestamp)
+    {
+        Directory.CreateDirectory(_audioRecordingFolder);
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(CreateAudioRecordingFileName(timestamp));
+        var path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}.wav");
+        for (var attempt = 1; File.Exists(path) && attempt < 100; attempt++)
+        {
+            path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}_{attempt:00}.wav");
+        }
+
+        return path;
+    }
+
     private void SpectrumViewClicked(object sender, RoutedEventArgs e)
     {
         _showWaveform = false;
@@ -2109,6 +2487,7 @@ public partial class EqualizerWindow : Window
     private void CompositionTargetRendering(object? sender, EventArgs e)
     {
         UpdateRecordingTimer();
+        SyncStandaloneAudioRecordingState();
         UpdateMicAnalysisProgress();
 
         if (_latestFrame is null)
@@ -2153,6 +2532,146 @@ public partial class EqualizerWindow : Window
         PauseRecordingButton.IsEnabled = _isRecordingSession;
         PauseRecordingButton.Content = _isRecordingPaused ? "Resume" : "Pause";
         StopRecordingButton.IsEnabled = _isRecordingSession;
+    }
+
+    private TimeSpan GetStandaloneAudioRecordingElapsed()
+    {
+        if (!_isStandaloneAudioRecording)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var now = _isStandaloneAudioRecordingPaused ? _audioRecordingPausedAt : DateTime.UtcNow;
+        return now - _audioRecordingStartedAt - _audioRecordingPausedDuration;
+    }
+
+    private void UpdateStandaloneAudioRecordingTransportControls()
+    {
+        if (AudioRecordButton is null)
+        {
+            return;
+        }
+
+        AudioRecordButton.IsEnabled = !_isStandaloneAudioRecording;
+        AudioPauseButton.IsEnabled = _isStandaloneAudioRecording;
+        AudioPauseButton.Content = _isStandaloneAudioRecordingPaused ? "Resume" : "Pause";
+        AudioStopButton.IsEnabled = _isStandaloneAudioRecording;
+        AudioPlayFileButton.IsEnabled = !_isStandaloneAudioRecording;
+        AudioPlayFileButton.Content = _audioPlaybackOutput is null ? "Play File" : "Stop Play";
+        AudioOpenLocationButton.IsEnabled = !_isStandaloneAudioRecording;
+    }
+
+    private void SyncStandaloneAudioRecordingState()
+    {
+        if (!_isStandaloneAudioRecording || _spectrumService.IsProcessedAudioRecording)
+        {
+            return;
+        }
+
+        var elapsed = GetStandaloneAudioRecordingElapsed();
+        var savedPath = _activeAudioRecordingPath;
+        _activeAudioRecordingPath = null;
+        _audioRecordingStartedAt = default;
+        _audioRecordingPausedAt = default;
+        _audioRecordingPausedDuration = TimeSpan.Zero;
+        _isStandaloneAudioRecording = false;
+        _isStandaloneAudioRecordingPaused = false;
+
+        AudioRecordingStatusText.Text = string.IsNullOrWhiteSpace(savedPath)
+            ? "Audio recording stopped."
+            : $"Saved {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
+        _lastAudioRecordingPath = savedPath;
+        RefreshAudioRecordingFiles(savedPath);
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void StartAudioPlayback(string path)
+    {
+        try
+        {
+            StopAudioPlayback();
+
+            var reader = new AudioFileReader(path);
+            var output = new WaveOutEvent();
+            output.PlaybackStopped += AudioPlaybackStopped;
+            output.Init(reader);
+
+            _audioPlaybackReader = reader;
+            _audioPlaybackOutput = output;
+            _audioPlaybackPath = path;
+            _lastAudioRecordingPath = path;
+            _isStoppingAudioPlayback = false;
+            output.Play();
+
+            AudioRecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
+        }
+        catch (Exception ex)
+        {
+            StopAudioPlayback();
+            AudioRecordingStatusText.Text = $"Playback failed: {ex.Message}";
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void AudioPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var path = _audioPlaybackPath;
+            var wasStoppedByUser = _isStoppingAudioPlayback;
+            StopAudioPlayback();
+            if (e.Exception is not null)
+            {
+                AudioRecordingStatusText.Text = $"Playback failed: {e.Exception.Message}";
+            }
+            else if (!wasStoppedByUser && !string.IsNullOrWhiteSpace(path))
+            {
+                AudioRecordingStatusText.Text = $"Finished {System.IO.Path.GetFileName(path)}.";
+            }
+
+            UpdateStandaloneAudioRecordingTransportControls();
+        }, DispatcherPriority.Background);
+    }
+
+    private void StopAudioPlayback()
+    {
+        var output = _audioPlaybackOutput;
+        var reader = _audioPlaybackReader;
+        _audioPlaybackOutput = null;
+        _audioPlaybackReader = null;
+        _audioPlaybackPath = null;
+
+        if (output is not null)
+        {
+            _isStoppingAudioPlayback = true;
+            try
+            {
+                output.PlaybackStopped -= AudioPlaybackStopped;
+                output.Stop();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                output.Dispose();
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            reader?.Dispose();
+        }
+        catch
+        {
+        }
+
+        _isStoppingAudioPlayback = false;
     }
 
     private static string FormatDuration(TimeSpan duration)
@@ -2986,44 +3505,44 @@ public partial class EqualizerWindow : Window
         LoadWarmRadioPreset();
     }
 
-    private void PodMicSm7bPresetClicked(object sender, RoutedEventArgs e)
+    private void DeepWarmPresetClicked(object sender, RoutedEventArgs e)
     {
-        const string description = "Shapes a Rode PodMic toward a smoother SM7B-style broadcast tone: fuller lows, less boxiness, controlled bite, and polished limiting.";
+        const string description = "Leans into a deep, warm broadcast tone: strong chest and low-mid body, carved mud, softened bite, and dense compression.";
 
         ApplyPreset(
-            "PodMic to SM7B",
+            "Deep Warm",
             description,
-            75, 4, -50, 3.5, 2, -21, 3.8, 3.5, 3, -1,
-            [-4, -3, -1.5, 1, 2.5, 2, 0.5, -1.5, -2.5, -2, -1, 0.5, 2, 2.5, 1.5, 0, -1, -1.5, -1, -1]);
+            58, 4.5, -52, 2.5, 1.5, -22, 4.2, 2.5, 2.5, -1,
+            [-6, -4, -1, 1.5, 3.5, 3, 2, 0.5, -1.5, -2, -1, -0.2, 0.6, 1, 0.5, -0.5, -1.5, -2, -2.5, -3]);
 
         Settings.InputTrimDb = 0;
-        Settings.DePopperFrequencyHz = 165;
-        Settings.DePopperThresholdDb = -30;
-        Settings.ExpanderThresholdDb = -56;
-        Settings.ExpanderRatio = 1.6;
-        Settings.ExpanderRangeDb = 10;
-        Settings.NoiseGateThresholdDb = -50;
-        Settings.NoiseGateAttackMs = 6;
-        Settings.NoiseGateHoldMs = 110;
-        Settings.NoiseGateReleaseMs = 180;
-        Settings.NoiseGateRangeDb = 24;
-        Settings.NoiseSuppressionSensitivity = 3.5;
-        Settings.EchoReducerSensitivity = 4;
-        Settings.CompressorAttackMs = 10;
-        Settings.CompressorReleaseMs = 160;
-        Settings.CompressorKneeDb = 7;
-        Settings.DeEsserFrequencyHz = 6100;
-        Settings.DeEsserThresholdDb = -36;
-        Settings.DeEsserRangeDb = 8;
-        Settings.PresenceEnhancerAmountDb = 1.7;
-        Settings.PresenceEnhancerFrequencyHz = 3400;
-        Settings.PresenceEnhancerWidthHz = 2200;
-        Settings.LimiterSoftClipDriveDb = 1.2;
+        Settings.DePopperFrequencyHz = 150;
+        Settings.DePopperThresholdDb = -32;
+        Settings.ExpanderThresholdDb = -58;
+        Settings.ExpanderRatio = 1.45;
+        Settings.ExpanderRangeDb = 8;
+        Settings.NoiseGateThresholdDb = -52;
+        Settings.NoiseGateAttackMs = 8;
+        Settings.NoiseGateHoldMs = 130;
+        Settings.NoiseGateReleaseMs = 220;
+        Settings.NoiseGateRangeDb = 20;
+        Settings.NoiseSuppressionSensitivity = 3;
+        Settings.EchoReducerSensitivity = 3.5;
+        Settings.CompressorAttackMs = 16;
+        Settings.CompressorReleaseMs = 190;
+        Settings.CompressorKneeDb = 8;
+        Settings.DeEsserFrequencyHz = 5600;
+        Settings.DeEsserThresholdDb = -34;
+        Settings.DeEsserRangeDb = 6;
+        Settings.PresenceEnhancerAmountDb = 1.1;
+        Settings.PresenceEnhancerFrequencyHz = 2600;
+        Settings.PresenceEnhancerWidthHz = 1800;
+        Settings.LimiterSoftClipDriveDb = 1;
         Settings.LimiterLookaheadMs = 3;
-        Settings.LimiterReleaseMs = 75;
+        Settings.LimiterReleaseMs = 85;
 
         SetProcessingSliderDefaults(description);
-        StatusText.Text = "PodMic to SM7B preset loaded";
+        StatusText.Text = "Deep Warm preset loaded";
     }
 
     private void LoadWarmRadioPreset()
@@ -3138,18 +3657,18 @@ public partial class EqualizerWindow : Window
 
     private void UserPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (UserPresetComboBox.SelectedItem is string name && !string.IsNullOrWhiteSpace(name))
-        {
-            UserPresetNameTextBox.Text = name;
-        }
     }
 
     private void SaveUserPresetClicked(object sender, RoutedEventArgs e)
     {
-        var name = UserPresetNameTextBox.Text.Trim();
+        var typedName = UserPresetNameTextBox.Text.Trim();
+        var selectedName = UserPresetComboBox.SelectedItem as string ?? string.Empty;
+        var name = !string.IsNullOrWhiteSpace(typedName)
+            ? typedName
+            : selectedName.Trim();
         if (string.IsNullOrWhiteSpace(name))
         {
-            StatusText.Text = "Type a preset name before saving.";
+            StatusText.Text = "Type a new preset name or choose a user preset to update.";
             return;
         }
 
@@ -3162,6 +3681,7 @@ public partial class EqualizerWindow : Window
             LoadUserPresetList();
             UserPresetComboBox.SelectedItem = UserPresetNames.FirstOrDefault(candidate =>
                 candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+            UserPresetNameTextBox.Clear();
             StatusText.Text = $"User preset saved: {name}";
         }
         catch (Exception ex)
@@ -3225,6 +3745,7 @@ public partial class EqualizerWindow : Window
 
     private void LoadUserPresetList()
     {
+        var selectedName = UserPresetComboBox.SelectedItem as string;
         UserPresetNames.Clear();
 
         try
@@ -3244,6 +3765,188 @@ public partial class EqualizerWindow : Window
         {
             StatusText.Text = $"Could not read user presets: {ex.Message}";
         }
+
+        UserPresetComboBox.SelectedItem = !string.IsNullOrWhiteSpace(selectedName)
+            ? UserPresetNames.FirstOrDefault(candidate => candidate.Equals(selectedName, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (UserPresetComboBox.SelectedItem is null)
+        {
+            UserPresetComboBox.SelectedIndex = UserPresetNames.Count > 0 ? 0 : -1;
+        }
+    }
+
+    private void UpdateAudioRecordingFolderText()
+    {
+        if (RecordingSaveLocationTextBox is not null)
+        {
+            RecordingSaveLocationTextBox.Text = _audioRecordingFolder;
+        }
+
+        ConfigureAudioRecordingFolderWatcher();
+        RefreshAudioRecordingFiles(_lastAudioRecordingPath);
+    }
+
+    private void ConfigureAudioRecordingFolderWatcher()
+    {
+        DisposeAudioRecordingFolderWatcher();
+
+        try
+        {
+            Directory.CreateDirectory(_audioRecordingFolder);
+            var watcher = new FileSystemWatcher(_audioRecordingFolder)
+            {
+                Filter = "*.*",
+                IncludeSubdirectories = false,
+                NotifyFilter = NotifyFilters.FileName
+                    | NotifyFilters.CreationTime
+            };
+            watcher.Created += AudioRecordingFolderChanged;
+            watcher.Deleted += AudioRecordingFolderChanged;
+            watcher.Renamed += AudioRecordingFolderRenamed;
+            watcher.EnableRaisingEvents = true;
+            _audioRecordingFolderWatcher = watcher;
+        }
+        catch
+        {
+            _audioRecordingFolderWatcher = null;
+        }
+    }
+
+    private void DisposeAudioRecordingFolderWatcher()
+    {
+        var watcher = _audioRecordingFolderWatcher;
+        if (watcher is null)
+        {
+            return;
+        }
+
+        _audioRecordingFolderWatcher = null;
+        try
+        {
+            watcher.EnableRaisingEvents = false;
+            watcher.Created -= AudioRecordingFolderChanged;
+            watcher.Deleted -= AudioRecordingFolderChanged;
+            watcher.Renamed -= AudioRecordingFolderRenamed;
+            watcher.Dispose();
+        }
+        catch
+        {
+        }
+    }
+
+    private void AudioRecordingFolderChanged(object sender, FileSystemEventArgs e)
+    {
+        if (IsSupportedAudioRecordingFile(e.FullPath))
+        {
+            QueueAudioRecordingFilesRefresh();
+        }
+    }
+
+    private void AudioRecordingFolderRenamed(object sender, RenamedEventArgs e)
+    {
+        if (IsSupportedAudioRecordingFile(e.FullPath) || IsSupportedAudioRecordingFile(e.OldFullPath))
+        {
+            QueueAudioRecordingFilesRefresh();
+        }
+    }
+
+    private void QueueAudioRecordingFilesRefresh()
+    {
+        if (_isClosing || System.Threading.Interlocked.Exchange(ref _audioRecordingFolderRefreshQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            var timer = new DispatcherTimer
+            {
+                Interval = AudioRecordingFolderRefreshDelay
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                System.Threading.Volatile.Write(ref _audioRecordingFolderRefreshQueued, 0);
+                RefreshAudioRecordingFiles(_lastAudioRecordingPath);
+                UpdateStandaloneAudioRecordingTransportControls();
+            };
+            timer.Start();
+        }, DispatcherPriority.Background);
+    }
+
+    private void RefreshAudioRecordingFiles(string? preferredPath = null)
+    {
+        if (RecordingFilesListBox is null)
+        {
+            return;
+        }
+
+        var selectedPath = preferredPath ?? GetSelectedAudioRecordingPath();
+        var items = Directory.Exists(_audioRecordingFolder)
+            ? Directory.EnumerateFiles(_audioRecordingFolder)
+                .Where(IsSupportedAudioRecordingFile)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .Select(file => new AudioRecordingFileItem(
+                    file.FullName,
+                    file.Name,
+                    $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}"))
+                .ToList()
+            : [];
+
+        _audioRecordingFiles.Clear();
+        foreach (var item in items)
+        {
+            _audioRecordingFiles.Add(item);
+        }
+
+        AudioRecordingFileItem? selection = null;
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            selection = _audioRecordingFiles.FirstOrDefault(item =>
+                string.Equals(item.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        selection ??= _audioRecordingFiles.FirstOrDefault();
+        RecordingFilesListBox.SelectedItem = selection;
+        if (selection is not null)
+        {
+            RecordingFilesListBox.ScrollIntoView(selection);
+        }
+    }
+
+    private string? GetSelectedAudioRecordingPath()
+    {
+        return RecordingFilesListBox?.SelectedItem is AudioRecordingFileItem item
+            ? item.Path
+            : null;
+    }
+
+    private static bool IsSupportedAudioRecordingFile(string path)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        return extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".aiff", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".aif", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatFileSize(long byteCount)
+    {
+        if (byteCount < 1024)
+        {
+            return $"{byteCount} B";
+        }
+
+        var kib = byteCount / 1024d;
+        if (kib < 1024d)
+        {
+            return $"{kib:0.0} KB";
+        }
+
+        return $"{kib / 1024d:0.0} MB";
     }
 
     private UserVoicePreset CaptureUserPreset(string name)
@@ -3335,7 +4038,6 @@ public partial class EqualizerWindow : Window
         }
 
         var name = string.IsNullOrWhiteSpace(preset.Name) ? "User preset" : preset.Name.Trim();
-        UserPresetNameTextBox.Text = name;
         UserPresetComboBox.SelectedItem = UserPresetNames.FirstOrDefault(candidate =>
             candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
         SyncEqualizerSettings();
@@ -3351,7 +4053,7 @@ public partial class EqualizerWindow : Window
         SetPresetButtonState(FlatPresetButton, presetName, "Flat");
         SetPresetButtonState(PodcastCleanPresetButton, presetName, "Podcast Clean");
         SetPresetButtonState(WarmRadioPresetButton, presetName, "Warm Radio");
-        SetPresetButtonState(PodMicSm7bPresetButton, presetName, "PodMic to SM7B");
+        SetPresetButtonState(DeepWarmPresetButton, presetName, "Deep Warm");
         SetPresetButtonState(NoisyRoomPresetButton, presetName, "Noisy Room");
         SetPresetButtonState(BrightHeadsetPresetButton, presetName, "Bright Headset");
     }
@@ -3529,6 +4231,8 @@ public partial class EqualizerWindow : Window
     }
 
     private sealed record RecordingTarget(string SessionFolder, int SetNumber);
+
+    private sealed record AudioRecordingFileItem(string Path, string Name, string Details);
 
 }
 

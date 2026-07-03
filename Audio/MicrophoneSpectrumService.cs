@@ -4,6 +4,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave.SampleProviders;
 using System.Buffers;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -41,6 +42,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private IWavePlayer? _processedOutput;
     private BufferedWaveProvider? _processedOutputProvider;
     private IWaveProvider? _processedOutputPlaybackProvider;
+    private readonly object _processedRecordingLock = new();
+    private WaveFileWriter? _processedRecordingWriter;
+    private string? _processedRecordingPath;
+    private bool _isProcessedRecordingPaused;
+    private byte[] _processedRecordingBytes = [];
     private InputChannelMode _inputChannelMode = InputChannelMode.MonoSum;
     private int _activeSampleRate = DefaultSampleRate;
     private int _processedOutputSampleRate;
@@ -126,6 +132,28 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public bool IsRunning => _capture is not null;
 
     public bool IsProcessedOutputEnabled => IsProcessedOutputEnabledVolatile();
+
+    public bool IsProcessedAudioRecording
+    {
+        get
+        {
+            lock (_processedRecordingLock)
+            {
+                return _processedRecordingWriter is not null;
+            }
+        }
+    }
+
+    public bool IsProcessedAudioRecordingPaused
+    {
+        get
+        {
+            lock (_processedRecordingLock)
+            {
+                return _processedRecordingWriter is not null && _isProcessedRecordingPaused;
+            }
+        }
+    }
 
     public bool AreAudioCallbacksStale(TimeSpan startupGrace, TimeSpan staleDuration)
     {
@@ -389,6 +417,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public void Stop()
     {
         _autoRecoverCapture = false;
+        StopProcessedAudioRecording();
         var capture = _capture;
         if (capture is null)
         {
@@ -448,9 +477,69 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public void Dispose()
     {
         _isDisposing = true;
+        StopProcessedAudioRecording();
         StopProcessedOutput();
         Stop();
         ReleaseCapture();
+    }
+
+    public void StartProcessedAudioRecording(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Choose a valid audio recording path.", nameof(path));
+        }
+
+        var folder = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            Directory.CreateDirectory(folder);
+        }
+
+        lock (_processedRecordingLock)
+        {
+            if (_processedRecordingWriter is not null)
+            {
+                throw new InvalidOperationException("Processed audio recording is already running.");
+            }
+
+            var sampleRate = Math.Max(8000, _activeSampleRate);
+            _processedRecordingWriter = new WaveFileWriter(
+                path,
+                WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1));
+            _processedRecordingPath = path;
+            _isProcessedRecordingPaused = false;
+        }
+    }
+
+    public void PauseProcessedAudioRecording()
+    {
+        lock (_processedRecordingLock)
+        {
+            if (_processedRecordingWriter is not null)
+            {
+                _isProcessedRecordingPaused = true;
+            }
+        }
+    }
+
+    public void ResumeProcessedAudioRecording()
+    {
+        lock (_processedRecordingLock)
+        {
+            if (_processedRecordingWriter is not null)
+            {
+                _isProcessedRecordingPaused = false;
+            }
+        }
+    }
+
+    public string? StopProcessedAudioRecording()
+    {
+        lock (_processedRecordingLock)
+        {
+            return StopProcessedAudioRecordingLocked();
+        }
     }
 
     public void RestartCurrentCapture()
@@ -521,6 +610,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         AddProcessedOutputSamples(analyzerSamples);
+        WriteProcessedRecordingSamples(analyzerSamples);
         UpdateAudioProcessingTime(callbackStartTimestamp);
         if (SpectrumAvailable is null)
         {
@@ -891,6 +981,28 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         _processedOutputSampleRate = _activeSampleRate;
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
+        var preferWasapiEndpoint = CanUseWasapiProcessedOutput();
+        if (preferWasapiEndpoint
+            && TryStartWasapiProcessedOutput(floatProvider, out var endpointFloatOutput, out var endpointFloatPlaybackProvider))
+        {
+            _processedOutputProvider = floatProvider;
+            _processedOutputPlaybackProvider = endpointFloatPlaybackProvider;
+            _processedOutput = endpointFloatOutput;
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
+        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
+        if (preferWasapiEndpoint
+            && TryStartWasapiProcessedOutput(pcmProvider, out var endpointPcmOutput, out var endpointPcmPlaybackProvider))
+        {
+            _processedOutputProvider = pcmProvider;
+            _processedOutputPlaybackProvider = endpointPcmPlaybackProvider;
+            _processedOutput = endpointPcmOutput;
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
         if (TryStartWaveOutProcessedOutput(floatProvider, out var floatWaveOut))
         {
             _processedOutputProvider = floatProvider;
@@ -899,7 +1011,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
         if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
         {
             _processedOutputProvider = pcmProvider;
@@ -908,26 +1019,33 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (TryStartWasapiProcessedOutput(floatProvider, out var floatOutput, out var floatPlaybackProvider))
+        if (!preferWasapiEndpoint
+            && TryStartWasapiProcessedOutput(floatProvider, out var defaultFloatOutput, out var defaultFloatPlaybackProvider))
         {
             _processedOutputProvider = floatProvider;
-            _processedOutputPlaybackProvider = floatPlaybackProvider;
-            _processedOutput = floatOutput;
+            _processedOutputPlaybackProvider = defaultFloatPlaybackProvider;
+            _processedOutput = defaultFloatOutput;
             ArmProcessedOutputRecoveryRamp();
             return;
         }
 
-        if (TryStartWasapiProcessedOutput(pcmProvider, out var pcmWasapiOutput, out var pcmPlaybackProvider))
+        if (!preferWasapiEndpoint
+            && TryStartWasapiProcessedOutput(pcmProvider, out var defaultPcmOutput, out var defaultPcmPlaybackProvider))
         {
             _processedOutputProvider = pcmProvider;
-            _processedOutputPlaybackProvider = pcmPlaybackProvider;
-            _processedOutput = pcmWasapiOutput;
+            _processedOutputPlaybackProvider = defaultPcmPlaybackProvider;
+            _processedOutput = defaultPcmOutput;
             ArmProcessedOutputRecoveryRamp();
             return;
         }
 
         StopProcessedOutput();
         throw new InvalidOperationException("Could not start the selected processed output device.");
+    }
+
+    private bool CanUseWasapiProcessedOutput()
+    {
+        return !string.IsNullOrWhiteSpace(_processedOutputEndpointId);
     }
 
     private bool CanUseWaveOutProcessedOutputFallback()
@@ -1139,6 +1257,82 @@ public sealed class MicrophoneSpectrumService : IDisposable
             : ConvertFloatSamplesToStereoPcm16(samples);
         provider.AddSamples(_processedOutputBytes, 0, byteCount);
         TrimProcessedOutputBufferIfNeeded(provider);
+    }
+
+    private void WriteProcessedRecordingSamples(ReadOnlySpan<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return;
+        }
+
+        Exception? writeException = null;
+        lock (_processedRecordingLock)
+        {
+            var writer = _processedRecordingWriter;
+            if (writer is null || _isProcessedRecordingPaused)
+            {
+                return;
+            }
+
+            try
+            {
+                var byteCount = checked(samples.Length * sizeof(float));
+                if (_processedRecordingBytes.Length < byteCount)
+                {
+                    _processedRecordingBytes = new byte[byteCount];
+                }
+
+                MemoryMarshal.AsBytes(samples).CopyTo(_processedRecordingBytes.AsSpan(0, byteCount));
+                writer.Write(_processedRecordingBytes, 0, byteCount);
+            }
+            catch (Exception ex)
+            {
+                writeException = ex;
+                StopProcessedAudioRecordingLocked();
+            }
+        }
+
+        if (writeException is not null)
+        {
+            StreamStatusChanged?.Invoke(this, $"Audio recording stopped: {writeException.Message}");
+        }
+    }
+
+    private string? StopProcessedAudioRecordingLocked()
+    {
+        var writer = _processedRecordingWriter;
+        var path = _processedRecordingPath;
+        if (writer is null)
+        {
+            _processedRecordingPath = null;
+            _isProcessedRecordingPaused = false;
+            return path;
+        }
+
+        try
+        {
+            writer.Flush();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            writer.Dispose();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _processedRecordingWriter = null;
+            _processedRecordingPath = null;
+            _isProcessedRecordingPaused = false;
+        }
+
+        return path;
     }
 
     private static int GetProcessedOutputByteCount(BufferedWaveProvider provider, int sampleCount)
