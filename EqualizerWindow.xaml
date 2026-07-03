@@ -880,7 +880,7 @@
               <ColumnDefinition Width="420" />
             </Grid.ColumnDefinitions>
             <Border Background="#030507" BorderBrush="#334F5D6B" BorderThickness="1">
-              <Grid>
+              <Grid x:Name="CameraPreviewSurfaceGrid">
                 <Rectangle Fill="#05070A" />
                 <Image x:Name="CameraPreviewImage" Visibility="Collapsed" Stretch="Uniform" SnapsToDevicePixels="True" />
                 <StackPanel x:Name="CameraPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">

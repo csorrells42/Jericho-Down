@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>PodcastWorkbench</AssemblyName>
     <Product>Podcast Workbench</Product>
     <AssemblyTitle>Podcast Workbench</AssemblyTitle>
@@ -14,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
   </ItemGroup>
 
   <ItemGroup>

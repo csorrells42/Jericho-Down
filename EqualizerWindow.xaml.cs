@@ -229,6 +229,7 @@ public partial class EqualizerWindow : Window
     private WriteableBitmap? _cameraPreviewBitmap;
     private TextureNativeCameraStream? _textureNativeCameraStream;
     private TextureNativeFrameInfo? _pendingTextureNativeFrameInfo;
+    private Direct3D12PreviewHost? _direct3D12PreviewHost;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private int _textureNativeFrameUpdateQueued;
@@ -1290,6 +1291,7 @@ public partial class EqualizerWindow : Window
 
         try
         {
+            ShowDirect3D12PreviewHost();
             _textureNativeCameraStream = new TextureNativeCameraStream(camera.Name, mode);
             _textureNativeCameraStream.FrameAvailable += TextureNativeCameraFrameAvailable;
             _textureNativeCameraStream.TextureFrameAvailable += TextureNativeCameraTextureFrameAvailable;
@@ -1322,6 +1324,7 @@ public partial class EqualizerWindow : Window
         var stream = _textureNativeCameraStream;
         if (stream is null)
         {
+            HideDirect3D12PreviewHost();
             return;
         }
 
@@ -1342,7 +1345,58 @@ public partial class EqualizerWindow : Window
             _pendingTextureNativeFrameInfo = null;
             _textureNativeFrameLeaseActive = false;
             System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+            HideDirect3D12PreviewHost();
         }
+    }
+
+    private void ShowDirect3D12PreviewHost()
+    {
+        if (CameraPreviewSurfaceGrid is null)
+        {
+            return;
+        }
+
+        if (_direct3D12PreviewHost is null)
+        {
+            _direct3D12PreviewHost = new Direct3D12PreviewHost
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            _direct3D12PreviewHost.StatusChanged += Direct3D12PreviewHostStatusChanged;
+            CameraPreviewSurfaceGrid.Children.Insert(1, _direct3D12PreviewHost);
+        }
+
+        _direct3D12PreviewHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideDirect3D12PreviewHost()
+    {
+        var host = _direct3D12PreviewHost;
+        if (host is null)
+        {
+            return;
+        }
+
+        _direct3D12PreviewHost = null;
+        host.StatusChanged -= Direct3D12PreviewHostStatusChanged;
+        if (CameraPreviewSurfaceGrid is not null)
+        {
+            CameraPreviewSurfaceGrid.Children.Remove(host);
+        }
+
+        host.Dispose();
+    }
+
+    private void Direct3D12PreviewHostStatusChanged(object? sender, string status)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isCameraEnabled && _textureNativeCameraStream is not null)
+            {
+                CameraPreviewStatusText.Text = status;
+            }
+        });
     }
 
     private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
@@ -1418,6 +1472,11 @@ public partial class EqualizerWindow : Window
         {
             CameraPreviewImage.Visibility = Visibility.Collapsed;
             CameraPlaceholder.Visibility = Visibility.Visible;
+            if (_direct3D12PreviewHost is not null && frame.FrameNumber % 4 == 0)
+            {
+                _direct3D12PreviewHost.RenderProofFrame(frame);
+            }
+
             if (CameraComboBox.SelectedItem is CameraDevice camera)
             {
                 CameraPreviewStatusText.Text = FormatTextureNativeCameraStatus("GPU stream live", camera, frame);
@@ -1544,7 +1603,8 @@ public partial class EqualizerWindow : Window
     private string FormatTextureNativeCameraStatus(string state, CameraDevice camera, TextureNativeFrameInfo frame)
     {
         var textureStatus = _textureNativeFrameLeaseActive ? "texture lease active" : "waiting for texture lease";
-        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, frame {frame.FrameNumber})";
+        var presenterStatus = _direct3D12PreviewHost?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, frame {frame.FrameNumber})";
     }
 
     private static string FormatCameraMode(CameraVideoMode mode)
