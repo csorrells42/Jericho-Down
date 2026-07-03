@@ -575,11 +575,15 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandAllocator.Reset();
             _commandList.Reset(_commandAllocator);
 
+            var cameraToPixelShaderResource = ResourceBarrier.BarrierTransition(
+                cameraResource,
+                ResourceStates.Common,
+                ResourceStates.PixelShaderResource);
             var toRenderTarget = ResourceBarrier.BarrierTransition(
                 renderTarget,
                 ResourceStates.Present,
                 ResourceStates.RenderTarget);
-            _commandList.ResourceBarrier([toRenderTarget]);
+            _commandList.ResourceBarrier([cameraToPixelShaderResource, toRenderTarget]);
 
             var rtvHandle = GetRtvHandle(frameIndex);
             _commandList.SetGraphicsRootSignature(_nv12PreviewRootSignature);
@@ -599,7 +603,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 renderTarget,
                 ResourceStates.RenderTarget,
                 ResourceStates.Present);
-            _commandList.ResourceBarrier([toPresent]);
+            var cameraToCommon = ResourceBarrier.BarrierTransition(
+                cameraResource,
+                ResourceStates.PixelShaderResource,
+                ResourceStates.Common);
+            _commandList.ResourceBarrier([toPresent, cameraToCommon]);
             _commandList.Close();
             _commandQueue.ExecuteCommandList(_commandList);
             _swapChain.Present(0, PresentFlags.None);
