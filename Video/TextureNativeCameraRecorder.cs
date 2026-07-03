@@ -20,6 +20,58 @@ public sealed record TextureNativeFrameInfo(
     string MediaSubtype,
     long FrameNumber);
 
+public sealed class TextureNativeFrameLease : IDisposable
+{
+    private IntPtr _resource;
+
+    internal TextureNativeFrameLease(
+        IntPtr resource,
+        int subresource,
+        int width,
+        int height,
+        double framesPerSecond,
+        string deviceMode,
+        string mediaSubtype,
+        long frameNumber)
+    {
+        _resource = resource;
+        Subresource = subresource;
+        Width = width;
+        Height = height;
+        FramesPerSecond = framesPerSecond;
+        DeviceMode = deviceMode;
+        MediaSubtype = mediaSubtype;
+        FrameNumber = frameNumber;
+    }
+
+    public IntPtr Resource => _resource;
+
+    public int Subresource { get; }
+
+    public int Width { get; }
+
+    public int Height { get; }
+
+    public double FramesPerSecond { get; }
+
+    public string DeviceMode { get; }
+
+    public string MediaSubtype { get; }
+
+    public long FrameNumber { get; }
+
+    public bool IsValid => _resource != IntPtr.Zero;
+
+    public void Dispose()
+    {
+        var resource = Interlocked.Exchange(ref _resource, IntPtr.Zero);
+        if (resource != IntPtr.Zero)
+        {
+            System.Runtime.InteropServices.Marshal.Release(resource);
+        }
+    }
+}
+
 public static class TextureNativeCameraRecorder
 {
     public static TextureNativeCameraRecordingSession StartSession(
@@ -270,6 +322,7 @@ public sealed class TextureNativeCameraStream : IDisposable
     }
 
     public event EventHandler<TextureNativeFrameInfo>? FrameAvailable;
+    public event EventHandler<TextureNativeFrameLease>? TextureFrameAvailable;
     public event EventHandler<string>? StatusChanged;
 
     public int Width => _width;
@@ -455,6 +508,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                 try
                 {
                     var frameNumber = Interlocked.Increment(ref _framesRead);
+                    using var frameLease = TryCreateFrameLease(sample, frameNumber);
                     FrameAvailable?.Invoke(
                         this,
                         new TextureNativeFrameInfo(
@@ -464,6 +518,11 @@ public sealed class TextureNativeCameraStream : IDisposable
                             _deviceManager.ModeName,
                             MediaFoundationInterop.FormatSubtype(_subtype),
                             frameNumber));
+                    if (frameLease is not null)
+                    {
+                        TextureFrameAvailable?.Invoke(this, frameLease);
+                    }
+
                     WriteRecordingSample(sample);
                 }
                 finally
@@ -507,6 +566,86 @@ public sealed class TextureNativeCameraStream : IDisposable
         }
 
         StatusChanged?.Invoke(this, status);
+    }
+
+    private TextureNativeFrameLease? TryCreateFrameLease(IMFSample sample, long frameNumber)
+    {
+        IMFMediaBuffer? buffer = null;
+        try
+        {
+            var bufferResult = sample.GetBufferByIndex(0, out buffer);
+            if (MediaFoundationInterop.Failed(bufferResult) || buffer is null)
+            {
+                return null;
+            }
+
+            var dxgiBuffer = QueryDxgiBuffer(buffer);
+            if (dxgiBuffer is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var subresource = 0;
+                dxgiBuffer.GetSubresourceIndex(out subresource);
+                var resourceResult = dxgiBuffer.GetResource(
+                    Direct3D11DeviceManager.ID3D11Texture2D,
+                    out var resource);
+                if (MediaFoundationInterop.Failed(resourceResult) || resource == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                return new TextureNativeFrameLease(
+                    resource,
+                    subresource,
+                    _width,
+                    _height,
+                    _fps,
+                    _deviceManager.ModeName,
+                    MediaFoundationInterop.FormatSubtype(_subtype),
+                    frameNumber);
+            }
+            finally
+            {
+                MediaFoundationInterop.ReleaseComObject(dxgiBuffer);
+            }
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(buffer);
+        }
+    }
+
+    private static IMFDXGIBuffer? QueryDxgiBuffer(IMFMediaBuffer buffer)
+    {
+        var unknown = IntPtr.Zero;
+        var dxgiBufferPointer = IntPtr.Zero;
+        try
+        {
+            unknown = System.Runtime.InteropServices.Marshal.GetIUnknownForObject(buffer);
+            var dxgiBufferId = typeof(IMFDXGIBuffer).GUID;
+            if (System.Runtime.InteropServices.Marshal.QueryInterface(unknown, in dxgiBufferId, out dxgiBufferPointer) < 0
+                || dxgiBufferPointer == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            return (IMFDXGIBuffer)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(dxgiBufferPointer);
+        }
+        finally
+        {
+            if (dxgiBufferPointer != IntPtr.Zero)
+            {
+                System.Runtime.InteropServices.Marshal.Release(dxgiBufferPointer);
+            }
+
+            if (unknown != IntPtr.Zero)
+            {
+                System.Runtime.InteropServices.Marshal.Release(unknown);
+            }
+        }
     }
 
     private static (int Width, int Height, double Fps, Guid Subtype) ReadCurrentFormat(
