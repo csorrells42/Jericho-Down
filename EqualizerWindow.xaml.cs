@@ -1508,7 +1508,7 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled && _textureNativeCameraStream is not null)
             {
-                _direct3D12PreviewHost?.RenderTextureFrame(frame);
+                _direct3D12PreviewHost?.RenderTextureFrame(frame, _pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
             }
         }, DispatcherPriority.Background);
     }
@@ -1621,7 +1621,8 @@ public partial class EqualizerWindow : Window
     {
         var textureStatus = _textureNativeFrameLeaseActive ? "texture lease active" : "waiting for texture lease";
         var presenterStatus = _direct3D12PreviewHost?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
-        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, frame {frame.FrameNumber})";
+        var denoiseStatus = _pendingVideoDenoiseEnabled ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}" : "DX12 denoise off";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {denoiseStatus}, frame {frame.FrameNumber})";
     }
 
     private static string FormatCameraMode(CameraVideoMode mode)
