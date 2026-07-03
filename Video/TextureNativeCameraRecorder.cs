@@ -20,6 +20,34 @@ public sealed record TextureNativeFrameInfo(
     string MediaSubtype,
     long FrameNumber);
 
+public sealed record TextureNativePreviewFrame(
+    int Width,
+    int Height,
+    double FramesPerSecond,
+    string DeviceMode,
+    string MediaSubtype,
+    long FrameNumber,
+    byte[]? Nv12PreviewBytes,
+    int Nv12PreviewStride,
+    byte[]? BgraPreviewBytes,
+    int BgraPreviewStride)
+{
+    public static TextureNativePreviewFrame FromLease(TextureNativeFrameLease lease)
+    {
+        return new TextureNativePreviewFrame(
+            lease.Width,
+            lease.Height,
+            lease.FramesPerSecond,
+            lease.DeviceMode,
+            lease.MediaSubtype,
+            lease.FrameNumber,
+            lease.Nv12PreviewBytes,
+            lease.Nv12PreviewStride,
+            lease.BgraPreviewBytes,
+            lease.BgraPreviewStride);
+    }
+}
+
 public sealed class TextureNativeFrameLease : IDisposable
 {
     private IntPtr _resource;

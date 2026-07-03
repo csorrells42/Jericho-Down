@@ -233,8 +233,10 @@ public partial class EqualizerWindow : Window
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private int _textureNativeFrameUpdateQueued;
+    private int _textureNativePreviewRenderQueued;
     private bool _textureNativeFrameLeaseActive;
     private bool _textureNativeBgraPreviewAvailable;
+    private TextureNativePreviewFrame? _pendingTextureNativePreviewFrame;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -1344,9 +1346,11 @@ public partial class EqualizerWindow : Window
         {
             stream.Dispose();
             _pendingTextureNativeFrameInfo = null;
+            _pendingTextureNativePreviewFrame = null;
             _textureNativeFrameLeaseActive = false;
             _textureNativeBgraPreviewAvailable = false;
             System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+            System.Threading.Volatile.Write(ref _textureNativePreviewRenderQueued, 0);
             HideDirect3D12PreviewHost();
         }
     }
@@ -1504,13 +1508,34 @@ public partial class EqualizerWindow : Window
         }
 
         _textureNativeBgraPreviewAvailable = true;
-        Dispatcher.BeginInvoke(() =>
+        System.Threading.Interlocked.Exchange(
+            ref _pendingTextureNativePreviewFrame,
+            TextureNativePreviewFrame.FromLease(frame));
+        if (System.Threading.Interlocked.Exchange(ref _textureNativePreviewRenderQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativePreviewFrame, DispatcherPriority.Background);
+    }
+
+    private void ProcessPendingTextureNativePreviewFrame()
+    {
+        var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativePreviewFrame, null);
+        if (frame is not null)
         {
             if (_isCameraEnabled && _textureNativeCameraStream is not null)
             {
                 _direct3D12PreviewHost?.RenderTextureFrame(frame, _pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
             }
-        }, DispatcherPriority.Background);
+        }
+
+        System.Threading.Volatile.Write(ref _textureNativePreviewRenderQueued, 0);
+        if (System.Threading.Volatile.Read(ref _pendingTextureNativePreviewFrame) is not null
+            && System.Threading.Interlocked.Exchange(ref _textureNativePreviewRenderQueued, 1) == 0)
+        {
+            Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativePreviewFrame, DispatcherPriority.Background);
+        }
     }
 
     private void TextureNativeCameraStatusChanged(object? sender, string status)
@@ -1935,9 +1960,17 @@ public partial class EqualizerWindow : Window
 
         if (_isCameraEnabled)
         {
+            if (_textureNativeCameraStream is not null)
+            {
+                CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
+                    ? "DX12 video grain reduction is live on the preview. Texture-native recording still uses the raw camera stream."
+                    : "DX12 video grain reduction is off on the preview.";
+                return;
+            }
+
             CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                ? "Video grain reduction is live on the preview and recording path."
-                : "Video grain reduction is off on the preview and recording path.";
+                ? "Video grain reduction is live on the preview and CPU recording path."
+                : "Video grain reduction is off on the preview and CPU recording path.";
         }
     }
 
