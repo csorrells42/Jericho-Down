@@ -66,8 +66,8 @@ public partial class EqualizerWindow : Window
         .ToArray();
     private static readonly double EqualizerHoverHalfPowerRatio = CalculateEqualizerHoverHalfPowerRatio();
     private readonly MicrophoneSpectrumService _spectrumService = new();
-    private readonly FfmpegCameraPreviewService _cameraPreviewService = new();
-    private readonly FfmpegCameraModeService _cameraModeService = new();
+    private readonly MediaFoundationCameraPreviewService _cameraPreviewService = new();
+    private readonly MediaFoundationCameraModeService _cameraModeService = new();
     private readonly DirectShowCameraControlService _cameraControlService = new();
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly List<Line> _gridLines = [];
@@ -225,7 +225,8 @@ public partial class EqualizerWindow : Window
     private bool _isCameraFrameUpdateQueued;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = 2d;
-    private ImageSource? _pendingCameraFrame;
+    private CameraFrame? _pendingCameraFrame;
+    private WriteableBitmap? _cameraPreviewBitmap;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -405,7 +406,12 @@ public partial class EqualizerWindow : Window
         UserPresetComboBox.ItemsSource = UserPresetNames;
         LoadUserPresetList();
 
-        var cameras = DirectShowCameraEnumerator.GetVideoInputDevices();
+        var cameras = MediaFoundationCameraEnumerator.GetVideoInputDevices();
+        if (cameras.Count == 0)
+        {
+            cameras = DirectShowCameraEnumerator.GetVideoInputDevices();
+        }
+
         CameraComboBox.ItemsSource = cameras;
         if (cameras.Count > 0)
         {
@@ -891,7 +897,14 @@ public partial class EqualizerWindow : Window
             UpdateCameraEnabledState();
         }
 
-        RecordingStatusText.Text = $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
+        var videoPath = GetActiveRecordingVideoPath();
+        var videoStarted = _isCameraEnabled
+            && videoPath is not null
+            && _cameraPreviewService.StartRecording(videoPath, GetSelectedCameraMode());
+
+        RecordingStatusText.Text = videoStarted
+            ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+            : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
         UpdateRecordingTransportControls();
     }
 
@@ -907,12 +920,14 @@ public partial class EqualizerWindow : Window
             _recordingPausedDuration += DateTime.UtcNow - _recordingPausedAt;
             _recordingPausedAt = DateTime.MinValue;
             _isRecordingPaused = false;
+            _cameraPreviewService.ResumeRecording();
             RecordingStatusText.Text = "Recording resumed.";
         }
         else
         {
             _recordingPausedAt = DateTime.UtcNow;
             _isRecordingPaused = true;
+            _cameraPreviewService.PauseRecording();
             RecordingStatusText.Text = "Recording paused.";
         }
 
@@ -928,6 +943,8 @@ public partial class EqualizerWindow : Window
 
         var elapsed = GetRecordingElapsed();
         var sessionFolder = _activeRecordingSessionFolder;
+        var setNumber = _activeRecordingSetNumber;
+        var videoPath = _cameraPreviewService.StopRecording();
         _isRecordingSession = false;
         _isRecordingPaused = false;
         _recordingPausedAt = DateTime.MinValue;
@@ -935,9 +952,16 @@ public partial class EqualizerWindow : Window
         _activeRecordingSessionFolder = null;
         _activeRecordingSetNumber = 0;
         RecordingTimerText.Text = "00:00:00";
-        RecordingStatusText.Text = sessionFolder is null
-            ? $"Recording stopped at {FormatDuration(elapsed)}."
-            : $"Recording stopped at {FormatDuration(elapsed)}. Session folder: {sessionFolder}";
+        if (sessionFolder is not null)
+        {
+            WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed);
+        }
+
+        RecordingStatusText.Text = !string.IsNullOrWhiteSpace(videoPath)
+            ? $"Recording stopped at {FormatDuration(elapsed)}. Saved {System.IO.Path.GetFileName(videoPath)}."
+            : sessionFolder is null
+                ? $"Recording stopped at {FormatDuration(elapsed)}."
+                : $"Recording stopped at {FormatDuration(elapsed)}. Session folder: {sessionFolder}";
 
         UpdateOutputFolderText();
         UpdateRecordingTransportControls();
@@ -1060,7 +1084,7 @@ public partial class EqualizerWindow : Window
         if (!_cameraPreviewService.IsAvailable)
         {
             _isCameraEnabled = false;
-            StopCameraPreview("FFmpeg was not found for camera preview");
+            StopCameraPreview("Windows Media Foundation camera preview is unavailable");
             UpdateCameraEnabledState();
             return;
         }
@@ -1094,13 +1118,14 @@ public partial class EqualizerWindow : Window
         _cameraPreviewService.Stop();
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
+        _cameraPreviewBitmap = null;
         CameraPreviewImage.Source = null;
         CameraPreviewImage.Visibility = Visibility.Collapsed;
         CameraPlaceholder.Visibility = Visibility.Visible;
         CameraPreviewStatusText.Text = status;
     }
 
-    private void CameraPreviewFrameAvailable(object? sender, ImageSource frame)
+    private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
     {
         _pendingCameraFrame = frame;
         if (_isCameraFrameUpdateQueued)
@@ -1120,7 +1145,7 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
-            CameraPreviewImage.Source = latestFrame;
+            UpdateCameraPreviewBitmap(latestFrame);
             CameraPreviewImage.Visibility = Visibility.Visible;
             CameraPlaceholder.Visibility = Visibility.Collapsed;
 
@@ -1130,6 +1155,29 @@ public partial class EqualizerWindow : Window
                 CameraPreviewStatusText.Text = status;
             }
         });
+    }
+
+    private void UpdateCameraPreviewBitmap(CameraFrame frame)
+    {
+        if (_cameraPreviewBitmap is null
+            || _cameraPreviewBitmap.PixelWidth != frame.Width
+            || _cameraPreviewBitmap.PixelHeight != frame.Height)
+        {
+            _cameraPreviewBitmap = new WriteableBitmap(
+                frame.Width,
+                frame.Height,
+                96,
+                96,
+                PixelFormats.Bgra32,
+                null);
+            CameraPreviewImage.Source = _cameraPreviewBitmap;
+        }
+
+        _cameraPreviewBitmap.WritePixels(
+            new Int32Rect(0, 0, frame.Width, frame.Height),
+            frame.BgraBytes,
+            frame.Stride,
+            0);
     }
 
     private async Task LoadCameraModesAsync()
@@ -1519,6 +1567,8 @@ public partial class EqualizerWindow : Window
         VideoDenoiseSlider.Ticks.Add(defaultDenoiseStrength);
         _pendingVideoDenoiseEnabled = VideoDenoiseCheckBox.IsChecked == true;
         _pendingVideoDenoiseStrength = strength;
+        _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
 
         if (VideoDenoiseValueText is not null)
         {
@@ -1534,8 +1584,8 @@ public partial class EqualizerWindow : Window
         if (_isCameraEnabled)
         {
             CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                ? "Video grain reduction is queued for the next camera start. Live preview was left untouched."
-                : "Video grain reduction is off. Live preview was left untouched.";
+                ? "Video grain reduction is live on the preview and recording path."
+                : "Video grain reduction is off on the preview and recording path.";
         }
     }
 
@@ -1673,6 +1723,43 @@ public partial class EqualizerWindow : Window
     {
         var number = FormatRecordingSetNumber(setNumber);
         return $"video_{number}.mp4{Environment.NewLine}mix_{number}.wav{Environment.NewLine}raw_backup_{number}.wav{Environment.NewLine}session.json";
+    }
+
+    private string? GetActiveRecordingVideoPath()
+    {
+        if (string.IsNullOrWhiteSpace(_activeRecordingSessionFolder) || _activeRecordingSetNumber <= 0)
+        {
+            return null;
+        }
+
+        return System.IO.Path.Combine(
+            _activeRecordingSessionFolder,
+            $"video_{FormatRecordingSetNumber(_activeRecordingSetNumber)}.mp4");
+    }
+
+    private void WriteRecordingSessionMetadata(string sessionFolder, int setNumber, string? videoPath, TimeSpan elapsed)
+    {
+        try
+        {
+            var metadataPath = System.IO.Path.Combine(sessionFolder, "session.json");
+            var metadata = new
+            {
+                createdAt = DateTimeOffset.Now,
+                duration = FormatDuration(elapsed),
+                setNumber,
+                camera = CameraComboBox.SelectedItem is CameraDevice camera ? camera.Name : null,
+                mode = GetSelectedCameraMode().Label,
+                denoiseEnabled = _pendingVideoDenoiseEnabled,
+                denoiseStrength = _pendingVideoDenoiseStrength,
+                video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
+                engine = "Windows Media Foundation"
+            };
+            File.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, UserPresetJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            RecordingStatusText.Text = $"Recording stopped, but session metadata could not be written: {ex.Message}";
+        }
     }
 
     private static string CreateAudioRecordingFileName(DateTime timestamp)
