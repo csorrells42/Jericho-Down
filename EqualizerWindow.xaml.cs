@@ -227,8 +227,12 @@ public partial class EqualizerWindow : Window
     private double _pendingVideoDenoiseStrength = 2d;
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
+    private TextureNativeCameraStream? _textureNativeCameraStream;
+    private TextureNativeFrameInfo? _pendingTextureNativeFrameInfo;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
+    private int _textureNativeFrameUpdateQueued;
+    private bool _textureNativeFrameLeaseActive;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -545,6 +549,7 @@ public partial class EqualizerWindow : Window
         StopAudioPlayback();
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
+        StopTextureNativeCameraStream();
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
         if (_waveform3DWindow is not null)
@@ -928,7 +933,11 @@ public partial class EqualizerWindow : Window
             _recordingPausedDuration += DateTime.UtcNow - _recordingPausedAt;
             _recordingPausedAt = DateTime.MinValue;
             _isRecordingPaused = false;
-            if (_textureNativeRecordingSession is not null)
+            if (_textureNativeCameraStream?.IsRecording == true)
+            {
+                _textureNativeCameraStream.ResumeRecording();
+            }
+            else if (_textureNativeRecordingSession is not null)
             {
                 _textureNativeRecordingSession.Resume();
             }
@@ -943,7 +952,11 @@ public partial class EqualizerWindow : Window
         {
             _recordingPausedAt = DateTime.UtcNow;
             _isRecordingPaused = true;
-            if (_textureNativeRecordingSession is not null)
+            if (_textureNativeCameraStream?.IsRecording == true)
+            {
+                _textureNativeCameraStream.PauseRecording();
+            }
+            else if (_textureNativeRecordingSession is not null)
             {
                 _textureNativeRecordingSession.Pause();
             }
@@ -999,6 +1012,21 @@ public partial class EqualizerWindow : Window
     private bool TryStartTextureNativeRecording(string? videoPath)
     {
         _lastTextureNativeRecordingResult = null;
+        if (_textureNativeCameraStream is not null
+            && _isCameraEnabled
+            && !string.IsNullOrWhiteSpace(videoPath))
+        {
+            try
+            {
+                return _textureNativeCameraStream.StartRecording(videoPath);
+            }
+            catch (Exception ex)
+            {
+                RecordingStatusText.Text = $"Shared GPU recording path unavailable: {ex.Message}";
+                return false;
+            }
+        }
+
         if (!ShouldUseTextureNativeRecording()
             || !_isCameraEnabled
             || string.IsNullOrWhiteSpace(videoPath)
@@ -1027,6 +1055,17 @@ public partial class EqualizerWindow : Window
     private static bool ShouldUseTextureNativeRecording()
     {
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
+        return IsEnabledEnvironmentValue(value);
+    }
+
+    private static bool ShouldUseSharedTextureCameraStream()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
+        return IsEnabledEnvironmentValue(value);
+    }
+
+    private static bool IsEnabledEnvironmentValue(string? value)
+    {
         return string.Equals(value, "1", StringComparison.Ordinal)
             || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
@@ -1034,6 +1073,30 @@ public partial class EqualizerWindow : Window
 
     private TextureNativeRecordingResult? StopTextureNativeRecording()
     {
+        if (_textureNativeCameraStream?.IsRecording == true)
+        {
+            try
+            {
+                _lastTextureNativeRecordingResult = _textureNativeCameraStream.StopRecording();
+                return _lastTextureNativeRecordingResult;
+            }
+            catch (Exception ex)
+            {
+                _lastTextureNativeRecordingResult = new TextureNativeRecordingResult(
+                    false,
+                    GetActiveRecordingVideoPath() ?? string.Empty,
+                    0,
+                    0,
+                    _textureNativeCameraStream.DeviceMode,
+                    _textureNativeCameraStream.MediaSubtype,
+                    _textureNativeCameraStream.Width,
+                    _textureNativeCameraStream.Height,
+                    _textureNativeCameraStream.FramesPerSecond,
+                    ex.Message);
+                return _lastTextureNativeRecordingResult;
+            }
+        }
+
         var session = _textureNativeRecordingSession;
         if (session is null)
         {
@@ -1166,6 +1229,21 @@ public partial class EqualizerWindow : Window
         CameraPlaceholder.Visibility = Visibility.Collapsed;
         CameraPreviewImage.Visibility = Visibility.Visible;
 
+        if (ShouldUseSharedTextureCameraStream())
+        {
+            if (StartTextureNativeCameraStream(camera, CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto))
+            {
+                return;
+            }
+
+            _isCameraEnabled = false;
+            StopCameraPreview($"Could not open shared GPU camera stream for {camera.Name}");
+            UpdateCameraEnabledState();
+            return;
+        }
+
+        StopTextureNativeCameraStream();
+
         if (!_cameraPreviewService.IsAvailable)
         {
             _isCameraEnabled = false;
@@ -1198,8 +1276,9 @@ public partial class EqualizerWindow : Window
         UpdateCameraEnabledState();
     }
 
-    private void StopCameraPreview(string status)
+    private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
     {
+        StopTextureNativeCameraStream();
         _cameraPreviewService.Stop();
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
@@ -1207,7 +1286,63 @@ public partial class EqualizerWindow : Window
         CameraPreviewImage.Source = null;
         CameraPreviewImage.Visibility = Visibility.Collapsed;
         CameraPlaceholder.Visibility = Visibility.Visible;
+        CameraPreviewStatusText.Text = $"{FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames";
+
+        try
+        {
+            _textureNativeCameraStream = new TextureNativeCameraStream(camera.Name, mode);
+            _textureNativeCameraStream.FrameAvailable += TextureNativeCameraFrameAvailable;
+            _textureNativeCameraStream.TextureFrameAvailable += TextureNativeCameraTextureFrameAvailable;
+            _textureNativeCameraStream.StatusChanged += TextureNativeCameraStatusChanged;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StopTextureNativeCameraStream();
+            CameraPreviewStatusText.Text = $"Shared GPU stream unavailable: {ex.Message}";
+            return false;
+        }
+    }
+
+    private void StopCameraPreview(string status)
+    {
+        _cameraPreviewService.Stop();
+        StopTextureNativeCameraStream();
+        _isCameraFrameUpdateQueued = false;
+        _pendingCameraFrame = null;
+        _cameraPreviewBitmap = null;
+        CameraPreviewImage.Source = null;
+        CameraPreviewImage.Visibility = Visibility.Collapsed;
+        CameraPlaceholder.Visibility = Visibility.Visible;
         CameraPreviewStatusText.Text = status;
+    }
+
+    private void StopTextureNativeCameraStream()
+    {
+        var stream = _textureNativeCameraStream;
+        if (stream is null)
+        {
+            return;
+        }
+
+        _textureNativeCameraStream = null;
+        stream.FrameAvailable -= TextureNativeCameraFrameAvailable;
+        stream.TextureFrameAvailable -= TextureNativeCameraTextureFrameAvailable;
+        stream.StatusChanged -= TextureNativeCameraStatusChanged;
+        try
+        {
+            if (stream.IsRecording)
+            {
+                _lastTextureNativeRecordingResult = stream.StopRecording();
+            }
+        }
+        finally
+        {
+            stream.Dispose();
+            _pendingTextureNativeFrameInfo = null;
+            _textureNativeFrameLeaseActive = false;
+            System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+        }
     }
 
     private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
@@ -1263,6 +1398,54 @@ public partial class EqualizerWindow : Window
             frame.BgraBytes,
             frame.Stride,
             0);
+    }
+
+    private void TextureNativeCameraFrameAvailable(object? sender, TextureNativeFrameInfo frame)
+    {
+        System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, frame);
+        if (System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
+    }
+
+    private void ProcessPendingTextureNativeFrame()
+    {
+        var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, null);
+        if (frame is not null && _isCameraEnabled && _textureNativeCameraStream is not null)
+        {
+            CameraPreviewImage.Visibility = Visibility.Collapsed;
+            CameraPlaceholder.Visibility = Visibility.Visible;
+            if (CameraComboBox.SelectedItem is CameraDevice camera)
+            {
+                CameraPreviewStatusText.Text = FormatTextureNativeCameraStatus("GPU stream live", camera, frame);
+            }
+        }
+
+        System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+        if (System.Threading.Volatile.Read(ref _pendingTextureNativeFrameInfo) is not null
+            && System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) == 0)
+        {
+            Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
+        }
+    }
+
+    private void TextureNativeCameraTextureFrameAvailable(object? sender, TextureNativeFrameLease frame)
+    {
+        _textureNativeFrameLeaseActive = frame.IsValid;
+    }
+
+    private void TextureNativeCameraStatusChanged(object? sender, string status)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isCameraEnabled && _textureNativeCameraStream is not null)
+            {
+                CameraPreviewStatusText.Text = status;
+            }
+        });
     }
 
     private async Task LoadCameraModesAsync()
@@ -1356,6 +1539,12 @@ public partial class EqualizerWindow : Window
     private static string FormatCameraStatus(string state, CameraDevice camera, CameraVideoMode mode)
     {
         return $"{state}: {camera.Name} at {FormatCameraMode(mode)}";
+    }
+
+    private string FormatTextureNativeCameraStatus(string state, CameraDevice camera, TextureNativeFrameInfo frame)
+    {
+        var textureStatus = _textureNativeFrameLeaseActive ? "texture lease active" : "waiting for texture lease";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, frame {frame.FrameNumber})";
     }
 
     private static string FormatCameraMode(CameraVideoMode mode)
@@ -1843,7 +2032,9 @@ public partial class EqualizerWindow : Window
                 denoiseStrength = _pendingVideoDenoiseStrength,
                 video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
                 engine = textureResult is not null
-                    ? "Windows Media Foundation texture-native GPU samples"
+                    ? _textureNativeCameraStream is not null
+                        ? "Windows Media Foundation shared texture-native GPU stream"
+                        : "Windows Media Foundation texture-native GPU samples"
                     : "Windows Media Foundation CPU frames",
                 textureNative = textureResult is null
                     ? null
