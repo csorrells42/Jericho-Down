@@ -23,8 +23,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     private const int SwpNoActivate = 0x0010;
 
     private IntPtr _hwnd;
+    private IntPtr _nativeD3D12Device;
     private Direct3D12SwapChainRenderer? _renderer;
     private bool _disposed;
+
+    public Direct3D12PreviewHost(IntPtr nativeD3D12Device = default)
+    {
+        _nativeD3D12Device = nativeD3D12Device;
+    }
 
     public event EventHandler<string>? StatusChanged;
 
@@ -58,6 +64,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         try
         {
+            if (frame.IsValid
+                && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
+                && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength))
+            {
+                return;
+            }
+
             if (frame.Nv12PreviewBytes is not null && frame.Nv12PreviewStride > 0)
             {
                 if (_renderer.RenderNv12Frame(
@@ -115,10 +128,24 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         try
         {
-            _renderer = new Direct3D12SwapChainRenderer(
+            var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
+            try
+            {
+                _renderer = new Direct3D12SwapChainRenderer(
                 _hwnd,
-                Math.Max(1, (int)ActualWidth),
-                Math.Max(1, (int)ActualHeight));
+                    Math.Max(1, (int)ActualWidth),
+                    Math.Max(1, (int)ActualHeight),
+                    nativeDevice);
+                nativeDevice = IntPtr.Zero;
+            }
+            finally
+            {
+                if (nativeDevice != IntPtr.Zero)
+                {
+                    Marshal.Release(nativeDevice);
+                }
+            }
+
             StatusChanged?.Invoke(this, $"{_renderer.DeviceDescription} preview surface ready.");
             _renderer.RenderProofFrame(0);
         }
@@ -171,6 +198,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         _disposed = true;
         DisposeRenderer();
+        var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
+        if (nativeDevice != IntPtr.Zero)
+        {
+            Marshal.Release(nativeDevice);
+        }
+
         base.Dispose();
     }
 
@@ -252,12 +285,23 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private bool _disposed;
         private bool _shaderPreviewUnavailable;
         private bool _nv12PreviewUnavailable;
+        private bool _nativeTexturePreviewUnavailable;
+        private readonly bool _usesSharedCaptureDevice;
 
-        public Direct3D12SwapChainRenderer(IntPtr hwnd, int width, int height)
+        public Direct3D12SwapChainRenderer(IntPtr hwnd, int width, int height, IntPtr nativeD3D12Device = default)
         {
             _width = width;
             _height = height;
-            _device = D3D12CreateDevice<ID3D12Device>(null, FeatureLevel.Level_12_0);
+            if (nativeD3D12Device != IntPtr.Zero)
+            {
+                _device = new ID3D12Device(nativeD3D12Device);
+                _usesSharedCaptureDevice = true;
+            }
+            else
+            {
+                _device = D3D12CreateDevice<ID3D12Device>(null, FeatureLevel.Level_12_0);
+            }
+
             _commandQueue = _device.CreateCommandQueue<ID3D12CommandQueue>(
                 new CommandQueueDescription(CommandListType.Direct));
             _factory = CreateDXGIFactory2<IDXGIFactory4>(false);
@@ -308,7 +352,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _fence = _device.CreateFence<ID3D12Fence>(0);
         }
 
-        public string DeviceDescription => "Direct3D 12 / DXGI flip model";
+        public string DeviceDescription => _usesSharedCaptureDevice
+            ? "Direct3D 12 / DXGI flip model on shared capture device"
+            : "Direct3D 12 / DXGI flip model";
 
         public unsafe void RenderProofFrame(long frameNumber)
         {
@@ -389,6 +435,106 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
 
             return TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, denoiseEnabled, denoiseStrength);
+        }
+
+        public bool RenderNativeTextureFrame(TextureNativeFrameLease frame, bool denoiseEnabled, double denoiseStrength)
+        {
+            if (_disposed
+                || !_usesSharedCaptureDevice
+                || _nativeTexturePreviewUnavailable
+                || _nv12PreviewRootSignature is null
+                || _nv12PreviewPipelineState is null
+                || frame.Resource == IntPtr.Zero
+                || !frame.MediaSubtype.Contains("NV12", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (frame.Width != _width || frame.Height != _height)
+            {
+                Resize(frame.Width, frame.Height);
+            }
+
+            try
+            {
+                Marshal.AddRef(frame.Resource);
+                using var nativeResource = new ID3D12Resource(frame.Resource);
+                RenderNativeNv12Resource(nativeResource, frame.Width, frame.Height, denoiseEnabled, denoiseStrength);
+                return true;
+            }
+            catch
+            {
+                _nativeTexturePreviewUnavailable = true;
+                return false;
+            }
+        }
+
+        private void RenderNativeNv12Resource(
+            ID3D12Resource cameraResource,
+            int width,
+            int height,
+            bool denoiseEnabled,
+            double denoiseStrength)
+        {
+            var ySrvDescription = new ShaderResourceViewDescription
+            {
+                Format = Format.R8_UNorm,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Shader4ComponentMapping = D3D12DefaultShader4ComponentMappingValue,
+                Texture2D = new Texture2DShaderResourceView
+                {
+                    MipLevels = 1,
+                    PlaneSlice = 0
+                }
+            };
+            var uvSrvDescription = new ShaderResourceViewDescription
+            {
+                Format = Format.R8G8_UNorm,
+                ViewDimension = Vortice.Direct3D12.ShaderResourceViewDimension.Texture2D,
+                Shader4ComponentMapping = D3D12DefaultShader4ComponentMappingValue,
+                Texture2D = new Texture2DShaderResourceView
+                {
+                    MipLevels = 1,
+                    PlaneSlice = 1
+                }
+            };
+            _device.CreateShaderResourceView(cameraResource, ySrvDescription, GetSrvCpuHandle(1));
+            _device.CreateShaderResourceView(cameraResource, uvSrvDescription, GetSrvCpuHandle(2));
+
+            var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
+            _commandAllocator.Reset();
+            _commandList.Reset(_commandAllocator);
+
+            var toRenderTarget = ResourceBarrier.BarrierTransition(
+                renderTarget,
+                ResourceStates.Present,
+                ResourceStates.RenderTarget);
+            _commandList.ResourceBarrier([toRenderTarget]);
+
+            var rtvHandle = GetRtvHandle(frameIndex);
+            _commandList.SetGraphicsRootSignature(_nv12PreviewRootSignature);
+            _commandList.SetPipelineState(_nv12PreviewPipelineState);
+            _commandList.SetDescriptorHeaps([_srvHeap]);
+            _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
+            SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
+            var viewport = new Viewport(0, 0, _width, _height);
+            var scissor = new RawRect(0, 0, _width, _height);
+            _commandList.RSSetViewports(viewport);
+            _commandList.RSSetScissorRects(scissor);
+            _commandList.OMSetRenderTargets(rtvHandle, null);
+            _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+            _commandList.DrawInstanced(3, 1, 0, 0);
+
+            var toPresent = ResourceBarrier.BarrierTransition(
+                renderTarget,
+                ResourceStates.RenderTarget,
+                ResourceStates.Present);
+            _commandList.ResourceBarrier([toPresent]);
+            _commandList.Close();
+            _commandQueue.ExecuteCommandList(_commandList);
+            _swapChain.Present(0, PresentFlags.None);
+            WaitForGpu();
         }
 
         private unsafe bool TryRenderNv12FrameWithShader(

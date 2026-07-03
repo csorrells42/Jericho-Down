@@ -1324,8 +1324,9 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            ShowDirect3D12PreviewHost();
-            _textureNativeCameraStream = new TextureNativeCameraStream(camera.Name, mode);
+            var stream = new TextureNativeCameraStream(camera.Name, mode);
+            _textureNativeCameraStream = stream;
+            ShowDirect3D12PreviewHost(stream.DuplicateNativeD3D12Device());
             _textureNativeCameraStream.FrameAvailable += TextureNativeCameraFrameAvailable;
             _textureNativeCameraStream.TextureFrameAvailable += TextureNativeCameraTextureFrameAvailable;
             _textureNativeCameraStream.StatusChanged += TextureNativeCameraStatusChanged;
@@ -1385,22 +1386,31 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void ShowDirect3D12PreviewHost()
+    private void ShowDirect3D12PreviewHost(IntPtr nativeD3D12Device)
     {
         if (CameraPreviewSurfaceGrid is null)
         {
+            if (nativeD3D12Device != IntPtr.Zero)
+            {
+                System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
+            }
+
             return;
         }
 
         if (_direct3D12PreviewHost is null)
         {
-            _direct3D12PreviewHost = new Direct3D12PreviewHost
+            _direct3D12PreviewHost = new Direct3D12PreviewHost(nativeD3D12Device)
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
             _direct3D12PreviewHost.StatusChanged += Direct3D12PreviewHostStatusChanged;
             CameraPreviewSurfaceGrid.Children.Insert(1, _direct3D12PreviewHost);
+        }
+        else if (nativeD3D12Device != IntPtr.Zero)
+        {
+            System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
         }
 
         _direct3D12PreviewHost.Visibility = Visibility.Visible;

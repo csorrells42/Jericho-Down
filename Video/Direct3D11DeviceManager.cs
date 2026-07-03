@@ -39,6 +39,8 @@ internal sealed class Direct3D11DeviceManager : ITextureNativeDeviceManager
 
     public Guid TextureResourceId => ID3D11Texture2D;
 
+    public IntPtr DuplicateNativeD3D12Device() => IntPtr.Zero;
+
     public static Direct3D11DeviceManager Create()
     {
         var featureLevels = new[] { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };

@@ -513,6 +513,8 @@ public sealed class TextureNativeCameraStream : IDisposable
 
     public long FramesRead => Interlocked.Read(ref _framesRead);
 
+    public IntPtr DuplicateNativeD3D12Device() => _deviceManager.DuplicateNativeD3D12Device();
+
     public bool IsRecording
     {
         get

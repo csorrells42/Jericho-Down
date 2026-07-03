@@ -9,6 +9,8 @@ internal interface ITextureNativeDeviceManager : IDisposable
     string ModeName { get; }
 
     Guid TextureResourceId { get; }
+
+    IntPtr DuplicateNativeD3D12Device();
 }
 
 internal sealed class Direct3D12DeviceManager : ITextureNativeDeviceManager
@@ -40,6 +42,18 @@ internal sealed class Direct3D12DeviceManager : ITextureNativeDeviceManager
     };
 
     public Guid TextureResourceId => ID3D12Resource;
+
+    public IntPtr DuplicateNativeD3D12Device()
+    {
+        var device = _device;
+        if (device == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        Marshal.AddRef(device);
+        return device;
+    }
 
     public static Direct3D12DeviceManager Create()
     {
