@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Window x:Class="PodcastWorkbench.EqualizerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Podcast Workbench" Height="820" Width="1760" MinHeight="680" MinWidth="1440" WindowStartupLocation="CenterScreen" WindowState="Normal" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#05070A" Loaded="WindowLoaded" Activated="WindowActivated" Deactivated="WindowDeactivated" Closing="WindowClosing" KeyDown="WindowKeyDown">
+<Window x:Class="PodcastWorkbench.EqualizerWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Podcast Workbench" Height="980" Width="1760" MinHeight="680" MinWidth="1440" WindowStartupLocation="CenterScreen" WindowState="Normal" WindowStyle="SingleBorderWindow" ResizeMode="CanResize" Background="#05070A" Loaded="WindowLoaded" Activated="WindowActivated" Deactivated="WindowDeactivated" Closing="WindowClosing" KeyDown="WindowKeyDown">
   <Window.Resources>
     <Style TargetType="ToolTip">
       <Setter Property="MaxWidth" Value="360" />
@@ -856,17 +856,17 @@
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center"></StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock x:Name="RecordingTimerText" Text="00:00:00" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0" />
-                <Button x:Name="StartRecordingButton" Content="Start" Padding="16,7" Margin="0,0,6,0" Click="StartRecordingClicked">
+                <Button x:Name="StartRecordingButton" Style="{StaticResource RecordingRecordButton}" Content="REC" Width="88" Padding="12,7" Margin="0,0,8,0" Click="StartRecordingClicked">
                   <Button.ToolTip>
                     <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Starts a podcast session, creates its output folder, turns on camera preview if needed, and begins the recording timer." />
                   </Button.ToolTip>
                 </Button>
-                <Button x:Name="PauseRecordingButton" Content="Pause" Padding="16,7" Margin="0,0,6,0" IsEnabled="False" Click="PauseRecordingClicked">
+                <Button x:Name="PauseRecordingButton" Style="{StaticResource RecordingPauseButton}" Content="Pause" Width="92" Padding="12,7" Margin="0,0,8,0" IsEnabled="False" Click="PauseRecordingClicked">
                   <Button.ToolTip>
                     <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Pauses or resumes the current recording session timer. File capture will use this same transport state." />
                   </Button.ToolTip>
                 </Button>
-                <Button x:Name="StopRecordingButton" Content="Stop" Padding="16,7" IsEnabled="False" Click="StopRecordingClicked">
+                <Button x:Name="StopRecordingButton" Style="{StaticResource RecordingStopButton}" Content="Stop" Width="88" Padding="12,7" IsEnabled="False" Click="StopRecordingClicked">
                   <Button.ToolTip>
                     <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Stops the current recording session and prepares the next session folder." />
                   </Button.ToolTip>

@@ -236,6 +236,7 @@ public partial class EqualizerWindow : Window
     private string? _lastTextureNativeCameraError;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
+    private string? _lastPreviewRecordingDiagnostics;
     private int _textureNativeFrameUpdateQueued;
     private int _textureNativePreviewRenderQueued;
     private long _cameraBgraPreviewFrameNumber;
@@ -960,7 +961,7 @@ public partial class EqualizerWindow : Window
         var videoStarted = textureVideoStarted
             || (_isCameraEnabled
                 && videoPath is not null
-                && _cameraPreviewService.StartRecording(videoPath, GetSelectedCameraMode()));
+                && StartActivePreviewRecording(videoPath));
 
         RecordingStatusText.Text = textureVideoStarted
             ? $"Recording GPU video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
@@ -990,6 +991,10 @@ public partial class EqualizerWindow : Window
             {
                 _textureNativeRecordingSession.Resume();
             }
+            else if (IsSelectedDirectShowCamera())
+            {
+                _directShowPreviewService.ResumeRecording();
+            }
             else
             {
                 _cameraPreviewService.ResumeRecording();
@@ -1008,6 +1013,10 @@ public partial class EqualizerWindow : Window
             else if (_textureNativeRecordingSession is not null)
             {
                 _textureNativeRecordingSession.Pause();
+            }
+            else if (IsSelectedDirectShowCamera())
+            {
+                _directShowPreviewService.PauseRecording();
             }
             else
             {
@@ -1030,8 +1039,9 @@ public partial class EqualizerWindow : Window
         var elapsed = GetRecordingElapsed();
         var sessionFolder = _activeRecordingSessionFolder;
         var setNumber = _activeRecordingSetNumber;
+        _lastPreviewRecordingDiagnostics = null;
         var textureResult = StopTextureNativeRecording();
-        var videoPath = textureResult?.Path ?? _cameraPreviewService.StopRecording();
+        var videoPath = textureResult?.Path ?? StopActivePreviewRecording();
         _isRecordingSession = false;
         _isRecordingPaused = false;
         _recordingPausedAt = DateTime.MinValue;
@@ -1050,14 +1060,43 @@ public partial class EqualizerWindow : Window
                 : $"Recording stopped at {FormatDuration(elapsed)}. GPU saved raw texture-native video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
             : textureResult is not null
                 ? $"Recording stopped at {FormatDuration(elapsed)}. GPU recording issue: {textureResult.Status}"
-                : !string.IsNullOrWhiteSpace(videoPath)
+            : !string.IsNullOrWhiteSpace(videoPath)
             ? $"Recording stopped at {FormatDuration(elapsed)}. Saved {System.IO.Path.GetFileName(videoPath)}."
+            : !string.IsNullOrWhiteSpace(_lastPreviewRecordingDiagnostics)
+                ? $"Recording stopped at {FormatDuration(elapsed)}. No video file was written. {_lastPreviewRecordingDiagnostics}"
             : sessionFolder is null
                 ? $"Recording stopped at {FormatDuration(elapsed)}."
                 : $"Recording stopped at {FormatDuration(elapsed)}. Session folder: {sessionFolder}";
 
         UpdateOutputFolderText();
         UpdateRecordingTransportControls();
+    }
+
+    private bool StartActivePreviewRecording(string videoPath)
+    {
+        var mode = GetSelectedCameraMode();
+        return IsSelectedDirectShowCamera()
+            ? _directShowPreviewService.StartRecording(videoPath, mode)
+            : _cameraPreviewService.StartRecording(videoPath, mode);
+    }
+
+    private string? StopActivePreviewRecording()
+    {
+        if (IsSelectedDirectShowCamera())
+        {
+            var path = _directShowPreviewService.StopRecording();
+            _lastPreviewRecordingDiagnostics = _directShowPreviewService.LastRecordingDiagnostics;
+            return path;
+        }
+
+        var mediaFoundationPath = _cameraPreviewService.StopRecording();
+        _lastPreviewRecordingDiagnostics = _cameraPreviewService.LastRecordingDiagnostics;
+        return mediaFoundationPath;
+    }
+
+    private bool IsSelectedDirectShowCamera()
+    {
+        return CameraComboBox.SelectedItem is CameraDevice camera && IsDirectShowCamera(camera);
     }
 
     private bool TryStartTextureNativeRecording(string? videoPath)
@@ -2322,7 +2361,9 @@ public partial class EqualizerWindow : Window
                     ? _textureNativeCameraStream is not null
                         ? "Windows Media Foundation shared texture-native GPU stream"
                         : "Windows Media Foundation texture-native GPU samples"
-                    : "Windows Media Foundation CPU frames",
+                    : IsSelectedDirectShowCamera()
+                        ? "DirectShow CPU frames with Media Foundation MP4 writer"
+                        : "Windows Media Foundation CPU frames",
                 videoProcessing = BuildVideoProcessingMetadata(textureResult),
                 textureNative = textureResult is null
                     ? null
@@ -2369,12 +2410,13 @@ public partial class EqualizerWindow : Window
             };
         }
 
+        var isDirectShow = IsSelectedDirectShowCamera();
         return new
         {
-            previewPipeline = "Media Foundation CPU preview",
+            previewPipeline = isDirectShow ? "DirectShow RGB32 CPU preview" : "Media Foundation CPU preview",
             previewDenoiseApplied = _pendingVideoDenoiseEnabled,
             previewDenoiseStrength = _pendingVideoDenoiseStrength,
-            recordingPipeline = "Media Foundation CPU frame writer",
+            recordingPipeline = isDirectShow ? "DirectShow CPU frames to Media Foundation MP4 writer" : "Media Foundation CPU frame writer",
             recordingDenoiseApplied = _pendingVideoDenoiseEnabled,
             recordingMatchesPreviewDenoise = true,
             note = _pendingVideoDenoiseEnabled

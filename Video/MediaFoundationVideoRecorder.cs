@@ -12,6 +12,8 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
     private int _streamIndex;
     private long _nextSampleTime;
     private int _samplesWritten;
+    private int _framesOffered;
+    private int _framesSkipped;
     private bool _isPaused;
     private bool _isFinalized;
 
@@ -47,6 +49,12 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
 
     public int SamplesWritten => _samplesWritten;
 
+    public int FramesOffered => _framesOffered;
+
+    public int FramesSkipped => _framesSkipped;
+
+    public string? LastSkipReason { get; private set; }
+
     private long SampleDuration => Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / FramesPerSecond));
 
     public void Pause()
@@ -65,18 +73,37 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
         }
     }
 
-    public void WriteFrame(byte[] bgraBytes)
+    public bool WriteFrame(byte[] bgraBytes)
     {
+        _framesOffered++;
         if (bgraBytes.Length < _frameBytes)
         {
-            return;
+            _framesSkipped++;
+            LastSkipReason = $"frame buffer too small ({bgraBytes.Length} < {_frameBytes})";
+            return false;
         }
 
         lock (_lock)
         {
-            if (_writer is null || _isPaused || _isFinalized)
+            if (_writer is null)
             {
-                return;
+                _framesSkipped++;
+                LastSkipReason = "writer is not initialized";
+                return false;
+            }
+
+            if (_isPaused)
+            {
+                _framesSkipped++;
+                LastSkipReason = "recording is paused";
+                return false;
+            }
+
+            if (_isFinalized)
+            {
+                _framesSkipped++;
+                LastSkipReason = "writer is already finalized";
+                return false;
             }
 
             IMFMediaBuffer? buffer = null;
@@ -102,7 +129,9 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
                 MediaFoundationInterop.ThrowIfFailed(sample.SetUINT32(MediaFoundationGuids.MFSampleExtension_CleanPoint, 1));
                 MediaFoundationInterop.ThrowIfFailed(_writer.WriteSample(_streamIndex, sample));
                 _samplesWritten++;
+                LastSkipReason = null;
                 _nextSampleTime += SampleDuration;
+                return true;
             }
             finally
             {

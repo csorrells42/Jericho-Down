@@ -17,6 +17,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
     private static readonly Guid FormatVideoInfo = new("05589F80-C356-11CE-BF01-00AA0055595A");
 
     private readonly object _syncRoot = new();
+    private readonly object _recordingLock = new();
     private object? _graphObject;
     private object? _captureBuilderObject;
     private IBaseFilter? _sourceFilter;
@@ -28,8 +29,17 @@ public sealed class DirectShowCameraPreviewService : IDisposable
     private int _width;
     private int _height;
     private int _stride;
+    private double _framesPerSecond = 30d;
     private bool _bottomUp = true;
     private byte[]? _previousDenoiseFrame;
+    private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _recordingMediaFoundationScope;
+    private MediaFoundationVideoRecorder? _recorder;
+    private string? _recordingPath;
+    private bool _recordingStopRequested;
+    private ManualResetEventSlim? _recordingStopCompleted;
+    private string? _completedRecordingPath;
+    private int _completedRecordingSamples;
+    private string? _completedRecordingDiagnostics;
 
     public event EventHandler<CameraFrame>? FrameAvailable;
     public event EventHandler<string>? StatusChanged;
@@ -40,10 +50,24 @@ public sealed class DirectShowCameraPreviewService : IDisposable
 
     public string? LastStatus { get; private set; }
 
+    public string? LastRecordingDiagnostics { get; private set; }
+
+    public bool IsRecording
+    {
+        get
+        {
+            lock (_recordingLock)
+            {
+                return _recorder is not null || !string.IsNullOrWhiteSpace(_recordingPath);
+            }
+        }
+    }
+
     public bool Start(CameraDevice camera, CameraVideoMode? mode)
     {
         Stop();
         LastStatus = null;
+        _framesPerSecond = mode?.FramesPerSecond is > 0d ? mode.FramesPerSecond.Value : 30d;
 
         if (!OperatingSystem.IsWindows())
         {
@@ -110,8 +134,184 @@ public sealed class DirectShowCameraPreviewService : IDisposable
         }
     }
 
+    public bool StartRecording(string path, CameraVideoMode? mode)
+    {
+        lock (_recordingLock)
+        {
+            if (_recorder is not null || !string.IsNullOrWhiteSpace(_recordingPath))
+            {
+                return true;
+            }
+
+            int width;
+            int height;
+            double fps;
+            lock (_syncRoot)
+            {
+                width = _width > 0 ? _width : mode?.Width ?? 1280;
+                height = _height > 0 ? _height : mode?.Height ?? 720;
+                fps = _framesPerSecond > 0d ? _framesPerSecond : mode?.FramesPerSecond ?? 30d;
+            }
+
+            if (width <= 0 || height <= 0)
+            {
+                LastStatus = "DirectShow recording failed: preview format is not ready.";
+                StatusChanged?.Invoke(this, LastStatus);
+                return false;
+            }
+
+            try
+            {
+                _recordingMediaFoundationScope ??= MediaFoundationCameraDeviceFactory.Startup();
+                _width = width;
+                _height = height;
+                _framesPerSecond = fps;
+                _recordingPath = path;
+                _recordingStopRequested = false;
+                _completedRecordingPath = null;
+                _completedRecordingSamples = 0;
+                _completedRecordingDiagnostics = null;
+                LastRecordingDiagnostics = null;
+                LastStatus = $"Recording DirectShow video: {System.IO.Path.GetFileName(path)}";
+                StatusChanged?.Invoke(this, LastStatus);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _recorder?.Dispose();
+                _recorder = null;
+                _recordingPath = null;
+                _recordingMediaFoundationScope?.Dispose();
+                _recordingMediaFoundationScope = null;
+                LastStatus = $"DirectShow video recording failed: {ex.Message}";
+                StatusChanged?.Invoke(this, LastStatus);
+                return false;
+            }
+        }
+    }
+
+    public void PauseRecording()
+    {
+        lock (_recordingLock)
+        {
+            _recorder?.Pause();
+        }
+    }
+
+    public void ResumeRecording()
+    {
+        lock (_recordingLock)
+        {
+            _recorder?.Resume();
+        }
+    }
+
+    public string? StopRecording()
+    {
+        ManualResetEventSlim? stopCompleted;
+        lock (_recordingLock)
+        {
+            var recorder = _recorder;
+            var path = _recordingPath;
+            if (recorder is null && string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            if (recorder is null)
+            {
+                _recordingPath = null;
+                _recordingStopRequested = false;
+                _recordingMediaFoundationScope?.Dispose();
+                _recordingMediaFoundationScope = null;
+                LastRecordingDiagnostics = "DirectShow recorder: offered 0, wrote 0, skipped 0; no frames reached the recorder.";
+                LastStatus = LastRecordingDiagnostics;
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+                return null;
+            }
+
+            _recordingStopRequested = true;
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = null;
+            _recordingStopCompleted?.Dispose();
+            _recordingStopCompleted = new ManualResetEventSlim(false);
+            stopCompleted = _recordingStopCompleted;
+        }
+
+        if (!stopCompleted.Wait(TimeSpan.FromSeconds(3)))
+        {
+            lock (_recordingLock)
+            {
+                LastRecordingDiagnostics = "DirectShow recorder: stop timed out waiting for the capture thread to finalize the file.";
+                LastStatus = LastRecordingDiagnostics;
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+                return null;
+            }
+        }
+
+        lock (_recordingLock)
+        {
+            LastRecordingDiagnostics = _completedRecordingDiagnostics;
+            return _completedRecordingSamples > 0 ? _completedRecordingPath : null;
+        }
+    }
+
+    private void CompleteRecordingOnCaptureThread()
+    {
+        var recorder = _recorder;
+        var path = _recordingPath;
+        _recorder = null;
+        _recordingPath = null;
+        _recordingStopRequested = false;
+
+        if (recorder is null)
+        {
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = "DirectShow recorder: offered 0, wrote 0, skipped 0; no active writer was available.";
+            _recordingStopCompleted?.Set();
+            return;
+        }
+
+        try
+        {
+            var samplesWritten = recorder?.SamplesWritten ?? 0;
+            var framesOffered = recorder?.FramesOffered ?? 0;
+            var framesSkipped = recorder?.FramesSkipped ?? 0;
+            var lastSkipReason = recorder?.LastSkipReason;
+            recorder?.Stop();
+            _completedRecordingPath = path;
+            _completedRecordingSamples = samplesWritten;
+            _completedRecordingDiagnostics = $"DirectShow recorder: offered {framesOffered}, wrote {samplesWritten}, skipped {framesSkipped}"
+                + (string.IsNullOrWhiteSpace(lastSkipReason) ? "." : $"; last skip: {lastSkipReason}.");
+        }
+        catch (Exception ex)
+        {
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = $"DirectShow recorder finalization failed: {ex.Message}";
+        }
+        finally
+        {
+            recorder.Dispose();
+            _recordingMediaFoundationScope?.Dispose();
+            _recordingMediaFoundationScope = null;
+            LastRecordingDiagnostics = _completedRecordingDiagnostics;
+            LastStatus = LastRecordingDiagnostics;
+            if (!string.IsNullOrWhiteSpace(LastRecordingDiagnostics))
+            {
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+            }
+
+            _recordingStopCompleted?.Set();
+        }
+    }
+
     public void Stop()
     {
+        StopRecording();
+
         lock (_syncRoot)
         {
             try
@@ -136,6 +336,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             _width = 0;
             _height = 0;
             _stride = 0;
+            _framesPerSecond = 30d;
             _previousDenoiseFrame = null;
 
             ReleaseComObject(_nullRendererFilter);
@@ -178,6 +379,10 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             _height = Math.Abs(videoInfo.Bitmap.Height);
             _stride = _width * 4;
             _bottomUp = videoInfo.Bitmap.Height > 0;
+            if (videoInfo.AvgTimePerFrame > 0)
+            {
+                _framesPerSecond = 10_000_000d / videoInfo.AvgTimePerFrame;
+            }
         }
         finally
         {
@@ -228,7 +433,70 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             _previousDenoiseFrame = null;
         }
 
-        FrameAvailable?.Invoke(this, new CameraFrame(bytes, width, height, stride));
+        var frame = new CameraFrame(bytes, width, height, stride);
+
+        lock (_recordingLock)
+        {
+            try
+            {
+                if (_recorder is not null)
+                {
+                    EnsureRecorderMatchesFrame(frame);
+                    if (_recorder?.WriteFrame(frame.BgraBytes) == false)
+                    {
+                        LastStatus = "DirectShow video frame write skipped: frame did not match the active recorder format.";
+                        StatusChanged?.Invoke(this, LastStatus);
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(_recordingPath))
+                {
+                    _recordingMediaFoundationScope ??= MediaFoundationCameraDeviceFactory.Startup();
+                    _recorder = new MediaFoundationVideoRecorder(
+                        _recordingPath,
+                        frame.Width,
+                        frame.Height,
+                        _framesPerSecond,
+                        d3dManager: null);
+                    _recorder.WriteFrame(frame.BgraBytes);
+                }
+
+                if (_recordingStopRequested && _recorder is not null)
+                {
+                    CompleteRecordingOnCaptureThread();
+                }
+            }
+            catch (Exception ex)
+            {
+                LastStatus = $"DirectShow video frame write failed: {ex.Message}";
+                StatusChanged?.Invoke(this, LastStatus);
+                _recorder?.Dispose();
+                _recorder = null;
+                _recordingPath = null;
+            }
+        }
+
+        FrameAvailable?.Invoke(this, frame);
+    }
+
+    private void EnsureRecorderMatchesFrame(CameraFrame frame)
+    {
+        if (_recorder is null
+            || string.IsNullOrWhiteSpace(_recordingPath)
+            || (_recorder.Width == frame.Width && _recorder.Height == frame.Height))
+        {
+            return;
+        }
+
+        _recorder.Dispose();
+        _recordingMediaFoundationScope ??= MediaFoundationCameraDeviceFactory.Startup();
+        _recorder = new MediaFoundationVideoRecorder(
+            _recordingPath,
+            frame.Width,
+            frame.Height,
+            _framesPerSecond,
+            d3dManager: null);
+        LastStatus = $"DirectShow recorder matched live frame size: {frame.Width}x{frame.Height}.";
+        StatusChanged?.Invoke(this, LastStatus);
     }
 
     private void ApplyTemporalDenoise(byte[] current)

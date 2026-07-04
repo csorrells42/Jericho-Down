@@ -14,6 +14,11 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     private byte[]? _previousDenoiseFrame;
     private MediaFoundationVideoRecorder? _recorder;
     private string? _recordingPath;
+    private bool _recordingStopRequested;
+    private ManualResetEventSlim? _recordingStopCompleted;
+    private string? _completedRecordingPath;
+    private int _completedRecordingSamples;
+    private string? _completedRecordingDiagnostics;
     private int _activeWidth = 1280;
     private int _activeHeight = 720;
     private double _activeFramesPerSecond = 30d;
@@ -27,13 +32,15 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public double DenoiseStrength { get; set; } = 2d;
 
+    public string? LastRecordingDiagnostics { get; private set; }
+
     public bool IsRecording
     {
         get
         {
             lock (_recordingLock)
             {
-                return _recorder is not null;
+                return _recorder is not null || !string.IsNullOrWhiteSpace(_recordingPath);
             }
         }
     }
@@ -86,7 +93,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     {
         lock (_recordingLock)
         {
-            if (_recorder is not null)
+            if (_recorder is not null || !string.IsNullOrWhiteSpace(_recordingPath))
             {
                 return true;
             }
@@ -96,8 +103,15 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             var fps = _activeFramesPerSecond > 0 ? _activeFramesPerSecond : mode?.FramesPerSecond ?? 30d;
             try
             {
-                _recorder = new MediaFoundationVideoRecorder(path, width, height, fps, d3dManager: null);
+                _activeWidth = width;
+                _activeHeight = height;
+                _activeFramesPerSecond = fps;
                 _recordingPath = path;
+                _recordingStopRequested = false;
+                _completedRecordingPath = null;
+                _completedRecordingSamples = 0;
+                _completedRecordingDiagnostics = null;
+                LastRecordingDiagnostics = null;
                 StatusChanged?.Invoke(this, $"Recording video with Media Foundation: {System.IO.Path.GetFileName(path)}");
                 return true;
             }
@@ -130,20 +144,102 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public string? StopRecording()
     {
+        ManualResetEventSlim? stopCompleted;
         lock (_recordingLock)
         {
             var recorder = _recorder;
             var path = _recordingPath;
-            _recorder = null;
-            _recordingPath = null;
+            if (recorder is null && string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            if (recorder is null)
+            {
+                _recordingPath = null;
+                _recordingStopRequested = false;
+                LastRecordingDiagnostics = "Media Foundation recorder: offered 0, wrote 0, skipped 0; no frames reached the recorder.";
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+                return null;
+            }
+
+            _recordingStopRequested = true;
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = null;
+            _recordingStopCompleted?.Dispose();
+            _recordingStopCompleted = new ManualResetEventSlim(false);
+            stopCompleted = _recordingStopCompleted;
+        }
+
+        if (!stopCompleted.Wait(TimeSpan.FromSeconds(3)))
+        {
+            lock (_recordingLock)
+            {
+                LastRecordingDiagnostics = "Media Foundation recorder: stop timed out waiting for the capture thread to finalize the file.";
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+                return null;
+            }
+        }
+
+        lock (_recordingLock)
+        {
+            LastRecordingDiagnostics = _completedRecordingDiagnostics;
+            return _completedRecordingSamples > 0 ? _completedRecordingPath : null;
+        }
+    }
+
+    private void CompleteRecordingOnCaptureThread()
+    {
+        var recorder = _recorder;
+        var path = _recordingPath;
+        _recorder = null;
+        _recordingPath = null;
+        _recordingStopRequested = false;
+
+        if (recorder is null)
+        {
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = "Media Foundation recorder: offered 0, wrote 0, skipped 0; no active writer was available.";
+            _recordingStopCompleted?.Set();
+            return;
+        }
+
+        try
+        {
+            var samplesWritten = recorder?.SamplesWritten ?? 0;
+            var framesOffered = recorder?.FramesOffered ?? 0;
+            var framesSkipped = recorder?.FramesSkipped ?? 0;
+            var lastSkipReason = recorder?.LastSkipReason;
             recorder?.Stop();
-            recorder?.Dispose();
-            return path;
+            _completedRecordingPath = path;
+            _completedRecordingSamples = samplesWritten;
+            _completedRecordingDiagnostics = $"Media Foundation recorder: offered {framesOffered}, wrote {samplesWritten}, skipped {framesSkipped}"
+                + (string.IsNullOrWhiteSpace(lastSkipReason) ? "." : $"; last skip: {lastSkipReason}.");
+        }
+        catch (Exception ex)
+        {
+            _completedRecordingPath = null;
+            _completedRecordingSamples = 0;
+            _completedRecordingDiagnostics = $"Media Foundation recorder finalization failed: {ex.Message}";
+        }
+        finally
+        {
+            recorder.Dispose();
+            LastRecordingDiagnostics = _completedRecordingDiagnostics;
+            if (!string.IsNullOrWhiteSpace(LastRecordingDiagnostics))
+            {
+                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+            }
+
+            _recordingStopCompleted?.Set();
         }
     }
 
     public void Stop()
     {
+        StopRecording();
         var captureTask = _captureTask;
         _cancellation?.Cancel();
 
@@ -158,7 +254,6 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         _captureTask = null;
         _cancellation?.Dispose();
         _cancellation = null;
-        StopRecording();
         if (captureTask is null || captureTask.IsCompleted)
         {
             CleanupPreviewObjects();
@@ -241,13 +336,33 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                             _previousDenoiseFrame = null;
                         }
 
-                        FrameAvailable?.Invoke(this, frame);
-
                         lock (_recordingLock)
                         {
                             try
                             {
-                                _recorder?.WriteFrame(frame.BgraBytes);
+                                if (_recorder is not null)
+                                {
+                                    EnsureRecorderMatchesFrame(frame);
+                                    if (_recorder?.WriteFrame(frame.BgraBytes) == false)
+                                    {
+                                        StatusChanged?.Invoke(this, "Video frame write skipped: frame did not match the active recorder format.");
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(_recordingPath))
+                                {
+                                    _recorder = new MediaFoundationVideoRecorder(
+                                        _recordingPath,
+                                        frame.Width,
+                                        frame.Height,
+                                        _activeFramesPerSecond,
+                                        d3dManager: null);
+                                    _recorder.WriteFrame(frame.BgraBytes);
+                                }
+
+                                if (_recordingStopRequested && _recorder is not null)
+                                {
+                                    CompleteRecordingOnCaptureThread();
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -257,6 +372,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                                 _recordingPath = null;
                             }
                         }
+
+                        FrameAvailable?.Invoke(this, frame);
                     }
                 }
                 finally
@@ -275,6 +392,14 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
         finally
         {
+            lock (_recordingLock)
+            {
+                if (_recorder is not null)
+                {
+                    CompleteRecordingOnCaptureThread();
+                }
+            }
+
             MediaFoundationInterop.ReleaseComObject(reader);
             MediaFoundationInterop.ReleaseComObject(mediaSource);
             _direct3D12?.Dispose();
@@ -297,6 +422,25 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             _direct3D12 = null;
             startup.TrySetResult("Capture loop ended before startup completed.");
         }
+    }
+
+    private void EnsureRecorderMatchesFrame(CameraFrame frame)
+    {
+        if (_recorder is null
+            || string.IsNullOrWhiteSpace(_recordingPath)
+            || (_recorder.Width == frame.Width && _recorder.Height == frame.Height))
+        {
+            return;
+        }
+
+        _recorder.Dispose();
+        _recorder = new MediaFoundationVideoRecorder(
+            _recordingPath,
+            frame.Width,
+            frame.Height,
+            _activeFramesPerSecond,
+            d3dManager: null);
+        StatusChanged?.Invoke(this, $"Video recorder matched live frame size: {frame.Width}x{frame.Height}.");
     }
 
     private static bool TryReadFrame(IMFSample sample, int width, int height, out CameraFrame frame)
