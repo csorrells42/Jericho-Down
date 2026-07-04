@@ -30,14 +30,27 @@ internal static class MediaFoundationCameraDeviceFactory
         IMFDXGIDeviceManager? d3dManager,
         out object mediaSource)
     {
+        return CreateSourceReader(
+            new CameraDevice(-1, cameraName, string.Empty),
+            mode,
+            d3dManager,
+            out mediaSource);
+    }
+
+    public static IMFSourceReader CreateSourceReader(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        IMFDXGIDeviceManager? d3dManager,
+        out object mediaSource)
+    {
         mediaSource = null!;
-        var activate = FindCameraActivate(cameraName)
-            ?? throw new InvalidOperationException($"Media Foundation could not find camera: {cameraName}");
+        var activate = FindCameraActivate(camera)
+            ?? throw new InvalidOperationException($"Media Foundation could not find camera: {camera.Name}");
 
         try
         {
             var sourceReaderId = typeof(IMFSourceReader).GUID;
-            mediaSource = CreateMediaSource(activate, cameraName);
+            mediaSource = CreateMediaSource(activate, camera.Name);
             var attributeResult = MediaFoundationInterop.MFCreateAttributes(out var attributes, 4);
             if (MediaFoundationInterop.Failed(attributeResult))
             {
@@ -115,13 +128,32 @@ internal static class MediaFoundationCameraDeviceFactory
         Guid? preferredSubtype = null,
         bool configureMediaType = true)
     {
+        return CreateTextureSourceReader(
+            new CameraDevice(-1, cameraName, string.Empty),
+            mode,
+            d3dManager,
+            out mediaSource,
+            enableAdvancedVideoProcessing,
+            preferredSubtype,
+            configureMediaType);
+    }
+
+    public static IMFSourceReader CreateTextureSourceReader(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        IMFDXGIDeviceManager d3dManager,
+        out object mediaSource,
+        bool enableAdvancedVideoProcessing = true,
+        Guid? preferredSubtype = null,
+        bool configureMediaType = true)
+    {
         mediaSource = null!;
-        var activate = FindCameraActivate(cameraName)
-            ?? throw new InvalidOperationException($"Media Foundation could not find camera: {cameraName}");
+        var activate = FindCameraActivate(camera)
+            ?? throw new InvalidOperationException($"Media Foundation could not find camera: {camera.Name}");
 
         try
         {
-            mediaSource = CreateMediaSource(activate, cameraName);
+            mediaSource = CreateMediaSource(activate, camera.Name);
             MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFCreateAttributes(out var attributes, 5));
             try
             {
@@ -250,6 +282,11 @@ internal static class MediaFoundationCameraDeviceFactory
 
     public static IMFActivate? FindCameraActivate(string cameraName)
     {
+        return FindCameraActivate(new CameraDevice(-1, cameraName, string.Empty));
+    }
+
+    public static IMFActivate? FindCameraActivate(CameraDevice camera)
+    {
         var candidates = EnumerateVideoActivates();
         IMFActivate? fallback = null;
 
@@ -262,21 +299,28 @@ internal static class MediaFoundationCameraDeviceFactory
                 activate,
                 MediaFoundationGuids.MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK);
 
-            if (string.Equals(friendlyName, cameraName, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(camera.DevicePath)
+                && string.Equals(symbolicLink, camera.DevicePath, StringComparison.OrdinalIgnoreCase))
+            {
+                ReleaseAllExcept(candidates, activate);
+                return activate;
+            }
+
+            if (string.Equals(friendlyName, camera.Name, StringComparison.OrdinalIgnoreCase))
             {
                 ReleaseAllExcept(candidates, activate);
                 return activate;
             }
 
             if (fallback is null
-                && friendlyName?.Contains(cameraName, StringComparison.OrdinalIgnoreCase) == true)
+                && friendlyName?.Contains(camera.Name, StringComparison.OrdinalIgnoreCase) == true)
             {
                 fallback = activate;
                 continue;
             }
 
             if (fallback is null
-                && symbolicLink?.Contains(cameraName, StringComparison.OrdinalIgnoreCase) == true)
+                && symbolicLink?.Contains(camera.Name, StringComparison.OrdinalIgnoreCase) == true)
             {
                 fallback = activate;
                 continue;

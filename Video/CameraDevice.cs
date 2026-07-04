@@ -2,11 +2,12 @@
 
 public sealed class CameraDevice
 {
-    public CameraDevice(int deviceNumber, string name, string devicePath)
+    public CameraDevice(int deviceNumber, string name, string devicePath, string source = "")
     {
         DeviceNumber = deviceNumber;
         Name = name;
         DevicePath = devicePath;
+        Source = source;
     }
 
     public int DeviceNumber { get; }
@@ -15,6 +16,13 @@ public sealed class CameraDevice
 
     public string DevicePath { get; }
 
-    public override string ToString() => Name;
+    public string Source { get; }
+
+    public override string ToString()
+    {
+        return string.IsNullOrWhiteSpace(Source)
+            ? Name
+            : $"{Name} ({Source})";
+    }
 }
 

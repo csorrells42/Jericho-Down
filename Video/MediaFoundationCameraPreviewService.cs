@@ -38,7 +38,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
     }
 
-    public bool Start(string cameraName, CameraVideoMode? mode)
+    public bool Start(CameraDevice camera, CameraVideoMode? mode)
     {
         Stop();
 
@@ -50,15 +50,28 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
         try
         {
-            _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
-            _reader = CreateSourceReaderWithAccelerationFallback(
-                cameraName,
-                mode,
-                out _mediaSource);
-            UpdateActiveFormat(_reader, mode);
             _cancellation = new CancellationTokenSource();
-            _captureTask = Task.Run(() => CaptureLoopAsync(_reader, _activeWidth, _activeHeight, _cancellation.Token));
-            StatusChanged?.Invoke(this, $"Starting Media Foundation preview: {cameraName}");
+            var startup = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _captureTask = Task.Run(() => CaptureLoop(
+                camera,
+                mode,
+                _cancellation.Token,
+                startup));
+            if (!startup.Task.Wait(TimeSpan.FromSeconds(5)))
+            {
+                Stop();
+                StatusChanged?.Invoke(this, $"Could not start Media Foundation preview: timed out opening {camera.Name}");
+                return false;
+            }
+
+            var startupError = startup.Task.Result;
+            if (!string.IsNullOrWhiteSpace(startupError))
+            {
+                Stop();
+                StatusChanged?.Invoke(this, $"Could not start Media Foundation preview: {startupError}");
+                return false;
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -131,11 +144,12 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public void Stop()
     {
+        var captureTask = _captureTask;
         _cancellation?.Cancel();
 
         try
         {
-            _captureTask?.Wait(TimeSpan.FromSeconds(2));
+            captureTask?.Wait(TimeSpan.FromSeconds(3));
         }
         catch
         {
@@ -145,7 +159,14 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         _cancellation?.Dispose();
         _cancellation = null;
         StopRecording();
-        CleanupPreviewObjects();
+        if (captureTask is null || captureTask.IsCompleted)
+        {
+            CleanupPreviewObjects();
+        }
+        else
+        {
+            ResetPreviewState();
+        }
     }
 
     public void Dispose()
@@ -153,10 +174,31 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         Stop();
     }
 
-    private async Task CaptureLoopAsync(IMFSourceReader reader, int width, int height, CancellationToken cancellationToken)
+    private void CaptureLoop(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        CancellationToken cancellationToken,
+        TaskCompletionSource<string?> startup)
     {
+        IMFSourceReader? reader = null;
+        object? mediaSource = null;
+        MediaFoundationCameraDeviceFactory.MediaFoundationScope? mediaFoundationScope = null;
         try
         {
+            mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
+            reader = CreateSourceReaderWithAccelerationFallback(
+                camera,
+                mode,
+                out mediaSource);
+            _mediaFoundationScope = mediaFoundationScope;
+            _reader = reader;
+            _mediaSource = mediaSource;
+            UpdateActiveFormat(reader, mode);
+            var width = _activeWidth;
+            var height = _activeHeight;
+            StatusChanged?.Invoke(this, $"Starting Media Foundation preview: {camera.Name}");
+            startup.TrySetResult(null);
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 var result = reader.ReadSample(
@@ -170,7 +212,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                 if (MediaFoundationInterop.Failed(result))
                 {
                     StatusChanged?.Invoke(this, $"Camera read failed: 0x{result:X8}");
-                    await Task.Delay(50, cancellationToken);
+                    Thread.Sleep(50);
                     continue;
                 }
 
@@ -228,7 +270,32 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
         catch (Exception ex)
         {
+            startup.TrySetResult(ex.Message);
             StatusChanged?.Invoke(this, ex.Message);
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(reader);
+            MediaFoundationInterop.ReleaseComObject(mediaSource);
+            _direct3D12?.Dispose();
+            mediaFoundationScope?.Dispose();
+            if (ReferenceEquals(_reader, reader))
+            {
+                _reader = null;
+            }
+
+            if (ReferenceEquals(_mediaSource, mediaSource))
+            {
+                _mediaSource = null;
+            }
+
+            if (ReferenceEquals(_mediaFoundationScope, mediaFoundationScope))
+            {
+                _mediaFoundationScope = null;
+            }
+
+            _direct3D12 = null;
+            startup.TrySetResult("Capture loop ended before startup completed.");
         }
     }
 
@@ -300,10 +367,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     private void CleanupPreviewObjects()
     {
-        _previousDenoiseFrame = null;
-        _activeWidth = 1280;
-        _activeHeight = 720;
-        _activeFramesPerSecond = 30d;
+        ResetPreviewState();
         MediaFoundationInterop.ReleaseComObject(_reader);
         MediaFoundationInterop.ReleaseComObject(_mediaSource);
         _reader = null;
@@ -312,6 +376,14 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         _direct3D12 = null;
         _mediaFoundationScope?.Dispose();
         _mediaFoundationScope = null;
+    }
+
+    private void ResetPreviewState()
+    {
+        _previousDenoiseFrame = null;
+        _activeWidth = 1280;
+        _activeHeight = 720;
+        _activeFramesPerSecond = 30d;
     }
 
     private void UpdateActiveFormat(IMFSourceReader reader, CameraVideoMode? requestedMode)
@@ -347,7 +419,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     }
 
     private IMFSourceReader CreateSourceReaderWithAccelerationFallback(
-        string cameraName,
+        CameraDevice camera,
         CameraVideoMode? mode,
         out object mediaSource)
     {
@@ -359,7 +431,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                 _direct3D12 = Direct3D12DeviceManager.Create();
                 StatusChanged?.Invoke(this, $"Direct3D 12 camera acceleration ready ({_direct3D12.ModeName})");
                 var reader = MediaFoundationCameraDeviceFactory.CreateSourceReader(
-                    cameraName,
+                    camera,
                     mode,
                     _direct3D12.Manager,
                     out acceleratedMediaSource);
@@ -376,7 +448,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
 
         return MediaFoundationCameraDeviceFactory.CreateSourceReader(
-            cameraName,
+            camera,
             mode,
             d3dManager: null,
             out mediaSource);
@@ -385,9 +457,10 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     private static bool ShouldTryDirect3D12Preview()
     {
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_CAMERA_D3D12_PREVIEW");
-        return !string.Equals(value, "0", StringComparison.Ordinal)
-            && !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(value, "no", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(value, "1", StringComparison.Ordinal)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "force", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -6,23 +6,23 @@ public sealed class MediaFoundationCameraModeService
 
     public bool IsAvailable => OperatingSystem.IsWindows();
 
-    public Task<IReadOnlyList<CameraVideoMode>> GetModesAsync(string cameraName, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<CameraVideoMode>> GetModesAsync(CameraDevice camera, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             using var _ = MediaFoundationCameraDeviceFactory.Startup();
-            var activate = MediaFoundationCameraDeviceFactory.FindCameraActivate(cameraName);
+            var activate = MediaFoundationCameraDeviceFactory.FindCameraActivate(camera);
             if (activate is null)
             {
-                return AddFallbackModes(cameraName, [CameraVideoMode.Auto]);
+                return AddFallbackModes(camera.Name, [CameraVideoMode.Auto]);
             }
 
             object? mediaSource = null;
             IMFSourceReader? reader = null;
             try
             {
-                mediaSource = MediaFoundationCameraDeviceFactory.CreateMediaSource(activate, cameraName);
+                mediaSource = MediaFoundationCameraDeviceFactory.CreateMediaSource(activate, camera.Name);
 
                 MediaFoundationInterop.ThrowIfFailed(MediaFoundationInterop.MFCreateAttributes(out var attributes, 1));
                 try
@@ -71,11 +71,11 @@ public sealed class MediaFoundationCameraModeService
                     }
                 }
 
-                return SortModes(AddFallbackModes(cameraName, modes));
+                return SortModes(AddFallbackModes(camera.Name, modes));
             }
             catch
             {
-                return SortModes(AddFallbackModes(cameraName, [CameraVideoMode.Auto]));
+                return SortModes(AddFallbackModes(camera.Name, [CameraVideoMode.Auto]));
             }
             finally
             {

@@ -41,6 +41,29 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     public string PreviewPathDescription => _previewPathDescription;
 
+    public void RenderBgraFrame(CameraFrame frame, long frameNumber)
+    {
+        if (_renderer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _renderer.RenderBgraFrame(
+                frame.BgraBytes,
+                frame.Width,
+                frame.Height,
+                frame.Stride,
+                frameNumber);
+            ReportPreviewPath("DX12 BGRA upload preview");
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
+        }
+    }
+
     public void RenderProofFrame(TextureNativeFrameInfo frame)
     {
         if (_renderer is null)

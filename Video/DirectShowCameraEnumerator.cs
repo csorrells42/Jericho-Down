@@ -38,7 +38,7 @@ public static class DirectShowCameraEnumerator
                 {
                     var name = ReadProperty(moniker, "FriendlyName") ?? "Camera";
                     var path = ReadProperty(moniker, "DevicePath") ?? GetDisplayName(moniker) ?? name;
-                    devices.Add(new CameraDevice(deviceNumber, name, path));
+                    devices.Add(new CameraDevice(deviceNumber, name, path, "DirectShow"));
                     deviceNumber++;
                 }
                 finally

@@ -27,7 +27,7 @@ public static class MediaFoundationCameraEnumerator
                 var key = string.IsNullOrWhiteSpace(symbolicLink) ? name : symbolicLink;
                 if (seen.Add(key))
                 {
-                    devices.Add(new CameraDevice(devices.Count, name, symbolicLink ?? string.Empty));
+                    devices.Add(new CameraDevice(devices.Count, name, symbolicLink ?? string.Empty, "Media Foundation"));
                 }
             }
             finally

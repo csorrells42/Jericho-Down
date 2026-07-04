@@ -346,6 +346,13 @@ public static class TextureNativeCameraRecorder
         string cameraName,
         CameraVideoMode? mode)
     {
+        return OpenTextureSourceReader(new CameraDevice(-1, cameraName, string.Empty), mode);
+    }
+
+    internal static (ITextureNativeDeviceManager DeviceManager, IMFSourceReader Reader, object MediaSource) OpenTextureSourceReader(
+        CameraDevice camera,
+        CameraVideoMode? mode)
+    {
         Exception? direct3D12Error = null;
         ITextureNativeDeviceManager? deviceManager = null;
         object? mediaSource = null;
@@ -353,13 +360,14 @@ public static class TextureNativeCameraRecorder
         {
             deviceManager = Direct3D12DeviceManager.Create();
             var reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
-                cameraName,
+                camera,
                 mode,
                 deviceManager.Manager,
                 out mediaSource,
                 enableAdvancedVideoProcessing: true,
                 preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
                 configureMediaType: true);
+            EnsureTextureReaderProducesSample(reader, "D3D12");
             return (deviceManager, reader, mediaSource);
         }
         catch (Exception ex)
@@ -375,13 +383,14 @@ public static class TextureNativeCameraRecorder
         {
             deviceManager = Direct3D11DeviceManager.Create();
             var reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
-                cameraName,
+                camera,
                 mode,
                 deviceManager.Manager,
                 out mediaSource,
                 enableAdvancedVideoProcessing: true,
                 preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
                 configureMediaType: true);
+            EnsureTextureReaderProducesSample(reader, "D3D11 texture bridge");
             return (deviceManager, reader, mediaSource);
         }
         catch (Exception ex)
@@ -392,6 +401,51 @@ public static class TextureNativeCameraRecorder
                 $"Texture-native camera reader unavailable. D3D12 path: {direct3D12Error?.Message ?? "not attempted"} D3D11 bridge: {ex.Message}",
                 ex);
         }
+    }
+
+    private static void EnsureTextureReaderProducesSample(IMFSourceReader reader, string pathName)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+        Exception? lastError = null;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var result = reader.ReadSample(
+                MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                0,
+                out _,
+                out var streamFlags,
+                out _,
+                out var sampleObject);
+
+            try
+            {
+                if (MediaFoundationInterop.Failed(result))
+                {
+                    lastError = new InvalidOperationException($"{pathName} texture reader warmup failed: 0x{result:X8}");
+                    Thread.Sleep(25);
+                    continue;
+                }
+
+                if ((streamFlags & MediaFoundationInterop.MF_SOURCE_READERF_ENDOFSTREAM) != 0)
+                {
+                    throw new InvalidOperationException($"{pathName} texture reader ended during warmup.");
+                }
+
+                if (sampleObject is IMFSample)
+                {
+                    return;
+                }
+            }
+            finally
+            {
+                MediaFoundationInterop.ReleaseComObject(sampleObject);
+            }
+
+            Thread.Sleep(25);
+        }
+
+        throw lastError ?? new InvalidOperationException($"{pathName} texture reader produced no samples during warmup.");
     }
 
     private static TextureNativeRecordingResult CreateResult(
@@ -488,10 +542,10 @@ public sealed class TextureNativeCameraStream : IDisposable
     private long _framesRead;
     private string _status = "Texture-native camera stream started.";
 
-    public TextureNativeCameraStream(string cameraName, CameraVideoMode? mode)
+    public TextureNativeCameraStream(CameraDevice camera, CameraVideoMode? mode)
     {
         _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
-        (_deviceManager, _reader, _mediaSource) = TextureNativeCameraRecorder.OpenTextureSourceReader(cameraName, mode);
+        (_deviceManager, _reader, _mediaSource) = TextureNativeCameraRecorder.OpenTextureSourceReader(camera, mode);
         (_width, _height, _fps, _subtype) = ReadCurrentFormat(_reader, mode);
         _sampleDuration = Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / Math.Clamp(_fps, 1d, 120d)));
         _captureTask = Task.Run(() => CaptureLoop(_cancellation.Token));
