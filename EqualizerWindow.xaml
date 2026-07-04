@@ -1080,6 +1080,12 @@
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Uses the processed texture bridge for shared GPU camera recordings so saved video can follow the denoise setting. Leave off for the fastest raw camera sample path." />
                     </CheckBox.ToolTip>
                   </CheckBox>
+                  <TextBlock Text="Denoise mode" Foreground="#B8C7D9" Margin="0,0,0,2" />
+                  <ComboBox x:Name="VideoDenoiseModeComboBox" SelectedIndex="1" SelectionChanged="VideoDenoiseModeChanged" Margin="0,0,0,8">
+                    <ComboBoxItem Content="Light" />
+                    <ComboBoxItem Content="Balanced" />
+                    <ComboBoxItem Content="Studio" />
+                  </ComboBox>
                   <Grid Margin="0,0,0,16">
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
