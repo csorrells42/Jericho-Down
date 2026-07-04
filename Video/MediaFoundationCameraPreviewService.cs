@@ -32,6 +32,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public double DenoiseStrength { get; set; } = 2d;
 
+    public VideoFrameColorSettings ColorSettings { get; set; } = VideoFrameColorSettings.Off;
+
     public string? LastRecordingDiagnostics { get; private set; }
 
     public int RecordingFramesOffered
@@ -368,6 +370,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                         {
                             _previousDenoiseFrame = null;
                         }
+
+                        VideoFrameColorProcessor.Apply(frame.BgraBytes, ColorSettings);
 
                         lock (_recordingLock)
                         {

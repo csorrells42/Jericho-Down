@@ -233,6 +233,7 @@ public partial class EqualizerWindow : Window
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = 2d;
     private bool _processedTextureRecordingEnabled;
+    private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
     private TextureNativeCameraStream? _textureNativeCameraStream;
@@ -415,6 +416,8 @@ public partial class EqualizerWindow : Window
         {
             ProcessedTextureRecordingCheckBox.IsChecked = _processedTextureRecordingEnabled;
         }
+
+        UpdateVideoColorPolishSettings();
 
         ApplyDarkTitleBar();
         InputChannelComboBox.ItemsSource = new[]
@@ -1455,6 +1458,16 @@ public partial class EqualizerWindow : Window
         UpdateProcessedTextureRecordingStatus();
     }
 
+    private void VideoColorPolishChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateVideoColorPolishSettings();
+    }
+
+    private void VideoColorPolishChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        UpdateVideoColorPolishSettings();
+    }
+
     private void CameraModeSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_isLoadingCameraModes)
@@ -1557,6 +1570,7 @@ public partial class EqualizerWindow : Window
             _cameraPreviewService.Stop();
             _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
             _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+            _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
             CameraPreviewStatusText.Text = $"Starting DirectShow preview for {camera.Name}";
             if (_directShowPreviewService.Start(camera, mode))
             {
@@ -1580,6 +1594,7 @@ public partial class EqualizerWindow : Window
 
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
         if (_cameraPreviewService.Start(camera, mode))
         {
             CameraPreviewStatusText.Text = FormatCameraStatus("Starting", camera, mode);
@@ -2363,6 +2378,73 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void UpdateVideoColorPolishSettings()
+    {
+        if (VideoColorPolishCheckBox is null
+            || VideoExposureSlider is null
+            || VideoContrastSlider is null
+            || VideoSaturationSlider is null
+            || VideoWarmthSlider is null)
+        {
+            return;
+        }
+
+        _pendingVideoColorSettings = new VideoFrameColorSettings(
+            VideoColorPolishCheckBox.IsChecked == true,
+            Math.Clamp(VideoExposureSlider.Value, VideoExposureSlider.Minimum, VideoExposureSlider.Maximum),
+            Math.Clamp(VideoContrastSlider.Value, VideoContrastSlider.Minimum, VideoContrastSlider.Maximum),
+            Math.Clamp(VideoSaturationSlider.Value, VideoSaturationSlider.Minimum, VideoSaturationSlider.Maximum),
+            Math.Clamp(VideoWarmthSlider.Value, VideoWarmthSlider.Minimum, VideoWarmthSlider.Maximum));
+        ApplyVideoColorSettingsToCpuServices();
+        UpdateVideoColorValueText();
+
+        if (!_isCameraEnabled || CameraControlStatusText is null)
+        {
+            return;
+        }
+
+        if (_textureNativeCameraStream is not null)
+        {
+            CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
+                ? "Color polish is ready for CPU preview/recording. The current DX12 texture preview remains raw."
+                : "Color polish is neutral.";
+            return;
+        }
+
+        CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
+            ? "Color polish is live on the CPU preview and CPU recording path."
+            : "Color polish is neutral on the CPU preview and recording path.";
+    }
+
+    private void ApplyVideoColorSettingsToCpuServices()
+    {
+        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
+        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
+    }
+
+    private void UpdateVideoColorValueText()
+    {
+        if (VideoExposureValueText is not null)
+        {
+            VideoExposureValueText.Text = _pendingVideoColorSettings.Exposure.ToString("+0;-0;0");
+        }
+
+        if (VideoContrastValueText is not null)
+        {
+            VideoContrastValueText.Text = _pendingVideoColorSettings.Contrast.ToString("+0;-0;0");
+        }
+
+        if (VideoSaturationValueText is not null)
+        {
+            VideoSaturationValueText.Text = _pendingVideoColorSettings.Saturation.ToString("+0;-0;0");
+        }
+
+        if (VideoWarmthValueText is not null)
+        {
+            VideoWarmthValueText.Text = _pendingVideoColorSettings.Warmth.ToString("+0;-0;0");
+        }
+    }
+
     private void UpdateProcessedTextureRecordingStatus()
     {
         if (CameraControlStatusText is null)
@@ -2596,10 +2678,16 @@ public partial class EqualizerWindow : Window
                 previewRenderPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 preview path unavailable",
                 previewDenoiseApplied = _pendingVideoDenoiseEnabled,
                 previewDenoiseStrength = _pendingVideoDenoiseStrength,
+                previewColorPolishApplied = false,
+                previewColorPolish = CreateVideoColorMetadata(),
                 recordingPipeline = textureResult.RecordingPipeline,
                 recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
                 recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
-                note = textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                recordingColorPolishApplied = false,
+                recordingMatchesPreviewColor = !_pendingVideoColorSettings.HasVisibleAdjustments,
+                note = _pendingVideoColorSettings.HasVisibleAdjustments
+                    ? "Color polish is CPU-only in this build; the saved texture-native video is raw color output."
+                    : textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
                     ? "Texture-native recording matched the preview denoise setting through the processed bridge."
                     : _pendingVideoDenoiseEnabled
                         ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
@@ -2613,12 +2701,32 @@ public partial class EqualizerWindow : Window
             previewPipeline = isDirectShow ? "DirectShow RGB32 CPU preview" : "Media Foundation CPU preview",
             previewDenoiseApplied = _pendingVideoDenoiseEnabled,
             previewDenoiseStrength = _pendingVideoDenoiseStrength,
+            previewColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
+            previewColorPolish = CreateVideoColorMetadata(),
             recordingPipeline = isDirectShow ? "DirectShow CPU frames to Media Foundation MP4 writer" : "Media Foundation CPU frame writer",
             recordingDenoiseApplied = _pendingVideoDenoiseEnabled,
             recordingMatchesPreviewDenoise = true,
-            note = _pendingVideoDenoiseEnabled
+            recordingColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
+            recordingMatchesPreviewColor = true,
+            note = _pendingVideoDenoiseEnabled && _pendingVideoColorSettings.HasVisibleAdjustments
+                ? "CPU preview denoise and color polish were applied before recording frames were written."
+                : _pendingVideoDenoiseEnabled
                 ? "CPU preview denoise was applied before recording frames were written."
+                : _pendingVideoColorSettings.HasVisibleAdjustments
+                    ? "CPU preview color polish was applied before recording frames were written."
                 : "CPU preview denoise was off."
+        };
+    }
+
+    private object CreateVideoColorMetadata()
+    {
+        return new
+        {
+            _pendingVideoColorSettings.Enabled,
+            _pendingVideoColorSettings.Exposure,
+            _pendingVideoColorSettings.Contrast,
+            _pendingVideoColorSettings.Saturation,
+            _pendingVideoColorSettings.Warmth
         };
     }
 
@@ -3543,10 +3651,16 @@ public partial class EqualizerWindow : Window
 
         if (_textureNativeCameraStream is not null)
         {
-            if (_pendingVideoDenoiseEnabled && !_processedTextureRecordingEnabled)
+            if (_pendingVideoColorSettings.HasVisibleAdjustments)
             {
                 isGood = false;
-                return "preview-only denoise; raw texture recording";
+                return "color polish is CPU-only; DX12 texture path is raw";
+            }
+
+            if ((_pendingVideoDenoiseEnabled || _pendingVideoColorSettings.HasVisibleAdjustments) && !_processedTextureRecordingEnabled)
+            {
+                isGood = false;
+                return "preview effects armed; raw texture recording";
             }
 
             isGood = true;
@@ -3556,8 +3670,18 @@ public partial class EqualizerWindow : Window
         }
 
         isGood = true;
-        return _pendingVideoDenoiseEnabled
-            ? "preview = CPU recording with denoise"
+        if (_pendingVideoDenoiseEnabled && _pendingVideoColorSettings.HasVisibleAdjustments)
+        {
+            return "preview = CPU recording with denoise + color";
+        }
+
+        if (_pendingVideoDenoiseEnabled)
+        {
+            return "preview = CPU recording with denoise";
+        }
+
+        return _pendingVideoColorSettings.HasVisibleAdjustments
+            ? "preview = CPU recording with color"
             : "preview = CPU recording";
     }
 
@@ -3576,18 +3700,22 @@ public partial class EqualizerWindow : Window
         if (_textureNativeCameraStream is not null)
         {
             var previewPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 texture preview pending";
-            return $"{previewPath}; recording {(_processedTextureRecordingEnabled ? "processed bridge" : "raw texture-native")}";
+            var colorStatus = _pendingVideoColorSettings.HasVisibleAdjustments ? "; CPU color polish armed" : string.Empty;
+            return $"{previewPath}; recording {(_processedTextureRecordingEnabled ? "processed bridge" : "raw texture-native")}{colorStatus}";
         }
 
         if (IsSelectedDirectShowCamera())
         {
-            return "DirectShow RGB32 CPU preview; Media Foundation MP4 writer";
+            return _pendingVideoColorSettings.HasVisibleAdjustments
+                ? "DirectShow RGB32 CPU preview + color; Media Foundation MP4 writer"
+                : "DirectShow RGB32 CPU preview; Media Foundation MP4 writer";
         }
 
         var fallback = string.IsNullOrWhiteSpace(_lastTextureNativeCameraError)
             ? string.Empty
             : $" after DX12 shared stream fallback ({_lastTextureNativeCameraError})";
-        return $"Media Foundation CPU preview; Media Foundation MP4 writer{fallback}";
+        var color = _pendingVideoColorSettings.HasVisibleAdjustments ? " + color" : string.Empty;
+        return $"Media Foundation CPU preview{color}; Media Foundation MP4 writer{fallback}";
     }
 
     private TimeSpan GetRecordingElapsed()
@@ -5435,6 +5563,11 @@ public partial class EqualizerWindow : Window
             ModeInputFormat = mode.InputFormat,
             DenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
             DenoiseStrength = VideoDenoiseSlider?.Value ?? _pendingVideoDenoiseStrength,
+            ColorPolishEnabled = VideoColorPolishCheckBox?.IsChecked == true,
+            Exposure = VideoExposureSlider?.Value ?? _pendingVideoColorSettings.Exposure,
+            Contrast = VideoContrastSlider?.Value ?? _pendingVideoColorSettings.Contrast,
+            Saturation = VideoSaturationSlider?.Value ?? _pendingVideoColorSettings.Saturation,
+            Warmth = VideoWarmthSlider?.Value ?? _pendingVideoColorSettings.Warmth,
             ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true
         };
     }
@@ -5481,8 +5614,34 @@ public partial class EqualizerWindow : Window
             ProcessedTextureRecordingCheckBox.IsChecked = profile.ProcessedTextureRecordingEnabled;
         }
 
+        if (VideoColorPolishCheckBox is not null)
+        {
+            VideoColorPolishCheckBox.IsChecked = profile.ColorPolishEnabled;
+        }
+
+        if (VideoExposureSlider is not null && double.IsFinite(profile.Exposure))
+        {
+            VideoExposureSlider.Value = Math.Clamp(profile.Exposure, VideoExposureSlider.Minimum, VideoExposureSlider.Maximum);
+        }
+
+        if (VideoContrastSlider is not null && double.IsFinite(profile.Contrast))
+        {
+            VideoContrastSlider.Value = Math.Clamp(profile.Contrast, VideoContrastSlider.Minimum, VideoContrastSlider.Maximum);
+        }
+
+        if (VideoSaturationSlider is not null && double.IsFinite(profile.Saturation))
+        {
+            VideoSaturationSlider.Value = Math.Clamp(profile.Saturation, VideoSaturationSlider.Minimum, VideoSaturationSlider.Maximum);
+        }
+
+        if (VideoWarmthSlider is not null && double.IsFinite(profile.Warmth))
+        {
+            VideoWarmthSlider.Value = Math.Clamp(profile.Warmth, VideoWarmthSlider.Minimum, VideoWarmthSlider.Maximum);
+        }
+
         _isCameraEnabled = profile.CameraEnabled && _cameraAvailable;
         UpdateVideoDenoiseSettings(restartPreview: false);
+        UpdateVideoColorPolishSettings();
         UpdateProcessedTextureRecordingStatus();
         SelectPendingCameraProfileMode();
         UpdateCameraEnabledState();
@@ -5900,6 +6059,16 @@ public partial class EqualizerWindow : Window
         public bool DenoiseEnabled { get; set; }
 
         public double DenoiseStrength { get; set; } = 2d;
+
+        public bool ColorPolishEnabled { get; set; }
+
+        public double Exposure { get; set; }
+
+        public double Contrast { get; set; }
+
+        public double Saturation { get; set; }
+
+        public double Warmth { get; set; }
 
         public bool ProcessedTextureRecordingEnabled { get; set; }
     }

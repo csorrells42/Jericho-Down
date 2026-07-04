@@ -1013,6 +1013,63 @@
                     <Button Grid.Column="2" Style="{StaticResource ConsolePushButton}" Content="Delete" Click="DeleteCameraProfileClicked" Margin="4,0,0,0" Padding="6,4" />
                   </Grid>
                   <TextBlock x:Name="CameraProfileStatusText" Text="Choose a camera profile or save the current camera setup." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,12" />
+                  <CheckBox x:Name="VideoColorPolishCheckBox" Content="Color polish" Foreground="#F8FAFC" Margin="0,0,0,8" Checked="VideoColorPolishChanged" Unchecked="VideoColorPolishChanged">
+                    <CheckBox.ToolTip>
+                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Applies lightweight exposure, contrast, saturation, and warmth polish to CPU preview/recording frames." />
+                    </CheckBox.ToolTip>
+                  </CheckBox>
+                  <Grid Margin="0,0,0,8">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Exposure" Foreground="#B8C7D9" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VideoExposureValueText" Grid.Column="1" Text="0" Foreground="#F8FAFC" FontWeight="SemiBold" Margin="8,0,0,0" />
+                    <Slider x:Name="VideoExposureSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="-30" Maximum="30" Value="0" TickPlacement="BottomRight" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="VideoColorPolishChanged" />
+                  </Grid>
+                  <Grid Margin="0,0,0,8">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Contrast" Foreground="#B8C7D9" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VideoContrastValueText" Grid.Column="1" Text="0" Foreground="#F8FAFC" FontWeight="SemiBold" Margin="8,0,0,0" />
+                    <Slider x:Name="VideoContrastSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="-40" Maximum="40" Value="0" TickPlacement="BottomRight" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="VideoColorPolishChanged" />
+                  </Grid>
+                  <Grid Margin="0,0,0,8">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Saturation" Foreground="#B8C7D9" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VideoSaturationValueText" Grid.Column="1" Text="0" Foreground="#F8FAFC" FontWeight="SemiBold" Margin="8,0,0,0" />
+                    <Slider x:Name="VideoSaturationSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="-40" Maximum="40" Value="0" TickPlacement="BottomRight" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="VideoColorPolishChanged" />
+                  </Grid>
+                  <Grid Margin="0,0,0,12">
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Warmth" Foreground="#B8C7D9" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VideoWarmthValueText" Grid.Column="1" Text="0" Foreground="#F8FAFC" FontWeight="SemiBold" Margin="8,0,0,0" />
+                    <Slider x:Name="VideoWarmthSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="-40" Maximum="40" Value="0" TickPlacement="BottomRight" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="VideoColorPolishChanged" />
+                  </Grid>
                   <CheckBox x:Name="VideoDenoiseCheckBox" Content="Reduce video grain" Foreground="#F8FAFC" Margin="0,0,0,8" Checked="VideoDenoiseChanged" Unchecked="VideoDenoiseChanged">
                     <CheckBox.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Applies temporal/spatial denoise to the preview. It can smooth grain from low light, but too much can make motion look waxy." />

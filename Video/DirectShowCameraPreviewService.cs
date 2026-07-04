@@ -48,6 +48,8 @@ public sealed class DirectShowCameraPreviewService : IDisposable
 
     public double DenoiseStrength { get; set; } = 2d;
 
+    public VideoFrameColorSettings ColorSettings { get; set; } = VideoFrameColorSettings.Off;
+
     public string? LastStatus { get; private set; }
 
     public string? LastRecordingDiagnostics { get; private set; }
@@ -465,6 +467,8 @@ public sealed class DirectShowCameraPreviewService : IDisposable
         {
             _previousDenoiseFrame = null;
         }
+
+        VideoFrameColorProcessor.Apply(bytes, ColorSettings);
 
         var frame = new CameraFrame(bytes, width, height, stride);
 
