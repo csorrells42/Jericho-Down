@@ -52,6 +52,10 @@ public partial class EqualizerWindow : Window
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "PodcastWorkbench",
         "Presets");
+    private static readonly string CameraProfileFolder = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PodcastWorkbench",
+        "CameraProfiles");
     private static readonly JsonSerializerOptions UserPresetJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -215,6 +219,7 @@ public partial class EqualizerWindow : Window
     private string? _audioPlaybackPath;
     private bool _isStoppingAudioPlayback;
     private string? _activeRecordingSessionFolder;
+    private string? _lastSessionRecordingPath;
     private int _activeRecordingSetNumber;
     private DateTime _recordingStartedAt;
     private DateTime _recordingPausedAt;
@@ -254,6 +259,11 @@ public partial class EqualizerWindow : Window
     private bool _isLeftControlRailCollapsed;
     private bool _isRecordingSession;
     private bool _isRecordingPaused;
+    private string? _pendingCameraProfileModeLabel;
+    private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
+    private FileSystemWatcher? _sessionFolderWatcher;
+    private int _sessionFolderRefreshQueued;
+    private string? _sessionPlaybackPath;
     private bool _isMicAnalysisRunning;
     private bool _micAnalysisReadyToFinalize;
     private DateTime _micAnalysisStartedAt;
@@ -375,6 +385,8 @@ public partial class EqualizerWindow : Window
 
     public ObservableCollection<string> UserPresetNames { get; } = [];
 
+    public ObservableCollection<string> CameraProfileNames { get; } = [];
+
     public VoiceProcessorSettings Settings { get; } = new();
 
     private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -429,6 +441,8 @@ public partial class EqualizerWindow : Window
         OutputDeviceComboBox.SelectedIndex = 0;
         UserPresetComboBox.ItemsSource = UserPresetNames;
         LoadUserPresetList();
+        CameraProfileComboBox.ItemsSource = CameraProfileNames;
+        LoadCameraProfileList();
 
         var cameras = MergeCameraDevices(
             MediaFoundationCameraEnumerator.GetVideoInputDevices(),
@@ -454,9 +468,12 @@ public partial class EqualizerWindow : Window
         UpdateCameraEnabledState();
         UpdateOutputFolderText();
         RecordingFilesListBox.ItemsSource = _audioRecordingFiles;
+        SessionFilesListBox.ItemsSource = _sessionRecordings;
         UpdateAudioRecordingFolderText();
+        RefreshSessionRecordings();
         UpdateRecordingTransportControls();
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateSessionPlaybackTransportControls();
 
         LoadWarmRadioPreset();
         _audioDeviceFormatTimer.Start();
@@ -571,6 +588,7 @@ public partial class EqualizerWindow : Window
     {
         StartSelectedDevice();
         RefreshAudioRecordingFiles(_lastAudioRecordingPath);
+        RefreshSessionRecordings(_lastSessionRecordingPath);
     }
 
     private void WindowDeactivated(object? sender, EventArgs e)
@@ -593,7 +611,9 @@ public partial class EqualizerWindow : Window
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
         DisposeAudioRecordingFolderWatcher();
+        DisposeSessionFolderWatcher();
         StopAudioPlayback();
+        StopSessionPlayback();
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
         _directShowPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
@@ -934,6 +954,173 @@ public partial class EqualizerWindow : Window
         UpdateStandaloneAudioRecordingTransportControls();
     }
 
+    private void SessionFilesSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void SessionFileDoubleClicked(object sender, MouseButtonEventArgs e)
+    {
+        var selectedPath = GetSelectedSessionRecordingPath();
+        if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
+        {
+            StartSessionPlayback(selectedPath);
+        }
+    }
+
+    private void SessionFileRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ListBoxItem item)
+        {
+            item.IsSelected = true;
+            item.Focus();
+            e.Handled = false;
+        }
+    }
+
+    private void PlaySessionFileClicked(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_sessionPlaybackPath))
+        {
+            StopSessionPlayback();
+            RecordingStatusText.Text = "Session playback stopped.";
+            UpdateSessionPlaybackTransportControls();
+            return;
+        }
+
+        RefreshSessionRecordings(GetSelectedSessionRecordingPath());
+        var selectedPath = GetSelectedSessionRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            RecordingStatusText.Text = "Choose a saved session above.";
+            return;
+        }
+
+        StartSessionPlayback(selectedPath);
+    }
+
+    private void PlaySelectedSessionMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedPath = GetSelectedSessionRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            RecordingStatusText.Text = "Choose a saved session above.";
+            return;
+        }
+
+        StartSessionPlayback(selectedPath);
+    }
+
+    private void ShowSelectedSessionPropertiesMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedPath = GetSelectedSessionRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            RecordingStatusText.Text = "Choose a saved session above.";
+            return;
+        }
+
+        try
+        {
+            ShowWindowsFileProperties(selectedPath);
+            RecordingStatusText.Text = $"Opened properties for {System.IO.Path.GetFileName(selectedPath)}.";
+        }
+        catch (Exception ex)
+        {
+            RecordingStatusText.Text = $"Properties failed: {ex.Message}";
+        }
+    }
+
+    private void DeleteSelectedSessionMenuClicked(object sender, RoutedEventArgs e)
+    {
+        DeleteSelectedSessionRecording();
+    }
+
+    private void OpenSessionLocationClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(_outputFolder);
+            var selected = GetSelectedSessionRecording();
+            if (selected is not null && File.Exists(selected.Path))
+            {
+                Process.Start("explorer.exe", $"/select,\"{selected.Path}\"");
+                RecordingStatusText.Text = $"Opened location for {System.IO.Path.GetFileName(selected.Path)}.";
+                return;
+            }
+
+            Process.Start("explorer.exe", $"\"{_outputFolder}\"");
+            RecordingStatusText.Text = "Opened session output folder.";
+        }
+        catch (Exception ex)
+        {
+            RecordingStatusText.Text = $"Open location failed: {ex.Message}";
+        }
+
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void DeleteSelectedSessionRecording()
+    {
+        var selected = GetSelectedSessionRecording();
+        if (selected is null || !File.Exists(selected.Path))
+        {
+            RecordingStatusText.Text = "Choose a saved session to delete.";
+            return;
+        }
+
+        var deleteFolder = IsPodcastSessionFolder(selected.SessionFolder);
+        var targetName = deleteFolder
+            ? System.IO.Path.GetFileName(selected.SessionFolder)
+            : System.IO.Path.GetFileName(selected.Path);
+        var result = MessageBox.Show(
+            this,
+            deleteFolder
+                ? $"Delete this session folder?{Environment.NewLine}{targetName}"
+                : $"Delete this video file?{Environment.NewLine}{targetName}",
+            deleteFolder ? "Delete session" : "Delete video",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (string.Equals(_sessionPlaybackPath, selected.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                StopSessionPlayback();
+            }
+
+            if (deleteFolder)
+            {
+                Directory.Delete(selected.SessionFolder, recursive: true);
+            }
+            else
+            {
+                File.Delete(selected.Path);
+            }
+
+            if (string.Equals(_lastSessionRecordingPath, selected.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                _lastSessionRecordingPath = null;
+            }
+
+            RefreshSessionRecordings();
+            RecordingStatusText.Text = deleteFolder
+                ? $"Deleted session {targetName}."
+                : $"Deleted {targetName}.";
+        }
+        catch (Exception ex)
+        {
+            RecordingStatusText.Text = $"Delete failed: {ex.Message}";
+        }
+
+        UpdateSessionPlaybackTransportControls();
+    }
+
     private void StartRecordingClicked(object sender, RoutedEventArgs e)
     {
         if (_isRecordingSession)
@@ -969,6 +1156,7 @@ public partial class EqualizerWindow : Window
                 ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
             : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
         UpdateRecordingTransportControls();
+        UpdateSessionPlaybackTransportControls();
     }
 
     private void PauseRecordingClicked(object sender, RoutedEventArgs e)
@@ -1054,6 +1242,8 @@ public partial class EqualizerWindow : Window
             WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed, textureResult);
         }
 
+        _lastSessionRecordingPath = videoPath;
+
         RecordingStatusText.Text = textureResult is { Success: true }
             ? textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
                 ? $"Recording stopped at {FormatDuration(elapsed)}. GPU stream saved processed texture bridge video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} frames)."
@@ -1069,7 +1259,9 @@ public partial class EqualizerWindow : Window
                 : $"Recording stopped at {FormatDuration(elapsed)}. Session folder: {sessionFolder}";
 
         UpdateOutputFolderText();
+        RefreshSessionRecordings(videoPath);
         UpdateRecordingTransportControls();
+        UpdateSessionPlaybackTransportControls();
     }
 
     private bool StartActivePreviewRecording(string videoPath)
@@ -1764,6 +1956,7 @@ public partial class EqualizerWindow : Window
         {
             _isLoadingCameraModes = false;
             CameraModeComboBox.IsEnabled = true;
+            SelectPendingCameraProfileMode();
             CameraPreviewStatusText.Text = $"DirectShow camera selected: {camera.Name} - Auto uses the camera's current output";
             UpdateCameraEnabledState();
 
@@ -1781,6 +1974,7 @@ public partial class EqualizerWindow : Window
 
             CameraModeComboBox.ItemsSource = modes;
             CameraModeComboBox.SelectedIndex = 0;
+            SelectPendingCameraProfileMode();
         }
         finally
         {
@@ -2239,6 +2433,9 @@ public partial class EqualizerWindow : Window
                 NextRecordingFilesText.Text = FormatRecordingFileSet(setNumber);
             }
         }
+
+        ConfigureSessionFolderWatcher();
+        RefreshSessionRecordings(_lastSessionRecordingPath);
     }
 
     private RecordingTarget CreatePodcastRecordingTarget()
@@ -3424,6 +3621,79 @@ public partial class EqualizerWindow : Window
         _isStoppingAudioPlayback = false;
     }
 
+    private void StartSessionPlayback(string path)
+    {
+        try
+        {
+            StopSessionPlayback();
+            SessionPlaybackElement.Source = new Uri(path);
+            SessionPlaybackElement.Visibility = Visibility.Visible;
+            CameraPlaceholder.Visibility = Visibility.Collapsed;
+            _sessionPlaybackPath = path;
+            _lastSessionRecordingPath = path;
+            SessionPlaybackElement.Play();
+
+            RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
+        }
+        catch (Exception ex)
+        {
+            StopSessionPlayback();
+            RecordingStatusText.Text = $"Session playback failed: {ex.Message}";
+        }
+
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void StopSessionPlayback()
+    {
+        try
+        {
+            SessionPlaybackElement.Stop();
+            SessionPlaybackElement.Source = null;
+            SessionPlaybackElement.Visibility = Visibility.Collapsed;
+        }
+        catch
+        {
+        }
+
+        _sessionPlaybackPath = null;
+        if (!_isCameraEnabled && CameraPlaceholder is not null)
+        {
+            CameraPlaceholder.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SessionPlaybackEnded(object sender, RoutedEventArgs e)
+    {
+        var path = _sessionPlaybackPath;
+        StopSessionPlayback();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            RecordingStatusText.Text = $"Finished {System.IO.Path.GetFileName(path)}.";
+        }
+
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void SessionPlaybackFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        StopSessionPlayback();
+        RecordingStatusText.Text = $"Session playback failed: {e.ErrorException.Message}";
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void UpdateSessionPlaybackTransportControls()
+    {
+        if (SessionPlayFileButton is null)
+        {
+            return;
+        }
+
+        SessionPlayFileButton.IsEnabled = !_isRecordingSession;
+        SessionPlayFileButton.Content = string.IsNullOrWhiteSpace(_sessionPlaybackPath) ? "Play File" : "Stop Play";
+        SessionOpenLocationButton.IsEnabled = !_isRecordingSession;
+    }
+
     private static string FormatDuration(TimeSpan duration)
     {
         duration = duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
@@ -4409,6 +4679,94 @@ public partial class EqualizerWindow : Window
     {
     }
 
+    private void CameraProfileSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+    }
+
+    private void SaveCameraProfileClicked(object sender, RoutedEventArgs e)
+    {
+        var typedName = CameraProfileNameTextBox.Text.Trim();
+        var selectedName = CameraProfileComboBox.SelectedItem as string ?? string.Empty;
+        var name = !string.IsNullOrWhiteSpace(typedName)
+            ? typedName
+            : selectedName.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            CameraProfileStatusText.Text = "Type a new profile name or choose a camera profile to update.";
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(CameraProfileFolder);
+            var profile = CaptureCameraProfile(name);
+            var json = JsonSerializer.Serialize(profile, UserPresetJsonOptions);
+            File.WriteAllText(GetCameraProfilePath(name), json);
+            LoadCameraProfileList();
+            CameraProfileComboBox.SelectedItem = CameraProfileNames.FirstOrDefault(candidate =>
+                candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+            CameraProfileNameTextBox.Clear();
+            CameraProfileStatusText.Text = $"Camera profile saved: {name}";
+        }
+        catch (Exception ex)
+        {
+            CameraProfileStatusText.Text = $"Could not save camera profile: {ex.Message}";
+        }
+    }
+
+    private void LoadCameraProfileClicked(object sender, RoutedEventArgs e)
+    {
+        var name = GetCameraProfileNameFromEntry();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            CameraProfileStatusText.Text = "Choose a camera profile to load.";
+            return;
+        }
+
+        try
+        {
+            var profile = LoadCameraProfile(name);
+            if (profile is null)
+            {
+                CameraProfileStatusText.Text = $"Camera profile not found: {name}";
+                return;
+            }
+
+            ApplyCameraProfile(profile);
+        }
+        catch (Exception ex)
+        {
+            CameraProfileStatusText.Text = $"Could not load camera profile: {ex.Message}";
+        }
+    }
+
+    private void DeleteCameraProfileClicked(object sender, RoutedEventArgs e)
+    {
+        var name = GetCameraProfileNameFromEntry();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            CameraProfileStatusText.Text = "Choose a camera profile to delete.";
+            return;
+        }
+
+        try
+        {
+            var path = GetCameraProfilePath(name);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            LoadCameraProfileList();
+            CameraProfileComboBox.SelectedIndex = CameraProfileNames.Count > 0 ? 0 : -1;
+            CameraProfileStatusText.Text = $"Camera profile deleted: {name}";
+        }
+        catch (Exception ex)
+        {
+            CameraProfileStatusText.Text = $"Could not delete camera profile: {ex.Message}";
+        }
+    }
+
     private void SaveUserPresetClicked(object sender, RoutedEventArgs e)
     {
         var typedName = UserPresetNameTextBox.Text.Trim();
@@ -4666,11 +5024,238 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void ConfigureSessionFolderWatcher()
+    {
+        DisposeSessionFolderWatcher();
+
+        try
+        {
+            Directory.CreateDirectory(_outputFolder);
+            var watcher = new FileSystemWatcher(_outputFolder)
+            {
+                Filter = "*.*",
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName
+                    | NotifyFilters.DirectoryName
+                    | NotifyFilters.CreationTime
+            };
+            watcher.Created += SessionFolderChanged;
+            watcher.Deleted += SessionFolderChanged;
+            watcher.Renamed += SessionFolderRenamed;
+            watcher.EnableRaisingEvents = true;
+            _sessionFolderWatcher = watcher;
+        }
+        catch
+        {
+            _sessionFolderWatcher = null;
+        }
+    }
+
+    private void DisposeSessionFolderWatcher()
+    {
+        var watcher = _sessionFolderWatcher;
+        if (watcher is null)
+        {
+            return;
+        }
+
+        _sessionFolderWatcher = null;
+        try
+        {
+            watcher.EnableRaisingEvents = false;
+            watcher.Created -= SessionFolderChanged;
+            watcher.Deleted -= SessionFolderChanged;
+            watcher.Renamed -= SessionFolderRenamed;
+            watcher.Dispose();
+        }
+        catch
+        {
+        }
+    }
+
+    private void SessionFolderChanged(object sender, FileSystemEventArgs e)
+    {
+        if (IsSessionBrowserPath(e.FullPath))
+        {
+            QueueSessionRecordingsRefresh();
+        }
+    }
+
+    private void SessionFolderRenamed(object sender, RenamedEventArgs e)
+    {
+        if (IsSessionBrowserPath(e.FullPath) || IsSessionBrowserPath(e.OldFullPath))
+        {
+            QueueSessionRecordingsRefresh();
+        }
+    }
+
+    private void QueueSessionRecordingsRefresh()
+    {
+        if (_isClosing || System.Threading.Interlocked.Exchange(ref _sessionFolderRefreshQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            var timer = new DispatcherTimer
+            {
+                Interval = AudioRecordingFolderRefreshDelay
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                System.Threading.Volatile.Write(ref _sessionFolderRefreshQueued, 0);
+                RefreshSessionRecordings(_lastSessionRecordingPath);
+                UpdateSessionPlaybackTransportControls();
+            };
+            timer.Start();
+        }, DispatcherPriority.Background);
+    }
+
+    private void RefreshSessionRecordings(string? preferredPath = null)
+    {
+        if (SessionFilesListBox is null)
+        {
+            return;
+        }
+
+        var selectedPath = preferredPath ?? GetSelectedSessionRecordingPath();
+        var items = EnumerateSessionRecordings()
+            .OrderByDescending(item => item.LastWriteTimeUtc)
+            .ToList();
+
+        _sessionRecordings.Clear();
+        foreach (var item in items)
+        {
+            _sessionRecordings.Add(item);
+        }
+
+        SessionRecordingItem? selection = null;
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            selection = _sessionRecordings.FirstOrDefault(item =>
+                string.Equals(item.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        selection ??= _sessionRecordings.FirstOrDefault();
+        SessionFilesListBox.SelectedItem = selection;
+        if (selection is not null)
+        {
+            SessionFilesListBox.ScrollIntoView(selection);
+        }
+    }
+
+    private List<SessionRecordingItem> EnumerateSessionRecordings()
+    {
+        if (!Directory.Exists(_outputFolder))
+        {
+            return [];
+        }
+
+        IEnumerable<string> folders = IsPodcastSessionFolder(_outputFolder)
+            ? [_outputFolder]
+            : Directory.EnumerateDirectories(_outputFolder)
+                .Where(IsPodcastSessionFolder);
+        var items = new List<SessionRecordingItem>();
+        foreach (var folder in folders)
+        {
+            foreach (var path in Directory.EnumerateFiles(folder, "video_*.mp4"))
+            {
+                var file = new FileInfo(path);
+                if (!file.Exists)
+                {
+                    continue;
+                }
+
+                var metadata = ReadSessionMetadata(folder, file.Name);
+                var sessionName = System.IO.Path.GetFileName(folder);
+                var displayName = metadata.SetNumber > 0
+                    ? $"{sessionName}  set {FormatRecordingSetNumber(metadata.SetNumber)}"
+                    : $"{sessionName}  {file.Name}";
+                var cameraText = string.IsNullOrWhiteSpace(metadata.Camera) ? "Camera unknown" : metadata.Camera;
+                var durationText = string.IsNullOrWhiteSpace(metadata.Duration) ? "Duration unknown" : metadata.Duration;
+                var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}    {durationText}    {cameraText}";
+                items.Add(new SessionRecordingItem(
+                    file.FullName,
+                    folder,
+                    displayName,
+                    details,
+                    file.LastWriteTimeUtc));
+            }
+        }
+
+        return items;
+    }
+
+    private static SessionMetadataSummary ReadSessionMetadata(string folder, string videoFileName)
+    {
+        var metadataPath = System.IO.Path.Combine(folder, "session.json");
+        if (!File.Exists(metadataPath))
+        {
+            return new SessionMetadataSummary(0, null, null);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(metadataPath));
+            var root = document.RootElement;
+            var video = TryGetJsonString(root, "video");
+            if (!string.IsNullOrWhiteSpace(video)
+                && !video.Equals(videoFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return new SessionMetadataSummary(0, null, null);
+            }
+
+            var setNumber = root.TryGetProperty("setNumber", out var setProperty)
+                && setProperty.TryGetInt32(out var number)
+                    ? number
+                    : 0;
+            return new SessionMetadataSummary(
+                setNumber,
+                TryGetJsonString(root, "camera"),
+                TryGetJsonString(root, "duration"));
+        }
+        catch
+        {
+            return new SessionMetadataSummary(0, null, null);
+        }
+    }
+
+    private static string? TryGetJsonString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+    }
+
+    private static bool IsSessionBrowserPath(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            return IsPodcastSessionFolder(path);
+        }
+
+        return System.IO.Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+            || System.IO.Path.GetFileName(path).Equals("session.json", StringComparison.OrdinalIgnoreCase);
+    }
+
     private string? GetSelectedAudioRecordingPath()
     {
         return RecordingFilesListBox?.SelectedItem is AudioRecordingFileItem item
             ? item.Path
             : null;
+    }
+
+    private SessionRecordingItem? GetSelectedSessionRecording()
+    {
+        return SessionFilesListBox?.SelectedItem as SessionRecordingItem;
+    }
+
+    private string? GetSelectedSessionRecordingPath()
+    {
+        return GetSelectedSessionRecording()?.Path;
     }
 
     private static bool IsSupportedAudioRecordingFile(string path)
@@ -4697,6 +5282,190 @@ public partial class EqualizerWindow : Window
         }
 
         return $"{kib / 1024d:0.0} MB";
+    }
+
+    private CameraProfile CaptureCameraProfile(string name)
+    {
+        var camera = CameraComboBox.SelectedItem as CameraDevice;
+        var mode = GetSelectedCameraMode();
+        return new CameraProfile
+        {
+            Name = name,
+            CameraName = camera?.Name,
+            CameraSource = camera?.Source,
+            CameraDevicePath = camera?.DevicePath,
+            CameraEnabled = _isCameraEnabled,
+            ModeLabel = mode.Label,
+            ModeWidth = mode.Width,
+            ModeHeight = mode.Height,
+            ModeFramesPerSecond = mode.FramesPerSecond,
+            ModeInputFormat = mode.InputFormat,
+            DenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
+            DenoiseStrength = VideoDenoiseSlider?.Value ?? _pendingVideoDenoiseStrength,
+            ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true
+        };
+    }
+
+    private CameraProfile? LoadCameraProfile(string name)
+    {
+        var path = GetCameraProfilePath(name);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<CameraProfile>(json, UserPresetJsonOptions);
+    }
+
+    private void ApplyCameraProfile(CameraProfile profile)
+    {
+        var name = string.IsNullOrWhiteSpace(profile.Name) ? "Camera profile" : profile.Name.Trim();
+        var camera = FindCameraForProfile(profile);
+        if (camera is null)
+        {
+            CameraProfileStatusText.Text = $"Camera profile loaded, but camera is not available: {profile.CameraName}";
+            return;
+        }
+
+        _pendingCameraProfileModeLabel = string.IsNullOrWhiteSpace(profile.ModeLabel)
+            ? CameraVideoMode.Auto.Label
+            : profile.ModeLabel;
+        CameraComboBox.SelectedItem = camera;
+
+        if (VideoDenoiseCheckBox is not null)
+        {
+            VideoDenoiseCheckBox.IsChecked = profile.DenoiseEnabled;
+        }
+
+        if (VideoDenoiseSlider is not null && double.IsFinite(profile.DenoiseStrength))
+        {
+            VideoDenoiseSlider.Value = Math.Clamp(profile.DenoiseStrength, VideoDenoiseSlider.Minimum, VideoDenoiseSlider.Maximum);
+        }
+
+        if (ProcessedTextureRecordingCheckBox is not null)
+        {
+            ProcessedTextureRecordingCheckBox.IsChecked = profile.ProcessedTextureRecordingEnabled;
+        }
+
+        _isCameraEnabled = profile.CameraEnabled && _cameraAvailable;
+        UpdateVideoDenoiseSettings(restartPreview: false);
+        UpdateProcessedTextureRecordingStatus();
+        SelectPendingCameraProfileMode();
+        UpdateCameraEnabledState();
+
+        CameraProfileComboBox.SelectedItem = CameraProfileNames.FirstOrDefault(candidate =>
+            candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
+        CameraProfileStatusText.Text = $"Camera profile loaded: {name}";
+    }
+
+    private CameraDevice? FindCameraForProfile(CameraProfile profile)
+    {
+        var cameras = CameraComboBox.Items.OfType<CameraDevice>().ToList();
+        if (!string.IsNullOrWhiteSpace(profile.CameraDevicePath))
+        {
+            var pathMatch = cameras.FirstOrDefault(camera =>
+                camera.DevicePath.Equals(profile.CameraDevicePath, StringComparison.OrdinalIgnoreCase)
+                && camera.Source.Equals(profile.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            if (pathMatch is not null)
+            {
+                return pathMatch;
+            }
+        }
+
+        return cameras.FirstOrDefault(camera =>
+            camera.Name.Equals(profile.CameraName ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            && camera.Source.Equals(profile.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            ?? cameras.FirstOrDefault(camera =>
+                camera.Name.Equals(profile.CameraName ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void SelectPendingCameraProfileMode()
+    {
+        var modeLabel = _pendingCameraProfileModeLabel;
+        if (CameraModeComboBox is null || string.IsNullOrWhiteSpace(modeLabel))
+        {
+            return;
+        }
+
+        var match = CameraModeComboBox.Items
+            .OfType<CameraVideoMode>()
+            .FirstOrDefault(mode => mode.Label.Equals(modeLabel, StringComparison.OrdinalIgnoreCase))
+            ?? CameraModeComboBox.Items
+                .OfType<CameraVideoMode>()
+                .FirstOrDefault(mode => mode.IsAuto && modeLabel.Equals(CameraVideoMode.Auto.Label, StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+        {
+            CameraModeComboBox.SelectedItem = match;
+            _pendingCameraProfileModeLabel = null;
+        }
+    }
+
+    private void LoadCameraProfileList()
+    {
+        var selectedName = CameraProfileComboBox.SelectedItem as string;
+        CameraProfileNames.Clear();
+
+        try
+        {
+            Directory.CreateDirectory(CameraProfileFolder);
+            foreach (var path in Directory.EnumerateFiles(CameraProfileFolder, "*.json").OrderBy(path => path))
+            {
+                var name = ReadCameraProfileName(path);
+                if (!string.IsNullOrWhiteSpace(name)
+                    && !CameraProfileNames.Any(existing => existing.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    CameraProfileNames.Add(name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CameraProfileStatusText.Text = $"Could not read camera profiles: {ex.Message}";
+        }
+
+        CameraProfileComboBox.SelectedItem = !string.IsNullOrWhiteSpace(selectedName)
+            ? CameraProfileNames.FirstOrDefault(candidate => candidate.Equals(selectedName, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (CameraProfileComboBox.SelectedItem is null)
+        {
+            CameraProfileComboBox.SelectedIndex = CameraProfileNames.Count > 0 ? 0 : -1;
+        }
+    }
+
+    private string GetCameraProfileNameFromEntry()
+    {
+        var typed = CameraProfileNameTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(typed))
+        {
+            return typed;
+        }
+
+        return CameraProfileComboBox.SelectedItem as string ?? string.Empty;
+    }
+
+    private static string ReadCameraProfileName(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            var profile = JsonSerializer.Deserialize<CameraProfile>(json, UserPresetJsonOptions);
+            if (!string.IsNullOrWhiteSpace(profile?.Name))
+            {
+                return profile.Name.Trim();
+            }
+        }
+        catch
+        {
+        }
+
+        return System.IO.Path.GetFileNameWithoutExtension(path);
+    }
+
+    private static string GetCameraProfilePath(string name)
+    {
+        return System.IO.Path.Combine(CameraProfileFolder, $"{SanitizePresetFileName(name)}.json");
     }
 
     private UserVoicePreset CaptureUserPreset(string name)
@@ -4971,6 +5740,37 @@ public partial class EqualizerWindow : Window
         public bool IsEnabled { get; set; } = true;
     }
 
+    private sealed class CameraProfile
+    {
+        public int Version { get; set; } = 1;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string? CameraName { get; set; }
+
+        public string? CameraSource { get; set; }
+
+        public string? CameraDevicePath { get; set; }
+
+        public bool CameraEnabled { get; set; }
+
+        public string ModeLabel { get; set; } = CameraVideoMode.Auto.Label;
+
+        public int? ModeWidth { get; set; }
+
+        public int? ModeHeight { get; set; }
+
+        public double? ModeFramesPerSecond { get; set; }
+
+        public string? ModeInputFormat { get; set; }
+
+        public bool DenoiseEnabled { get; set; }
+
+        public double DenoiseStrength { get; set; } = 2d;
+
+        public bool ProcessedTextureRecordingEnabled { get; set; }
+    }
+
     private sealed record VoiceZone(string Name, double StartFrequencyHz, double EndFrequencyHz, string Description);
 
     private sealed record MicZoneDifference(string ZoneName, double DifferenceDb);
@@ -4983,6 +5783,13 @@ public partial class EqualizerWindow : Window
     private sealed record RecordingTarget(string SessionFolder, int SetNumber);
 
     private sealed record AudioRecordingFileItem(string Path, string Name, string Details);
+
+    private sealed record SessionRecordingItem(string Path, string SessionFolder, string Name, string Details, DateTime LastWriteTimeUtc)
+    {
+        public override string ToString() => Name;
+    }
+
+    private sealed record SessionMetadataSummary(int SetNumber, string? Camera, string? Duration);
 
 }
 
