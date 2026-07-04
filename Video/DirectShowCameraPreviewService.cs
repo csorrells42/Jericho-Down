@@ -52,6 +52,39 @@ public sealed class DirectShowCameraPreviewService : IDisposable
 
     public string? LastRecordingDiagnostics { get; private set; }
 
+    public int RecordingFramesOffered
+    {
+        get
+        {
+            lock (_recordingLock)
+            {
+                return _recorder?.FramesOffered ?? _completedRecordingSamples;
+            }
+        }
+    }
+
+    public int RecordingFramesWritten
+    {
+        get
+        {
+            lock (_recordingLock)
+            {
+                return _recorder?.SamplesWritten ?? _completedRecordingSamples;
+            }
+        }
+    }
+
+    public int RecordingFramesSkipped
+    {
+        get
+        {
+            lock (_recordingLock)
+            {
+                return _recorder?.FramesSkipped ?? 0;
+            }
+        }
+    }
+
     public bool IsRecording
     {
         get

@@ -3434,6 +3434,7 @@ public partial class EqualizerWindow : Window
     private void CompositionTargetRendering(object? sender, EventArgs e)
     {
         UpdateRecordingTimer();
+        UpdateRecordingHealthPanel();
         SyncStandaloneAudioRecordingState();
         UpdateMicAnalysisProgress();
 
@@ -3455,6 +3456,138 @@ public partial class EqualizerWindow : Window
         }
 
         RecordingTimerText.Text = FormatDuration(GetRecordingElapsed());
+    }
+
+    private void UpdateRecordingHealthPanel()
+    {
+        if (RecordingHealthText is null || PreviewRecordParityText is null || VideoPipelineText is null)
+        {
+            return;
+        }
+
+        var pipeline = FormatActiveVideoPipeline();
+        VideoPipelineText.Text = $"Pipeline: {pipeline}";
+        var parity = FormatPreviewRecordParity(out var parityIsGood);
+        PreviewRecordParityText.Text = $"Preview/record: {parity}";
+        PreviewRecordParityText.Foreground = parityIsGood ? _meterGoodBrush : _meterWarnBrush;
+
+        if (!_isRecordingSession)
+        {
+            RecordingHealthText.Text = "Idle";
+            RecordingHealthText.Foreground = _meterTextMutedBrush;
+            return;
+        }
+
+        var (offered, written, skipped) = GetActiveRecordingCounters();
+        var encoderDelay = Math.Max(0, offered - written);
+        var audioPeak = _latestFrame?.PeakLevel ?? 0d;
+        var diskStatus = GetRecordingDiskStatus();
+        RecordingHealthText.Text = $"Frames {written}/{Math.Max(offered, written)}  skipped {skipped}  enc lag {encoderDelay}  audio {audioPeak:P0}  disk {diskStatus}";
+        RecordingHealthText.Foreground = skipped > 0 || encoderDelay > 3
+            ? _meterWarnBrush
+            : _meterGoodBrush;
+    }
+
+    private (int Offered, int Written, int Skipped) GetActiveRecordingCounters()
+    {
+        if (_textureNativeCameraStream?.IsRecording == true)
+        {
+            var written = _textureNativeCameraStream.SamplesWritten;
+            return (written, written, 0);
+        }
+
+        if (_textureNativeRecordingSession is not null)
+        {
+            var written = _textureNativeRecordingSession.SamplesWritten;
+            return (written, written, 0);
+        }
+
+        return IsSelectedDirectShowCamera()
+            ? (_directShowPreviewService.RecordingFramesOffered, _directShowPreviewService.RecordingFramesWritten, _directShowPreviewService.RecordingFramesSkipped)
+            : (_cameraPreviewService.RecordingFramesOffered, _cameraPreviewService.RecordingFramesWritten, _cameraPreviewService.RecordingFramesSkipped);
+    }
+
+    private string GetRecordingDiskStatus()
+    {
+        var path = GetActiveRecordingVideoPath();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return "pending";
+        }
+
+        try
+        {
+            var folder = System.IO.Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            {
+                return "folder missing";
+            }
+
+            return File.Exists(path)
+                ? FormatFileSize(new FileInfo(path).Length)
+                : "folder OK";
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
+
+    private string FormatPreviewRecordParity(out bool isGood)
+    {
+        if (!_isCameraEnabled)
+        {
+            isGood = true;
+            return "camera idle";
+        }
+
+        if (_textureNativeCameraStream is not null)
+        {
+            if (_pendingVideoDenoiseEnabled && !_processedTextureRecordingEnabled)
+            {
+                isGood = false;
+                return "preview-only denoise; raw texture recording";
+            }
+
+            isGood = true;
+            return _processedTextureRecordingEnabled
+                ? "preview = processed DX12 recording"
+                : "preview = raw texture recording";
+        }
+
+        isGood = true;
+        return _pendingVideoDenoiseEnabled
+            ? "preview = CPU recording with denoise"
+            : "preview = CPU recording";
+    }
+
+    private string FormatActiveVideoPipeline()
+    {
+        if (!_cameraAvailable)
+        {
+            return "no camera";
+        }
+
+        if (!_isCameraEnabled)
+        {
+            return "camera disabled";
+        }
+
+        if (_textureNativeCameraStream is not null)
+        {
+            var previewPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 texture preview pending";
+            return $"{previewPath}; recording {(_processedTextureRecordingEnabled ? "processed bridge" : "raw texture-native")}";
+        }
+
+        if (IsSelectedDirectShowCamera())
+        {
+            return "DirectShow RGB32 CPU preview; Media Foundation MP4 writer";
+        }
+
+        var fallback = string.IsNullOrWhiteSpace(_lastTextureNativeCameraError)
+            ? string.Empty
+            : $" after DX12 shared stream fallback ({_lastTextureNativeCameraError})";
+        return $"Media Foundation CPU preview; Media Foundation MP4 writer{fallback}";
     }
 
     private TimeSpan GetRecordingElapsed()

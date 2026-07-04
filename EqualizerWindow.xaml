@@ -902,6 +902,14 @@
                     <Canvas x:Name="RecordingSignalCanvas" />
                   </Border>
                   <TextBlock Text="Processed signal being monitored" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,14" />
+                  <TextBlock Text="Recording health" Foreground="#B8C7D9" Margin="0,0,0,3" />
+                  <Border Background="#05070A" BorderBrush="#334F5D6B" BorderThickness="1" Padding="8,6" Margin="0,0,0,8">
+                    <StackPanel>
+                      <TextBlock x:Name="RecordingHealthText" Text="Idle" Foreground="#F8FAFC" TextWrapping="Wrap" />
+                      <TextBlock x:Name="PreviewRecordParityText" Text="Preview/record: waiting" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,3,0,0" />
+                      <TextBlock x:Name="VideoPipelineText" Text="Pipeline: camera disabled" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    </StackPanel>
+                  </Border>
                   <CheckBox x:Name="RecordProcessedAudioCheckBox" Content="Record processed audio" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
                     <CheckBox.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="When checked, the eventual video file will use the EQ/gate/compressor/limiter signal." />
