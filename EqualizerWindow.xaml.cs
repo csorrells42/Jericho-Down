@@ -1689,12 +1689,13 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            var stream = new TextureNativeCameraStream(camera, mode);
+            var stream = new TextureNativeCameraStream(camera, mode, startImmediately: false);
             _textureNativeCameraStream = stream;
-            ShowDirect3D12PreviewHost(stream.DuplicateNativeD3D12Device());
             _textureNativeCameraStream.FrameAvailable += TextureNativeCameraFrameAvailable;
             _textureNativeCameraStream.TextureFrameAvailable += TextureNativeCameraTextureFrameAvailable;
             _textureNativeCameraStream.StatusChanged += TextureNativeCameraStatusChanged;
+            stream.Start();
+            ShowDirect3D12PreviewHost(stream.DuplicateNativeD3D12Device());
             if (!WaitForTextureNativeFirstFrame(stream))
             {
                 _lastTextureNativeCameraError =

@@ -536,19 +536,24 @@ public static class TextureNativeCameraRecorder
 
 public sealed class TextureNativeCameraStream : IDisposable
 {
+    private static readonly TimeSpan StreamStartTimeout = TimeSpan.FromSeconds(8);
+
     private readonly object _stateLock = new();
     private readonly object _processedDenoiseLock = new();
-    private readonly MediaFoundationCameraDeviceFactory.MediaFoundationScope _mediaFoundationScope;
-    private readonly ITextureNativeDeviceManager _deviceManager;
-    private readonly object _mediaSource;
-    private readonly IMFSourceReader _reader;
+    private readonly CameraDevice _camera;
+    private readonly CameraVideoMode? _mode;
+    private readonly ManualResetEventSlim _streamReady = new(false);
     private readonly CancellationTokenSource _cancellation = new();
-    private readonly Task _captureTask;
-    private readonly int _width;
-    private readonly int _height;
-    private readonly double _fps;
-    private readonly Guid _subtype;
-    private readonly long _sampleDuration;
+    private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _mediaFoundationScope;
+    private ITextureNativeDeviceManager? _deviceManager;
+    private object? _mediaSource;
+    private IMFSourceReader? _reader;
+    private Task? _captureTask;
+    private int _width;
+    private int _height;
+    private double _fps;
+    private Guid _subtype;
+    private long _sampleDuration;
     private MediaFoundationTextureVideoRecorder? _recorder;
     private MediaFoundationVideoRecorder? _processedRecorder;
     private byte[]? _previousProcessedDenoiseFrame;
@@ -562,14 +567,17 @@ public sealed class TextureNativeCameraStream : IDisposable
     private long _nextSampleTime;
     private long _framesRead;
     private string _status = "Texture-native camera stream started.";
+    private bool _captureStarted;
+    private Exception? _startException;
 
-    public TextureNativeCameraStream(CameraDevice camera, CameraVideoMode? mode)
+    public TextureNativeCameraStream(CameraDevice camera, CameraVideoMode? mode, bool startImmediately = true)
     {
-        _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
-        (_deviceManager, _reader, _mediaSource) = TextureNativeCameraRecorder.OpenTextureSourceReader(camera, mode);
-        (_width, _height, _fps, _subtype) = ReadCurrentFormat(_reader, mode);
-        _sampleDuration = Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / Math.Clamp(_fps, 1d, 120d)));
-        _captureTask = Task.Run(() => CaptureLoop(_cancellation.Token));
+        _camera = camera;
+        _mode = mode;
+        if (startImmediately)
+        {
+            Start();
+        }
     }
 
     public event EventHandler<TextureNativeFrameInfo>? FrameAvailable;
@@ -582,7 +590,7 @@ public sealed class TextureNativeCameraStream : IDisposable
 
     public double FramesPerSecond => _fps;
 
-    public string DeviceMode => _deviceManager.ModeName;
+    public string DeviceMode => _deviceManager?.ModeName ?? "starting";
 
     public string MediaSubtype => MediaFoundationInterop.FormatSubtype(_subtype);
 
@@ -590,7 +598,31 @@ public sealed class TextureNativeCameraStream : IDisposable
 
     public int SamplesWritten => _recorder?.SamplesWritten ?? _processedRecorder?.SamplesWritten ?? 0;
 
-    public IntPtr DuplicateNativeD3D12Device() => _deviceManager.DuplicateNativeD3D12Device();
+    public IntPtr DuplicateNativeD3D12Device() => _deviceManager?.DuplicateNativeD3D12Device() ?? IntPtr.Zero;
+
+    public void Start()
+    {
+        lock (_stateLock)
+        {
+            if (_captureStarted || _isStopping)
+            {
+                return;
+            }
+
+            _captureStarted = true;
+            _captureTask = Task.Run(() => CaptureLoop(_cancellation.Token));
+        }
+
+        if (!_streamReady.Wait(StreamStartTimeout))
+        {
+            throw new TimeoutException($"Texture-native stream did not initialize within {StreamStartTimeout.TotalSeconds:0.#} seconds.");
+        }
+
+        if (_startException is not null)
+        {
+            throw new InvalidOperationException($"Texture-native stream failed to initialize: {_startException.Message}", _startException);
+        }
+    }
 
     public bool IsRecording
     {
@@ -607,6 +639,9 @@ public sealed class TextureNativeCameraStream : IDisposable
     {
         lock (_stateLock)
         {
+            var deviceManager = _deviceManager
+                ?? throw new InvalidOperationException("Texture-native recording requires an initialized device manager.");
+
             if (_recorder is not null || _processedRecorder is not null)
             {
                 return true;
@@ -634,7 +669,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _height,
                     _fps,
                     _subtype,
-                    _deviceManager.Manager);
+                    deviceManager.Manager);
                 _processedRecordingDenoiseEnabled = false;
                 ResetProcessedDenoiseHistory();
                 _recordingPipeline = "Media Foundation texture-native raw camera samples";
@@ -722,7 +757,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                 path,
                 samplesWritten,
                 bytes,
-                _deviceManager.ModeName,
+                _deviceManager?.ModeName ?? "none",
                 processedRecorder is not null ? "rgb32" : MediaFoundationInterop.FormatSubtype(_subtype),
                 _width,
                 _height,
@@ -751,10 +786,16 @@ public sealed class TextureNativeCameraStream : IDisposable
             _isStopping = true;
         }
 
+        Task? captureTask;
         _cancellation.Cancel();
+        lock (_stateLock)
+        {
+            captureTask = _captureTask;
+        }
+
         try
         {
-            _captureTask.Wait(TimeSpan.FromSeconds(3));
+            captureTask?.Wait(TimeSpan.FromSeconds(3));
         }
         catch
         {
@@ -767,19 +808,33 @@ public sealed class TextureNativeCameraStream : IDisposable
     {
         Stop();
         _cancellation.Dispose();
+        _streamReady.Dispose();
         MediaFoundationInterop.ReleaseComObject(_reader);
         MediaFoundationInterop.ReleaseComObject(_mediaSource);
-        _deviceManager.Dispose();
-        _mediaFoundationScope.Dispose();
+        _deviceManager?.Dispose();
+        _mediaFoundationScope?.Dispose();
     }
 
     private void CaptureLoop(CancellationToken cancellationToken)
     {
         try
         {
+            _mediaFoundationScope = MediaFoundationCameraDeviceFactory.Startup();
+            (_deviceManager, _reader, _mediaSource) = TextureNativeCameraRecorder.OpenTextureSourceReader(_camera, _mode);
+            (_width, _height, _fps, _subtype) = ReadCurrentFormat(_reader, _mode);
+            _sampleDuration = Math.Max(1, (long)Math.Round(MediaFoundationInterop.TicksPerSecond / Math.Clamp(_fps, 1d, 120d)));
+            _streamReady.Set();
+
             while (!cancellationToken.IsCancellationRequested)
             {
-                var result = _reader.ReadSample(
+                var reader = _reader;
+                if (reader is null)
+                {
+                    ReportStatus("Texture-native shared stream reader is not initialized.");
+                    break;
+                }
+
+                var result = reader.ReadSample(
                     MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
                     0,
                     out _,
@@ -833,6 +888,8 @@ public sealed class TextureNativeCameraStream : IDisposable
         }
         catch (Exception ex)
         {
+            _startException ??= ex;
+            _streamReady.Set();
             ReportStatus(ex.Message);
         }
     }
@@ -971,10 +1028,16 @@ public sealed class TextureNativeCameraStream : IDisposable
 
             try
             {
+                var deviceManager = _deviceManager;
+                if (deviceManager is null)
+                {
+                    return null;
+                }
+
                 var subresource = 0;
                 dxgiBuffer.GetSubresourceIndex(out subresource);
                 var resourceResult = dxgiBuffer.GetResource(
-                    _deviceManager.TextureResourceId,
+                    deviceManager.TextureResourceId,
                     out var resource);
                 if (MediaFoundationInterop.Failed(resourceResult) || resource == IntPtr.Zero)
                 {
@@ -993,7 +1056,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _width,
                     _height,
                     _fps,
-                    _deviceManager.ModeName,
+                    deviceManager.ModeName,
                     MediaFoundationInterop.FormatSubtype(_subtype),
                     frameNumber,
                     nv12PreviewBytes,

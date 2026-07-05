@@ -262,8 +262,39 @@ static Task<int> RunDx12TexturePreviewProbeAsync(CameraDevice camera, CameraVide
 
         try
         {
-            stream = new TextureNativeCameraStream(camera, mode);
+            stream = new TextureNativeCameraStream(camera, mode, startImmediately: false);
             window = CreateProbeWindow("DX12 Texture Preview Probe", visible);
+
+            stream.FrameAvailable += (_, _) => Interlocked.Increment(ref infoFrames);
+            stream.TextureFrameAvailable += (_, lease) =>
+            {
+                var targetHost = host;
+                if (targetHost is null)
+                {
+                    return;
+                }
+
+                var pendingLease = lease.Duplicate();
+                if (pendingLease is null)
+                {
+                    return;
+                }
+
+                window.Dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        targetHost.RenderTextureFrame(pendingLease, denoiseEnabled: false, denoiseStrength: 2d);
+                        Interlocked.Increment(ref renderedFrames);
+                    }
+                    finally
+                    {
+                        pendingLease.Dispose();
+                    }
+                });
+            };
+
+            stream.Start();
             host = new Direct3D12PreviewHost(stream.DuplicateNativeD3D12Device())
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -272,24 +303,6 @@ static Task<int> RunDx12TexturePreviewProbeAsync(CameraDevice camera, CameraVide
             host.StatusChanged += (_, status) => Console.WriteLine(status);
             window.Content = host;
             window.Show();
-
-            stream.FrameAvailable += (_, _) => Interlocked.Increment(ref infoFrames);
-            stream.TextureFrameAvailable += (_, lease) =>
-            {
-                window.Dispatcher.BeginInvoke(() =>
-                {
-                    try
-                    {
-                        host.RenderTextureFrame(lease, denoiseEnabled: false, denoiseStrength: 2d);
-                        Interlocked.Increment(ref renderedFrames);
-                    }
-                    finally
-                    {
-                        lease.Dispose();
-                    }
-                });
-            };
-
             var timer = new DispatcherTimer { Interval = duration };
             timer.Tick += (_, _) =>
             {
