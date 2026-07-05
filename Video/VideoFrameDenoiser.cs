@@ -23,8 +23,8 @@ public sealed class VideoFrameDenoiser
             return;
         }
 
-        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
-        var currentWeight = 1d - previousWeight;
+        var previousWeight = (int)Math.Round(Math.Clamp(strength / 12d, 0.05d, 0.62d) * 256d);
+        var currentWeight = 256 - previousWeight;
         for (var i = 0; i < current.Length; i += 4)
         {
             current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
@@ -36,8 +36,8 @@ public sealed class VideoFrameDenoiser
         Buffer.BlockCopy(current, 0, previous, 0, current.Length);
     }
 
-    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
+    private static byte Blend(byte current, byte previous, int currentWeight, int previousWeight)
     {
-        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
+        return (byte)((current * currentWeight + previous * previousWeight + 128) >> 8);
     }
 }

@@ -241,8 +241,6 @@ internal sealed class AppSettingsState
 
     public bool VideoDenoiseEnabled { get; set; }
 
-    public string? VideoDenoiseMode { get; set; }
-
     public double? VideoDenoiseStrength { get; set; }
 
     public bool ProcessedTextureRecordingEnabled { get; set; }

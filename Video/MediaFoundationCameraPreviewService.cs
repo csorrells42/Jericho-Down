@@ -34,6 +34,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public double DenoiseStrength { get; set; } = 2d;
 
+    public bool DenoiseHandledByPreviewRenderer { get; set; }
+
     public VideoFrameColorSettings ColorSettings { get; set; } = VideoFrameColorSettings.Off;
 
     public string? LastRecordingDiagnostics { get; private set; }
@@ -490,7 +492,12 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     private bool NeedsBgraFrame()
     {
-        if (DenoiseEnabled || ColorSettings.HasVisibleAdjustments)
+        if (DenoiseEnabled && !DenoiseHandledByPreviewRenderer)
+        {
+            return true;
+        }
+
+        if (ColorSettings.HasVisibleAdjustments)
         {
             return true;
         }

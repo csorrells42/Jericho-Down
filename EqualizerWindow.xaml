@@ -1120,12 +1120,6 @@
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Uses the processed texture bridge for shared GPU camera recordings so saved video can follow the denoise setting. Leave off for the fastest raw camera sample path." />
                     </CheckBox.ToolTip>
                   </CheckBox>
-                  <TextBlock Text="Denoise mode" Foreground="#B8C7D9" Margin="0,0,0,2" />
-                  <ComboBox x:Name="VideoDenoiseModeComboBox" SelectedIndex="1" SelectionChanged="VideoDenoiseModeChanged" Margin="0,0,0,8">
-                    <ComboBoxItem Content="Light" />
-                    <ComboBoxItem Content="Balanced" />
-                    <ComboBoxItem Content="Studio" />
-                  </ComboBox>
                   <Grid Margin="0,0,0,16">
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
@@ -1137,7 +1131,7 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="Denoise strength" Foreground="#B8C7D9" VerticalAlignment="Center" />
                     <TextBlock x:Name="VideoDenoiseValueText" Grid.Column="1" Text="2.0" Foreground="#F8FAFC" FontWeight="SemiBold" Margin="8,0,0,0" />
-                    <Slider x:Name="VideoDenoiseSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="0.5" Maximum="8" Value="2" TickPlacement="BottomRight" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="VideoDenoiseChanged" />
+                    <Slider x:Name="VideoDenoiseSlider" Grid.Row="1" Grid.ColumnSpan="2" Minimum="0.5" Maximum="5" Value="2" TickPlacement="BottomRight" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="VideoDenoiseChanged" />
                   </Grid>
                   <Grid Margin="0,0,0,8">
                     <Grid.ColumnDefinitions>

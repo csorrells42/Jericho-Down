@@ -43,9 +43,8 @@ public partial class EqualizerWindow : Window
     private const double CollapsedControlRailWidth = 44d;
     private const double RightControlRailWidth = 360d;
     private const double EqualizerFaceplateOuterGap = 18d;
-    private const string DenoiseModeLight = "Light";
-    private const string DenoiseModeBalanced = "Balanced";
-    private const string DenoiseModeStudio = "Studio";
+    private const double DenoiseDefaultStrength = 2d;
+    private const double DenoiseMaximumStrength = 5d;
     private static readonly TimeSpan TextureNativeFirstFrameTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
@@ -244,10 +243,8 @@ public partial class EqualizerWindow : Window
     private bool _isDirectShowPreviewActive;
     private int _cameraServiceStopOperationVersion;
     private bool _pendingVideoDenoiseEnabled;
-    private double _pendingVideoDenoiseStrength = 2d;
-    private double _videoDenoiseSliderStrength = 2d;
-    private string _videoDenoiseMode = DenoiseModeBalanced;
-    private bool _isApplyingCameraProfile;
+    private double _pendingVideoDenoiseStrength = DenoiseDefaultStrength;
+    private double _videoDenoiseSliderStrength = DenoiseDefaultStrength;
     private bool _processedTextureRecordingEnabled;
     private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
     private CameraFrame? _pendingCameraFrame;
@@ -631,19 +628,6 @@ public partial class EqualizerWindow : Window
 
     private void RestorePersistedVideoDenoise()
     {
-        if (VideoDenoiseModeComboBox is not null && !string.IsNullOrWhiteSpace(_appSettings.VideoDenoiseMode))
-        {
-            var modeItem = VideoDenoiseModeComboBox.Items
-                .OfType<ComboBoxItem>()
-                .FirstOrDefault(item =>
-                    string.Equals(item.Content?.ToString(), _appSettings.VideoDenoiseMode, StringComparison.OrdinalIgnoreCase));
-            if (modeItem is not null)
-            {
-                VideoDenoiseModeComboBox.SelectedItem = modeItem;
-                _videoDenoiseMode = modeItem.Content?.ToString() ?? _videoDenoiseMode;
-            }
-        }
-
         if (VideoDenoiseSlider is not null && _appSettings.VideoDenoiseStrength is { } strength && double.IsFinite(strength))
         {
             VideoDenoiseSlider.Value = Math.Clamp(strength, VideoDenoiseSlider.Minimum, VideoDenoiseSlider.Maximum);
@@ -848,7 +832,6 @@ public partial class EqualizerWindow : Window
             CameraModeFramesPerSecond = mode.FramesPerSecond,
             CameraModeInputFormat = mode.InputFormat,
             VideoDenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
-            VideoDenoiseMode = GetSelectedVideoDenoiseMode(),
             VideoDenoiseStrength = VideoDenoiseSlider?.Value,
             ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true,
             ActivePresetName = _lastLoadedPresetName,
@@ -1805,24 +1788,6 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
-    private void VideoDenoiseModeChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (VideoDenoiseSlider is null)
-        {
-            return;
-        }
-
-        var mode = GetSelectedVideoDenoiseMode();
-        _videoDenoiseMode = mode;
-        if (!_isApplyingCameraProfile)
-        {
-            VideoDenoiseSlider.Value = GetVideoDenoiseModeDefault(mode);
-        }
-
-        UpdateVideoDenoiseSettings(restartPreview: false);
-        PersistAppState();
-    }
-
     private void ProcessedTextureRecordingChanged(object sender, RoutedEventArgs e)
     {
         _processedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true;
@@ -1996,6 +1961,7 @@ public partial class EqualizerWindow : Window
 
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
         _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
         if (_cameraPreviewService.Start(camera, mode))
         {
@@ -2310,7 +2276,9 @@ public partial class EqualizerWindow : Window
                 _direct3D12PreviewHost.RenderBgraFrame(
                     latestFrame,
                     System.Threading.Interlocked.Increment(ref _cameraBgraPreviewFrameNumber),
-                    _pendingVideoColorSettings);
+                    _pendingVideoColorSettings,
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength);
                 CameraPreviewImage.Visibility = Visibility.Collapsed;
             }
             else
@@ -2566,7 +2534,7 @@ public partial class EqualizerWindow : Window
         var presenterStatus = _direct3D12PreviewHost?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
         var previewPathStatus = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 preview path pending";
         var denoiseStatus = _pendingVideoDenoiseEnabled
-            ? $"DX12 {FormatDenoiseModeDescription(_videoDenoiseMode)} denoise {_pendingVideoDenoiseStrength:0.0}"
+            ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}"
             : "DX12 denoise off";
         var recordingStatus = _processedTextureRecordingEnabled ? "processed recording armed" : "raw recording armed";
         return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
@@ -2850,37 +2818,33 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        _videoDenoiseMode = GetSelectedVideoDenoiseMode();
-        var modeDefault = GetVideoDenoiseModeDefault(_videoDenoiseMode);
-        var modeMaximum = GetVideoDenoiseModeMaximum(_videoDenoiseMode);
-        var strength = Math.Clamp(VideoDenoiseSlider.Value, VideoDenoiseSlider.Minimum, VideoDenoiseSlider.Maximum);
+        var strength = Math.Clamp(VideoDenoiseSlider.Value, VideoDenoiseSlider.Minimum, DenoiseMaximumStrength);
         if (!_isSnappingVideoDenoiseSlider
-            && Math.Abs(strength - modeDefault) <= 0.25d
-            && Math.Abs(strength - modeDefault) > 0.001d)
+            && Math.Abs(strength - DenoiseDefaultStrength) <= 0.25d
+            && Math.Abs(strength - DenoiseDefaultStrength) > 0.001d)
         {
             _isSnappingVideoDenoiseSlider = true;
-            VideoDenoiseSlider.Value = modeDefault;
+            VideoDenoiseSlider.Value = DenoiseDefaultStrength;
             _isSnappingVideoDenoiseSlider = false;
-            strength = modeDefault;
+            strength = DenoiseDefaultStrength;
         }
 
         VideoDenoiseSlider.Ticks.Clear();
-        VideoDenoiseSlider.Ticks.Add(modeDefault);
-        VideoDenoiseSlider.Ticks.Add(modeMaximum);
+        VideoDenoiseSlider.Ticks.Add(DenoiseDefaultStrength);
+        VideoDenoiseSlider.Ticks.Add(DenoiseMaximumStrength);
         _videoDenoiseSliderStrength = strength;
-        var effectiveStrength = Math.Min(strength, modeMaximum);
+        var effectiveStrength = strength;
         _pendingVideoDenoiseEnabled = VideoDenoiseCheckBox.IsChecked == true;
         _pendingVideoDenoiseStrength = effectiveStrength;
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
         _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
 
         if (VideoDenoiseValueText is not null)
         {
-            VideoDenoiseValueText.Text = Math.Abs(strength - effectiveStrength) > 0.001d
-                ? $"{effectiveStrength:0.0} cap"
-                : $"{effectiveStrength:0.0}";
+            VideoDenoiseValueText.Text = $"{effectiveStrength:0.0}";
         }
 
         if (restartPreview && _isCameraEnabled)
@@ -2894,90 +2858,15 @@ public partial class EqualizerWindow : Window
             if (_textureNativeCameraStream is not null)
             {
                 CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                    ? $"DX12 {FormatDenoiseModeDescription(_videoDenoiseMode)} grain reduction is live on the preview. Texture-native recording still uses the raw camera stream unless processed recording is enabled."
+                    ? "DX12 video grain reduction is live on the preview. Texture-native recording still uses the raw camera stream unless processed recording is enabled."
                     : "DX12 video grain reduction is off on the preview.";
                 return;
             }
 
             CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                ? $"{FormatDenoiseModeDescription(_videoDenoiseMode)} video grain reduction is live on the preview and CPU recording path."
+                ? "Video grain reduction is live on the preview and CPU recording path."
                 : "Video grain reduction is off on the preview and CPU recording path.";
         }
-    }
-
-    private string GetSelectedVideoDenoiseMode()
-    {
-        var selectedText = VideoDenoiseModeComboBox?.SelectedItem is ComboBoxItem item
-            ? item.Content?.ToString()
-            : VideoDenoiseModeComboBox?.SelectedItem?.ToString();
-        return selectedText switch
-        {
-            DenoiseModeLight => DenoiseModeLight,
-            DenoiseModeStudio => DenoiseModeStudio,
-            _ => DenoiseModeBalanced
-        };
-    }
-
-    private void SelectVideoDenoiseMode(string? mode)
-    {
-        if (VideoDenoiseModeComboBox is null)
-        {
-            _videoDenoiseMode = mode switch
-            {
-                DenoiseModeLight => DenoiseModeLight,
-                DenoiseModeStudio => DenoiseModeStudio,
-                _ => DenoiseModeBalanced
-            };
-            return;
-        }
-
-        var normalizedMode = mode switch
-        {
-            DenoiseModeLight => DenoiseModeLight,
-            DenoiseModeStudio => DenoiseModeStudio,
-            _ => DenoiseModeBalanced
-        };
-        foreach (var item in VideoDenoiseModeComboBox.Items.OfType<ComboBoxItem>())
-        {
-            if (string.Equals(item.Content?.ToString(), normalizedMode, StringComparison.Ordinal))
-            {
-                VideoDenoiseModeComboBox.SelectedItem = item;
-                _videoDenoiseMode = normalizedMode;
-                return;
-            }
-        }
-
-        _videoDenoiseMode = normalizedMode;
-    }
-
-    private static double GetVideoDenoiseModeDefault(string mode)
-    {
-        return mode switch
-        {
-            DenoiseModeLight => 1d,
-            DenoiseModeStudio => 3.5d,
-            _ => 2d
-        };
-    }
-
-    private static double GetVideoDenoiseModeMaximum(string mode)
-    {
-        return mode switch
-        {
-            DenoiseModeLight => 1.5d,
-            DenoiseModeStudio => 5d,
-            _ => 3d
-        };
-    }
-
-    private static string FormatDenoiseModeDescription(string mode)
-    {
-        return mode switch
-        {
-            DenoiseModeLight => "Light",
-            DenoiseModeStudio => "Studio",
-            _ => "Balanced"
-        };
     }
 
     private void UpdateVideoColorPolishSettings()
@@ -3236,7 +3125,6 @@ public partial class EqualizerWindow : Window
                 camera = CameraComboBox.SelectedItem is CameraDevice camera ? camera.Name : null,
                 mode = GetSelectedCameraMode().Label,
                 denoiseEnabled = _pendingVideoDenoiseEnabled,
-                denoiseMode = _videoDenoiseMode,
                 denoiseSliderStrength = _videoDenoiseSliderStrength,
                 denoiseStrength = _pendingVideoDenoiseStrength,
                 video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
@@ -3281,7 +3169,6 @@ public partial class EqualizerWindow : Window
                 previewPipeline = "Direct3D 12 NV12 shader preview",
                 previewRenderPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 preview path unavailable",
                 previewDenoiseApplied = _pendingVideoDenoiseEnabled,
-                previewDenoiseMode = _videoDenoiseMode,
                 previewDenoiseSliderStrength = _videoDenoiseSliderStrength,
                 previewDenoiseStrength = _pendingVideoDenoiseStrength,
                 previewColorPolishApplied = false,
@@ -3306,7 +3193,6 @@ public partial class EqualizerWindow : Window
         {
             previewPipeline = FormatCpuCameraPreviewPipeline(isDirectShow),
             previewDenoiseApplied = _pendingVideoDenoiseEnabled,
-            previewDenoiseMode = _videoDenoiseMode,
             previewDenoiseSliderStrength = _videoDenoiseSliderStrength,
             previewDenoiseStrength = _pendingVideoDenoiseStrength,
             previewColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
@@ -6419,7 +6305,6 @@ public partial class EqualizerWindow : Window
             ModeFramesPerSecond = mode.FramesPerSecond,
             ModeInputFormat = mode.InputFormat,
             DenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
-            DenoiseMode = GetSelectedVideoDenoiseMode(),
             DenoiseStrength = VideoDenoiseSlider?.Value ?? _videoDenoiseSliderStrength,
             ColorPolishEnabled = VideoColorPolishCheckBox?.IsChecked == true,
             Exposure = VideoExposureSlider?.Value ?? _pendingVideoColorSettings.Exposure,
@@ -6460,16 +6345,6 @@ public partial class EqualizerWindow : Window
         if (VideoDenoiseCheckBox is not null)
         {
             VideoDenoiseCheckBox.IsChecked = profile.DenoiseEnabled;
-        }
-
-        _isApplyingCameraProfile = true;
-        try
-        {
-            SelectVideoDenoiseMode(profile.DenoiseMode);
-        }
-        finally
-        {
-            _isApplyingCameraProfile = false;
         }
 
         if (VideoDenoiseSlider is not null && double.IsFinite(profile.DenoiseStrength))
@@ -6947,8 +6822,6 @@ public partial class EqualizerWindow : Window
         public string? ModeInputFormat { get; set; }
 
         public bool DenoiseEnabled { get; set; }
-
-        public string DenoiseMode { get; set; } = DenoiseModeBalanced;
 
         public double DenoiseStrength { get; set; } = 2d;
 

@@ -55,7 +55,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     public string PreviewPathDescription => _previewPathDescription;
 
-    public void RenderBgraFrame(CameraFrame frame, long frameNumber, VideoFrameColorSettings colorSettings = default)
+    public void RenderBgraFrame(
+        CameraFrame frame,
+        long frameNumber,
+        VideoFrameColorSettings colorSettings = default,
+        bool denoiseEnabled = false,
+        double denoiseStrength = 0d)
     {
         if (_disposed)
         {
@@ -72,6 +77,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 frame.Nv12Bytes,
                 frame.Nv12Stride,
                 colorSettings,
+                denoiseEnabled,
+                denoiseStrength,
                 frameNumber);
         }
 
@@ -220,8 +227,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                                     frame.Height,
                                     frame.Nv12Stride,
                                     frame.FrameNumber,
-                                    denoiseEnabled: false,
-                                    denoiseStrength: 0d))
+                                    frame.DenoiseEnabled,
+                                    frame.DenoiseStrength))
                                 {
                                     ReportPreviewPath("DX12 NV12 upload preview");
                                     continue;
@@ -285,6 +292,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         byte[]? Nv12Bytes,
         int Nv12Stride,
         VideoFrameColorSettings ColorSettings,
+        bool DenoiseEnabled,
+        double DenoiseStrength,
         long FrameNumber);
 
     private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
@@ -877,6 +886,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandList.SetPipelineState(_nv12PreviewPipelineState);
             _commandList.SetDescriptorHeaps([_srvHeap]);
             _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
+            SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
             var viewport = new Viewport(0, 0, _width, _height);
             var scissor = new RawRect(0, 0, _width, _height);
             _commandList.RSSetViewports(viewport);
@@ -988,6 +998,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _commandList.SetPipelineState(_nv12PreviewPipelineState);
                 _commandList.SetDescriptorHeaps([_srvHeap]);
                 _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
+                SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
                 var viewport = new Viewport(0, 0, _width, _height);
                 var scissor = new RawRect(0, 0, _width, _height);
                 _commandList.RSSetViewports(viewport);
@@ -1438,9 +1449,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         private void SetNv12DenoiseConstants(int width, int height, bool denoiseEnabled, double denoiseStrength)
         {
-            var strength = (float)Math.Clamp(denoiseStrength, 0.5d, 8d);
-            var amount = denoiseEnabled ? Math.Clamp(strength / 8f, 0.06f, 1f) : 0f;
-            var edgeThreshold = denoiseEnabled ? Math.Clamp(0.018f + strength * 0.0045f, 0.02f, 0.07f) : 0f;
+            var strength = (float)Math.Clamp(denoiseStrength, 0.5d, 5d);
+            var amount = denoiseEnabled ? Math.Clamp(0.08f + strength * 0.11f, 0.14f, 0.58f) : 0f;
+            var edgeThreshold = denoiseEnabled ? Math.Clamp(0.018f + strength * 0.006f, 0.024f, 0.052f) : 0f;
             _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(amount), 0);
             _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(edgeThreshold), 1);
             _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(1f / Math.Max(1, width)), 2);
@@ -1522,7 +1533,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 };
                 var parameters = new[]
                 {
-                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel)
+                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel),
+                    new RootParameter(new RootConstants(0, 0, 4), ShaderVisibility.Pixel)
                 };
                 var samplers = new[]
                 {
@@ -1649,6 +1661,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             Texture2D<float2> CameraChroma : register(t1);
             SamplerState CameraSampler : register(s0);
 
+            cbuffer DenoiseSettings : register(b0)
+            {
+                float DenoiseAmount;
+                float DenoiseEdgeThreshold;
+                float TexelWidth;
+                float TexelHeight;
+            };
+
             struct VertexOutput
             {
                 float4 Position : SV_POSITION;
@@ -1681,9 +1701,49 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return saturate((rawY - (16.0 / 255.0)) * (255.0 / 219.0));
             }
 
+            float EdgeAwareWeight(float sampleY, float centerY)
+            {
+                return saturate(1.0 - abs(sampleY - centerY) / max(DenoiseEdgeThreshold, 0.0001));
+            }
+
+            float SampleNormalizedLuma(float2 texCoord)
+            {
+                return NormalizeLuma(CameraLuma.Sample(CameraSampler, texCoord));
+            }
+
+            float ApplyLumaDenoise(float centerY, float2 texCoord)
+            {
+                if (DenoiseAmount <= 0.001)
+                {
+                    return centerY;
+                }
+
+                float2 xOffset = float2(TexelWidth, 0.0);
+                float2 yOffset = float2(0.0, TexelHeight);
+                float leftY = SampleNormalizedLuma(texCoord - xOffset);
+                float rightY = SampleNormalizedLuma(texCoord + xOffset);
+                float upY = SampleNormalizedLuma(texCoord - yOffset);
+                float downY = SampleNormalizedLuma(texCoord + yOffset);
+
+                float centerWeight = 2.0;
+                float leftWeight = EdgeAwareWeight(leftY, centerY);
+                float rightWeight = EdgeAwareWeight(rightY, centerY);
+                float upWeight = EdgeAwareWeight(upY, centerY);
+                float downWeight = EdgeAwareWeight(downY, centerY);
+                float totalWeight = centerWeight + leftWeight + rightWeight + upWeight + downWeight;
+                float smoothedY = (
+                    centerY * centerWeight
+                    + leftY * leftWeight
+                    + rightY * rightWeight
+                    + upY * upWeight
+                    + downY * downWeight) / max(totalWeight, 0.0001);
+                return lerp(centerY, smoothedY, DenoiseAmount);
+            }
+
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
                 float y = NormalizeLuma(CameraLuma.Sample(CameraSampler, input.TexCoord));
+                y = ApplyLumaDenoise(y, input.TexCoord);
                 float2 uv = CameraChroma.Sample(CameraSampler, input.TexCoord) - float2(0.5, 0.5);
                 float3 rgb = float3(
                     y + 1.5748 * uv.y,
