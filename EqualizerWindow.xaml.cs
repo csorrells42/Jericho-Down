@@ -235,6 +235,8 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingCameraControls;
     private bool _isLoadingCameraModes;
     private bool _isCameraFrameUpdateQueued;
+    private bool _isCameraServiceStopPending;
+    private int _cameraServiceStopOperationVersion;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = 2d;
     private double _videoDenoiseSliderStrength = 2d;
@@ -1536,9 +1538,9 @@ public partial class EqualizerWindow : Window
         _isUpdatingCameraUi = true;
         try
         {
-            CameraEnabledToggle.IsEnabled = _cameraAvailable;
-            CameraComboBox.IsEnabled = _cameraAvailable;
-            CameraModeComboBox.IsEnabled = _cameraAvailable && CameraModeComboBox.Items.Count > 0;
+            CameraEnabledToggle.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
+            CameraComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
+            CameraModeComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending && CameraModeComboBox.Items.Count > 0;
 
             if (!_cameraAvailable)
             {
@@ -1560,6 +1562,11 @@ public partial class EqualizerWindow : Window
         finally
         {
             _isUpdatingCameraUi = false;
+        }
+
+        if (_isCameraServiceStopPending)
+        {
+            return;
         }
 
         if (_isCameraEnabled)
@@ -1734,8 +1741,6 @@ public partial class EqualizerWindow : Window
 
     private void StopCameraPreview(string status)
     {
-        _cameraPreviewService.Stop();
-        _directShowPreviewService.Stop();
         StopTextureNativeCameraStream();
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
@@ -1744,6 +1749,67 @@ public partial class EqualizerWindow : Window
         CameraPreviewImage.Visibility = Visibility.Collapsed;
         CameraPlaceholder.Visibility = Visibility.Visible;
         CameraPreviewStatusText.Text = status;
+        StopCameraPreviewServicesInBackground(status);
+    }
+
+    private void StopCameraPreviewServicesInBackground(string idleStatus)
+    {
+        if (_isCameraServiceStopPending)
+        {
+            CameraPreviewStatusText.Text = idleStatus;
+            return;
+        }
+
+        var operationVersion = System.Threading.Interlocked.Increment(ref _cameraServiceStopOperationVersion);
+        _isCameraServiceStopPending = true;
+        UpdateCameraEnabledState();
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                _cameraPreviewService.Stop();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                _directShowPreviewService.Stop();
+            }
+            catch
+            {
+            }
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (operationVersion != System.Threading.Volatile.Read(ref _cameraServiceStopOperationVersion))
+                {
+                    return;
+                }
+
+                _isCameraServiceStopPending = false;
+                _isUpdatingCameraUi = true;
+                try
+                {
+                    CameraEnabledToggle.IsEnabled = _cameraAvailable;
+                    CameraComboBox.IsEnabled = _cameraAvailable;
+                    CameraModeComboBox.IsEnabled = _cameraAvailable && CameraModeComboBox.Items.Count > 0;
+                    CameraEnabledToggle.IsChecked = _isCameraEnabled;
+                    CameraEnabledToggle.Content = _isCameraEnabled ? "Camera On" : _cameraAvailable ? "Camera Off" : "No Camera";
+                }
+                finally
+                {
+                    _isUpdatingCameraUi = false;
+                }
+
+                if (!_isCameraEnabled)
+                {
+                    CameraPreviewStatusText.Text = idleStatus;
+                }
+            }, DispatcherPriority.Background);
+        });
     }
 
     private void StopTextureNativeCameraStream()

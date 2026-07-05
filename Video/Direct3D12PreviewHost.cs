@@ -22,6 +22,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     private const int WsClipSiblings = 0x04000000;
     private const int SwpNoZOrder = 0x0004;
     private const int SwpNoActivate = 0x0010;
+    private static readonly TimeSpan RendererDisposeLockTimeout = TimeSpan.FromMilliseconds(250);
 
     private IntPtr _hwnd;
     private IntPtr _nativeD3D12Device;
@@ -177,84 +178,91 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     private void RenderWorkerLoop()
     {
-        while (true)
+        try
         {
-            _renderFrameReady.WaitOne();
-
             while (true)
             {
-                QueuedCameraFrame? frame;
-                lock (_renderWorkerLock)
+                _renderFrameReady.WaitOne();
+
+                while (true)
                 {
-                    if (_renderWorkerStopping)
+                    QueuedCameraFrame? frame;
+                    lock (_renderWorkerLock)
                     {
-                        return;
-                    }
-
-                    frame = _pendingCameraFrame;
-                    _pendingCameraFrame = null;
-                }
-
-                if (frame is null)
-                {
-                    break;
-                }
-
-                try
-                {
-                    lock (_rendererLock)
-                    {
-                        if (_renderer is null)
+                        if (_renderWorkerStopping)
                         {
-                            break;
+                            return;
                         }
 
-                        if (frame.Nv12Bytes is { Length: > 0 } nv12Bytes && frame.Nv12Stride > 0)
+                        frame = _pendingCameraFrame;
+                        _pendingCameraFrame = null;
+                    }
+
+                    if (frame is null)
+                    {
+                        break;
+                    }
+
+                    try
+                    {
+                        lock (_rendererLock)
                         {
-                            if (_renderer.RenderNv12Frame(
-                                nv12Bytes,
-                                frame.Width,
-                                frame.Height,
-                                frame.Nv12Stride,
-                                frame.FrameNumber,
-                                denoiseEnabled: false,
-                                denoiseStrength: 0d))
+                            if (_renderer is null)
                             {
-                                ReportPreviewPath("DX12 NV12 upload preview");
-                                continue;
+                                break;
                             }
 
-                            StatusChanged?.Invoke(
-                                this,
-                                $"DX12 NV12 preview renderer refused {frame.Width}x{frame.Height}, stride {frame.Nv12Stride}, bytes {nv12Bytes.Length}: {_renderer.LastNv12PreviewFailureReason}");
+                            if (frame.Nv12Bytes is { Length: > 0 } nv12Bytes && frame.Nv12Stride > 0)
+                            {
+                                if (_renderer.RenderNv12Frame(
+                                    nv12Bytes,
+                                    frame.Width,
+                                    frame.Height,
+                                    frame.Nv12Stride,
+                                    frame.FrameNumber,
+                                    denoiseEnabled: false,
+                                    denoiseStrength: 0d))
+                                {
+                                    ReportPreviewPath("DX12 NV12 upload preview");
+                                    continue;
+                                }
+
+                                StatusChanged?.Invoke(
+                                    this,
+                                    $"DX12 NV12 preview renderer refused {frame.Width}x{frame.Height}, stride {frame.Nv12Stride}, bytes {nv12Bytes.Length}: {_renderer.LastNv12PreviewFailureReason}");
+                            }
+
+                            if (frame.BgraBytes.Length <= 0 || frame.Stride <= 0)
+                            {
+                                StatusChanged?.Invoke(this, "DX12 preview skipped: frame had no renderable BGRA or NV12 payload.");
+                                break;
+                            }
+
+                            _renderer.RenderBgraFrame(
+                                frame.BgraBytes,
+                                frame.Width,
+                                frame.Height,
+                                frame.Stride,
+                                frame.FrameNumber,
+                                frame.ColorSettings);
                         }
 
-                        if (frame.BgraBytes.Length <= 0 || frame.Stride <= 0)
-                        {
-                            StatusChanged?.Invoke(this, "DX12 preview skipped: frame had no renderable BGRA or NV12 payload.");
-                            break;
-                        }
-
-                        _renderer.RenderBgraFrame(
-                            frame.BgraBytes,
-                            frame.Width,
-                            frame.Height,
-                            frame.Stride,
-                            frame.FrameNumber,
-                            frame.ColorSettings);
+                        ReportPreviewPath("DX12 BGRA upload preview");
                     }
-
-                    ReportPreviewPath("DX12 BGRA upload preview");
-                }
-                catch (Exception ex)
-                {
-                    StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
+                    catch (Exception ex)
+                    {
+                        StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
+                    }
                 }
             }
         }
+        finally
+        {
+            DisposeRenderer();
+        }
     }
 
-    private void StopRenderWorker()
+    private bool StopRenderWorker()
     {
         lock (_renderWorkerLock)
         {
@@ -263,9 +271,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
 
         _renderFrameReady.Set();
-        _renderThread?.Join(TimeSpan.FromSeconds(2));
+        var stopped = _renderThread?.Join(TimeSpan.FromSeconds(2)) != false;
         _renderThread = null;
         _renderFrameReady.Dispose();
+        return stopped;
     }
 
     private sealed record QueuedCameraFrame(
@@ -355,7 +364,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     protected override void DestroyWindowCore(HandleRef hwnd)
     {
-        DisposeRenderer();
+        TryDisposeRenderer("window destroy");
         if (hwnd.Handle != IntPtr.Zero)
         {
             DestroyWindow(hwnd.Handle);
@@ -396,8 +405,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
 
         _disposed = true;
-        StopRenderWorker();
-        DisposeRenderer();
+        if (!StopRenderWorker())
+        {
+            StatusChanged?.Invoke(this, "DX12 preview stop is waiting for the render worker to leave the driver.");
+        }
+
         var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
         if (nativeDevice != IntPtr.Zero)
         {
@@ -411,9 +423,32 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     {
         lock (_rendererLock)
         {
-            _renderer?.Dispose();
-            _renderer = null;
+            DisposeRendererCore();
         }
+    }
+
+    private void TryDisposeRenderer(string context)
+    {
+        if (!Monitor.TryEnter(_rendererLock, RendererDisposeLockTimeout))
+        {
+            StatusChanged?.Invoke(this, $"DX12 preview {context} deferred because the renderer is busy.");
+            return;
+        }
+
+        try
+        {
+            DisposeRendererCore();
+        }
+        finally
+        {
+            Monitor.Exit(_rendererLock);
+        }
+    }
+
+    private void DisposeRendererCore()
+    {
+        _renderer?.Dispose();
+        _renderer = null;
     }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
