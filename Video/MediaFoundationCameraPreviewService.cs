@@ -381,11 +381,6 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                             _denoiser.Reset();
                         }
 
-                        if (frame.HasBgra)
-                        {
-                            VideoFrameColorProcessor.Apply(frame.BgraBytes, ColorSettings);
-                        }
-
                         lock (_recordingLock)
                         {
                             try
@@ -393,7 +388,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                                 if (_recorder is not null && frame.HasBgra)
                                 {
                                     EnsureRecorderMatchesFrame(frame);
-                                    if (_recorder?.WriteFrame(frame.BgraBytes) == false)
+                                    if (_recorder?.WriteFrame(CreateRecordingFrameBytes(frame.BgraBytes)) == false)
                                     {
                                         StatusChanged?.Invoke(this, "Video frame write skipped: frame did not match the active recorder format.");
                                     }
@@ -406,7 +401,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                                         frame.Height,
                                         _activeFramesPerSecond,
                                         d3dManager: null);
-                                    _recorder.WriteFrame(frame.BgraBytes);
+                                    _recorder.WriteFrame(CreateRecordingFrameBytes(frame.BgraBytes));
                                 }
 
                                 if (_recordingStopRequested && _recorder is not null)
@@ -608,6 +603,18 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     }
 
     private static byte ClampByte(double value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
+
+    private byte[] CreateRecordingFrameBytes(byte[] bgraBytes)
+    {
+        if (!ColorSettings.HasVisibleAdjustments)
+        {
+            return bgraBytes;
+        }
+
+        var processed = (byte[])bgraBytes.Clone();
+        VideoFrameColorProcessor.Apply(processed, ColorSettings);
+        return processed;
+    }
 
     private void CleanupPreviewObjects()
     {

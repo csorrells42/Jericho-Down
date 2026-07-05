@@ -468,8 +468,6 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             _denoiser.Reset();
         }
 
-        VideoFrameColorProcessor.Apply(bytes, ColorSettings);
-
         var frame = new CameraFrame(bytes, width, height, stride);
 
         lock (_recordingLock)
@@ -479,7 +477,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
                 if (_recorder is not null)
                 {
                     EnsureRecorderMatchesFrame(frame);
-                    if (_recorder?.WriteFrame(frame.BgraBytes) == false)
+                    if (_recorder?.WriteFrame(CreateRecordingFrameBytes(frame.BgraBytes)) == false)
                     {
                         LastStatus = "DirectShow video frame write skipped: frame did not match the active recorder format.";
                         StatusChanged?.Invoke(this, LastStatus);
@@ -494,7 +492,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
                         frame.Height,
                         _framesPerSecond,
                         d3dManager: null);
-                    _recorder.WriteFrame(frame.BgraBytes);
+                    _recorder.WriteFrame(CreateRecordingFrameBytes(frame.BgraBytes));
                 }
 
                 if (_recordingStopRequested && _recorder is not null)
@@ -513,6 +511,18 @@ public sealed class DirectShowCameraPreviewService : IDisposable
         }
 
         FrameAvailable?.Invoke(this, frame);
+    }
+
+    private byte[] CreateRecordingFrameBytes(byte[] bgraBytes)
+    {
+        if (!ColorSettings.HasVisibleAdjustments)
+        {
+            return bgraBytes;
+        }
+
+        var processed = (byte[])bgraBytes.Clone();
+        VideoFrameColorProcessor.Apply(processed, ColorSettings);
+        return processed;
     }
 
     private void EnsureRecorderMatchesFrame(CameraFrame frame)

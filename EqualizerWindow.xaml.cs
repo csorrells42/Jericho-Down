@@ -1861,7 +1861,8 @@ public partial class EqualizerWindow : Window
             {
                 _direct3D12PreviewHost.RenderBgraFrame(
                     latestFrame,
-                    System.Threading.Interlocked.Increment(ref _cameraBgraPreviewFrameNumber));
+                    System.Threading.Interlocked.Increment(ref _cameraBgraPreviewFrameNumber),
+                    _pendingVideoColorSettings);
                 CameraPreviewImage.Visibility = Visibility.Collapsed;
             }
             else
@@ -2559,14 +2560,14 @@ public partial class EqualizerWindow : Window
         if (_textureNativeCameraStream is not null)
         {
             CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
-                ? "Color polish is ready for CPU preview/recording. The current DX12 texture preview remains raw."
+                ? "Color polish is armed for CPU fallback/recording. The current DX12 texture preview remains raw."
                 : "Color polish is neutral.";
             return;
         }
 
         CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
-            ? "Color polish is live on the CPU preview and CPU recording path."
-            : "Color polish is neutral on the CPU preview and recording path.";
+            ? "Color polish is live on the DX12 preview shader and recording path."
+            : "Color polish is neutral on the preview and recording path.";
     }
 
     private void ApplyVideoColorSettingsToCpuServices()
@@ -2868,12 +2869,12 @@ public partial class EqualizerWindow : Window
             recordingColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
             recordingMatchesPreviewColor = true,
             note = _pendingVideoDenoiseEnabled && _pendingVideoColorSettings.HasVisibleAdjustments
-                ? "CPU preview denoise and color polish were applied before recording frames were written."
+                ? "Preview denoise was applied and color polish was mirrored into recording frames."
                 : _pendingVideoDenoiseEnabled
-                ? "CPU preview denoise was applied before recording frames were written."
+                ? "Preview denoise was applied before recording frames were written."
                 : _pendingVideoColorSettings.HasVisibleAdjustments
-                    ? "CPU preview color polish was applied before recording frames were written."
-                : "CPU preview denoise was off."
+                    ? "Color polish was applied by the DX12 preview shader and mirrored into recording frames."
+                : "Preview denoise was off."
         };
     }
 
@@ -3813,7 +3814,7 @@ public partial class EqualizerWindow : Window
             if (_pendingVideoColorSettings.HasVisibleAdjustments)
             {
                 isGood = false;
-                return "color polish is CPU-only; DX12 texture path is raw";
+                return "DX12 texture preview color is raw";
             }
 
             if ((_pendingVideoDenoiseEnabled || _pendingVideoColorSettings.HasVisibleAdjustments) && !_processedTextureRecordingEnabled)
@@ -3831,17 +3832,17 @@ public partial class EqualizerWindow : Window
         isGood = true;
         if (_pendingVideoDenoiseEnabled && _pendingVideoColorSettings.HasVisibleAdjustments)
         {
-            return "preview = CPU recording with denoise + color";
+            return "preview matches recording with denoise + color";
         }
 
         if (_pendingVideoDenoiseEnabled)
         {
-            return "preview = CPU recording with denoise";
+            return "preview matches recording with denoise";
         }
 
         return _pendingVideoColorSettings.HasVisibleAdjustments
-            ? "preview = CPU recording with color"
-            : "preview = CPU recording";
+            ? "preview matches recording with color"
+            : "preview matches recording";
     }
 
     private string FormatActiveVideoPipeline()
@@ -3859,7 +3860,7 @@ public partial class EqualizerWindow : Window
         if (_textureNativeCameraStream is not null)
         {
             var previewPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 texture preview pending";
-            var colorStatus = _pendingVideoColorSettings.HasVisibleAdjustments ? "; CPU color polish armed" : string.Empty;
+            var colorStatus = _pendingVideoColorSettings.HasVisibleAdjustments ? "; texture preview color raw" : string.Empty;
             return $"{previewPath}; recording {(_processedTextureRecordingEnabled ? "processed bridge" : "raw texture-native")}{colorStatus}";
         }
 

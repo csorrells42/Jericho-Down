@@ -54,7 +54,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     public string PreviewPathDescription => _previewPathDescription;
 
-    public void RenderBgraFrame(CameraFrame frame, long frameNumber)
+    public void RenderBgraFrame(CameraFrame frame, long frameNumber, VideoFrameColorSettings colorSettings = default)
     {
         if (_disposed)
         {
@@ -70,6 +70,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 frame.Stride,
                 frame.Nv12Bytes,
                 frame.Nv12Stride,
+                colorSettings,
                 frameNumber);
         }
 
@@ -230,7 +231,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                             frame.Width,
                             frame.Height,
                             frame.Stride,
-                            frame.FrameNumber);
+                            frame.FrameNumber,
+                            frame.ColorSettings);
                     }
 
                     ReportPreviewPath("DX12 BGRA upload preview");
@@ -264,6 +266,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         int Stride,
         byte[]? Nv12Bytes,
         int Nv12Stride,
+        VideoFrameColorSettings ColorSettings,
         long FrameNumber);
 
     private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
@@ -436,6 +439,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     {
         private const int FrameCount = 3;
         private const int D3D12DefaultShader4ComponentMappingValue = 5768;
+        private const int BgraColorSettingsDescriptorStart = 3;
+        private const int BgraColorSettingsBufferBytes = 256;
 
         private readonly ID3D12Device _device;
         private readonly ID3D12CommandQueue _commandQueue;
@@ -524,7 +529,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _srvHeap = _device.CreateDescriptorHeap<ID3D12DescriptorHeap>(
                 new DescriptorHeapDescription(
                     DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView,
-                    3,
+                    BgraColorSettingsDescriptorStart + FrameCount,
                     DescriptorHeapFlags.ShaderVisible));
             _rtvDescriptorSize = (int)_device.GetDescriptorHandleIncrementSize(DescriptorHeapType.RenderTargetView);
             _srvDescriptorSize = (int)_device.GetDescriptorHandleIncrementSize(DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView);
@@ -536,6 +541,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             {
                 _frameResources[i] = new FrameResource(
                     _device.CreateCommandAllocator<ID3D12CommandAllocator>(CommandListType.Direct));
+                _frameResources[i].CreateBgraColorSettingsBuffer(_device, BgraColorSettingsBufferBytes);
+                _device.CreateConstantBufferView(
+                    new ConstantBufferViewDescription
+                    {
+                        BufferLocation = _frameResources[i].BgraColorSettingsBuffer!.GPUVirtualAddress,
+                        SizeInBytes = BgraColorSettingsBufferBytes
+                    },
+                    GetSrvCpuHandle(BgraColorSettingsDescriptorStart + i));
             }
 
             _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList>(
@@ -586,7 +599,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             ExecuteAndPresent(frameResource);
         }
 
-        public unsafe void RenderBgraFrame(byte[] bgraBytes, int width, int height, int stride, long frameNumber)
+        public unsafe void RenderBgraFrame(
+            byte[] bgraBytes,
+            int width,
+            int height,
+            int stride,
+            long frameNumber,
+            VideoFrameColorSettings colorSettings = default)
         {
             if (_disposed || bgraBytes.Length < stride * height)
             {
@@ -598,7 +617,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 Resize(width, height);
             }
 
-            if (TryRenderBgraFrameWithShader(bgraBytes, width, height, stride))
+            if (TryRenderBgraFrameWithShader(bgraBytes, width, height, stride, colorSettings))
             {
                 return;
             }
@@ -888,7 +907,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
         }
 
-        private unsafe bool TryRenderBgraFrameWithShader(byte[] bgraBytes, int width, int height, int stride)
+        private unsafe bool TryRenderBgraFrameWithShader(
+            byte[] bgraBytes,
+            int width,
+            int height,
+            int stride,
+            VideoFrameColorSettings colorSettings)
         {
             if (_shaderPreviewUnavailable || _previewRootSignature is null || _previewPipelineState is null)
             {
@@ -907,6 +931,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 }
 
                 CopyBgraFrameToUploadBuffer(frameResource, bgraBytes, width, height, stride);
+                WriteBgraColorSettings(frameResource, colorSettings);
 
                 var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
 
@@ -946,6 +971,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _commandList.SetPipelineState(_previewPipelineState);
                 _commandList.SetDescriptorHeaps([_srvHeap]);
                 _commandList.SetGraphicsRootDescriptorTable(0, _srvHeap.GetGPUDescriptorHandleForHeapStart());
+                _commandList.SetGraphicsRootDescriptorTable(1, GetSrvGpuHandle(BgraColorSettingsDescriptorStart + frameIndex));
                 var viewport = new Viewport(0, 0, _width, _height);
                 var scissor = new RawRect(0, 0, _width, _height);
                 _commandList.RSSetViewports(viewport);
@@ -1248,6 +1274,21 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
         }
 
+        private unsafe void WriteBgraColorSettings(FrameResource frameResource, VideoFrameColorSettings settings)
+        {
+            var mappedData = (float*)frameResource.BgraColorSettingsPointer;
+            if (mappedData == null)
+            {
+                throw new InvalidOperationException("DX12 BGRA color settings buffer is not mapped.");
+            }
+
+            var hasColor = settings.HasVisibleAdjustments;
+            mappedData[0] = hasColor ? (float)(Math.Clamp(settings.Exposure, -30d, 30d) * 2.2d) : 0f;
+            mappedData[1] = hasColor ? (float)(1d + Math.Clamp(settings.Contrast, -40d, 40d) / 100d) : 1f;
+            mappedData[2] = hasColor ? (float)(1d + Math.Clamp(settings.Saturation, -40d, 40d) / 100d) : 1f;
+            mappedData[3] = hasColor ? (float)(Math.Clamp(settings.Warmth, -40d, 40d) * 0.9d) : 0f;
+        }
+
         private unsafe void CopyNv12FrameToUploadBuffers(
             FrameResource frameResource,
             byte[] nv12Bytes,
@@ -1307,13 +1348,18 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             {
                 var vertexShader = CompileShader("VSMain", "vs_5_0");
                 var pixelShader = CompileShader("PSMain", "ps_5_0");
-                var ranges = new[]
+                var textureRanges = new[]
                 {
                     new DescriptorRange(DescriptorRangeType.ShaderResourceView, 1, 0)
                 };
+                var colorRanges = new[]
+                {
+                    new DescriptorRange(DescriptorRangeType.ConstantBufferView, 1, 0)
+                };
                 var parameters = new[]
                 {
-                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel)
+                    new RootParameter(new RootDescriptorTable(textureRanges), ShaderVisibility.Pixel),
+                    new RootParameter(new RootDescriptorTable(colorRanges), ShaderVisibility.Pixel)
                 };
                 var samplers = new[]
                 {
@@ -1439,6 +1485,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             Texture2D<float4> CameraFrame : register(t0);
             SamplerState CameraSampler : register(s0);
 
+            cbuffer ColorSettings : register(b0)
+            {
+                float ExposureOffset;
+                float Contrast;
+                float Saturation;
+                float Warmth;
+            };
+
             struct VertexOutput
             {
                 float4 Position : SV_POSITION;
@@ -1466,10 +1520,22 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return output;
             }
 
+            float3 ApplyColorPolish(float3 rgb)
+            {
+                float3 rgb255 = rgb * 255.0;
+                rgb255.r = ((rgb255.r + ExposureOffset + Warmth - 128.0) * Contrast) + 128.0;
+                rgb255.g = ((rgb255.g + ExposureOffset - 128.0) * Contrast) + 128.0;
+                rgb255.b = ((rgb255.b + ExposureOffset - Warmth - 128.0) * Contrast) + 128.0;
+
+                float luma = dot(rgb255, float3(0.2126, 0.7152, 0.0722));
+                rgb255 = luma + (rgb255 - luma) * Saturation;
+                return saturate(rgb255 / 255.0);
+            }
+
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
                 float4 color = CameraFrame.Sample(CameraSampler, input.TexCoord);
-                return float4(saturate(color.rgb), 1.0);
+                return float4(ApplyColorPolish(color.rgb), 1.0);
             }
             """;
 
@@ -1693,6 +1759,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
             public IntPtr CameraUploadPointer { get; private set; }
 
+            public ID3D12Resource? BgraColorSettingsBuffer { get; private set; }
+
+            public IntPtr BgraColorSettingsPointer { get; private set; }
+
             public ID3D12Resource? Nv12YUploadBuffer { get; private set; }
 
             public IntPtr Nv12YUploadPointer { get; private set; }
@@ -1708,6 +1778,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 ReleaseCameraUploadBuffer();
                 CameraUploadBuffer = CreateMappedUploadBuffer(device, uploadBytes, out var mappedPointer);
                 CameraUploadPointer = mappedPointer;
+            }
+
+            public unsafe void CreateBgraColorSettingsBuffer(ID3D12Device device, ulong uploadBytes)
+            {
+                ReleaseBgraColorSettingsBuffer();
+                BgraColorSettingsBuffer = CreateMappedUploadBuffer(device, uploadBytes, out var mappedPointer);
+                BgraColorSettingsPointer = mappedPointer;
             }
 
             public unsafe void CreateNv12UploadBuffers(ID3D12Device device, ulong yUploadBytes, ulong uvUploadBytes)
@@ -1729,6 +1806,18 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 }
 
                 CameraUploadPointer = IntPtr.Zero;
+            }
+
+            public void ReleaseBgraColorSettingsBuffer()
+            {
+                if (BgraColorSettingsBuffer is not null)
+                {
+                    BgraColorSettingsBuffer.Unmap(0, null);
+                    BgraColorSettingsBuffer.Dispose();
+                    BgraColorSettingsBuffer = null;
+                }
+
+                BgraColorSettingsPointer = IntPtr.Zero;
             }
 
             public void ReleaseNv12UploadBuffers()
@@ -1754,6 +1843,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             public void Dispose()
             {
                 ReleaseCameraUploadBuffer();
+                ReleaseBgraColorSettingsBuffer();
                 ReleaseNv12UploadBuffers();
                 CommandAllocator.Dispose();
             }
