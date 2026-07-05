@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
 using SharpGen.Runtime;
@@ -24,13 +25,25 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     private IntPtr _hwnd;
     private IntPtr _nativeD3D12Device;
+    private readonly object _rendererLock = new();
+    private readonly object _renderWorkerLock = new();
+    private readonly AutoResetEvent _renderFrameReady = new(false);
     private Direct3D12SwapChainRenderer? _renderer;
+    private Thread? _renderThread;
+    private QueuedBgraFrame? _pendingBgraFrame;
     private string _previewPathDescription = "DX12 preview path pending";
+    private bool _renderWorkerStopping;
     private bool _disposed;
 
     public Direct3D12PreviewHost(IntPtr nativeD3D12Device = default)
     {
         _nativeD3D12Device = nativeD3D12Device;
+        _renderThread = new Thread(RenderWorkerLoop)
+        {
+            IsBackground = true,
+            Name = "Podcast Workbench DX12 preview"
+        };
+        _renderThread.Start();
     }
 
     public event EventHandler<string>? StatusChanged;
@@ -43,25 +56,22 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     public void RenderBgraFrame(CameraFrame frame, long frameNumber)
     {
-        if (_renderer is null)
+        if (_disposed)
         {
             return;
         }
 
-        try
+        lock (_renderWorkerLock)
         {
-            _renderer.RenderBgraFrame(
+            _pendingBgraFrame = new QueuedBgraFrame(
                 frame.BgraBytes,
                 frame.Width,
                 frame.Height,
                 frame.Stride,
                 frameNumber);
-            ReportPreviewPath("DX12 BGRA upload preview");
         }
-        catch (Exception ex)
-        {
-            StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
-        }
+
+        _renderFrameReady.Set();
     }
 
     public void RenderProofFrame(TextureNativeFrameInfo frame)
@@ -73,7 +83,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         try
         {
-            _renderer.RenderProofFrame(frame.FrameNumber);
+            lock (_rendererLock)
+            {
+                _renderer.RenderProofFrame(frame.FrameNumber);
+            }
         }
         catch (Exception ex)
         {
@@ -90,45 +103,48 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         try
         {
-            string? directTextureFailureReason = null;
-            if (frame.IsValid
-                && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
-                && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength, out directTextureFailureReason))
+            lock (_rendererLock)
             {
-                ReportPreviewPath("direct DX12 texture");
-                return;
-            }
-
-            if (frame.Nv12PreviewBytes is not null && frame.Nv12PreviewStride > 0)
-            {
-                if (_renderer.RenderNv12Frame(
-                    frame.Nv12PreviewBytes,
-                    frame.Width,
-                    frame.Height,
-                    frame.Nv12PreviewStride,
-                    frame.FrameNumber,
-                    denoiseEnabled,
-                    denoiseStrength))
+                string? directTextureFailureReason = null;
+                if (frame.IsValid
+                    && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
+                    && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength, out directTextureFailureReason))
                 {
-                    ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", directTextureFailureReason));
+                    ReportPreviewPath("direct DX12 texture");
                     return;
                 }
-            }
 
-            if (frame.BgraPreviewBytes is not null && frame.BgraPreviewStride > 0)
-            {
-                _renderer.RenderBgraFrame(
-                    frame.BgraPreviewBytes,
-                    frame.Width,
-                    frame.Height,
-                    frame.BgraPreviewStride,
-                    frame.FrameNumber);
-                ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", directTextureFailureReason));
-                return;
-            }
+                if (frame.Nv12PreviewBytes is not null && frame.Nv12PreviewStride > 0)
+                {
+                    if (_renderer.RenderNv12Frame(
+                        frame.Nv12PreviewBytes,
+                        frame.Width,
+                        frame.Height,
+                        frame.Nv12PreviewStride,
+                        frame.FrameNumber,
+                        denoiseEnabled,
+                        denoiseStrength))
+                    {
+                        ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", directTextureFailureReason));
+                        return;
+                    }
+                }
 
-            _renderer.RenderProofFrame(frame.FrameNumber);
-            ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", directTextureFailureReason));
+                if (frame.BgraPreviewBytes is not null && frame.BgraPreviewStride > 0)
+                {
+                    _renderer.RenderBgraFrame(
+                        frame.BgraPreviewBytes,
+                        frame.Width,
+                        frame.Height,
+                        frame.BgraPreviewStride,
+                        frame.FrameNumber);
+                    ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", directTextureFailureReason));
+                    return;
+                }
+
+                _renderer.RenderProofFrame(frame.FrameNumber);
+                ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", directTextureFailureReason));
+            }
         }
         catch (Exception ex)
         {
@@ -146,6 +162,74 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         _previewPathDescription = description;
         StatusChanged?.Invoke(this, $"DX12 preview path: {description}");
     }
+
+    private void RenderWorkerLoop()
+    {
+        while (true)
+        {
+            _renderFrameReady.WaitOne();
+
+            while (true)
+            {
+                QueuedBgraFrame? frame;
+                lock (_renderWorkerLock)
+                {
+                    if (_renderWorkerStopping)
+                    {
+                        return;
+                    }
+
+                    frame = _pendingBgraFrame;
+                    _pendingBgraFrame = null;
+                }
+
+                if (frame is null)
+                {
+                    break;
+                }
+
+                try
+                {
+                    lock (_rendererLock)
+                    {
+                        if (_renderer is null)
+                        {
+                            break;
+                        }
+
+                        _renderer.RenderBgraFrame(
+                            frame.BgraBytes,
+                            frame.Width,
+                            frame.Height,
+                            frame.Stride,
+                            frame.FrameNumber);
+                    }
+
+                    ReportPreviewPath("DX12 BGRA upload preview");
+                }
+                catch (Exception ex)
+                {
+                    StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private void StopRenderWorker()
+    {
+        lock (_renderWorkerLock)
+        {
+            _renderWorkerStopping = true;
+            _pendingBgraFrame = null;
+        }
+
+        _renderFrameReady.Set();
+        _renderThread?.Join(TimeSpan.FromSeconds(2));
+        _renderThread = null;
+        _renderFrameReady.Dispose();
+    }
+
+    private sealed record QueuedBgraFrame(byte[] BgraBytes, int Width, int Height, int Stride, long FrameNumber);
 
     private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
     {
@@ -189,11 +273,15 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
             try
             {
-                _renderer = new Direct3D12SwapChainRenderer(
-                _hwnd,
-                    Math.Max(1, (int)ActualWidth),
-                    Math.Max(1, (int)ActualHeight),
-                    nativeDevice);
+                lock (_rendererLock)
+                {
+                    _renderer = new Direct3D12SwapChainRenderer(
+                        _hwnd,
+                        Math.Max(1, (int)ActualWidth),
+                        Math.Max(1, (int)ActualHeight),
+                        nativeDevice);
+                }
+
                 nativeDevice = IntPtr.Zero;
             }
             finally
@@ -205,7 +293,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
 
             StatusChanged?.Invoke(this, $"{_renderer.DeviceDescription} preview surface ready.");
-            _renderer.RenderProofFrame(0);
+            lock (_rendererLock)
+            {
+                _renderer.RenderProofFrame(0);
+            }
         }
         catch (Exception ex)
         {
@@ -239,7 +330,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, width, height, SwpNoZOrder | SwpNoActivate);
         try
         {
-            _renderer?.Resize(width, height);
+            lock (_rendererLock)
+            {
+                _renderer?.Resize(width, height);
+            }
         }
         catch (Exception ex)
         {
@@ -255,6 +349,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         }
 
         _disposed = true;
+        StopRenderWorker();
         DisposeRenderer();
         var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
         if (nativeDevice != IntPtr.Zero)
@@ -267,8 +362,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     private void DisposeRenderer()
     {
-        _renderer?.Dispose();
-        _renderer = null;
+        lock (_rendererLock)
+        {
+            _renderer?.Dispose();
+            _renderer = null;
+        }
     }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -301,13 +399,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
     private sealed class Direct3D12SwapChainRenderer : IDisposable
     {
-        private const int FrameCount = 2;
+        private const int FrameCount = 3;
         private const int D3D12DefaultShader4ComponentMappingValue = 5768;
 
         private readonly ID3D12Device _device;
         private readonly ID3D12CommandQueue _commandQueue;
         private readonly IDXGIFactory4 _factory;
-        private readonly ID3D12CommandAllocator _commandAllocator;
         private readonly ID3D12GraphicsCommandList _commandList;
         private readonly ID3D12Fence _fence;
         private readonly AutoResetEvent _fenceEvent = new(false);
@@ -320,21 +417,18 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private ID3D12PipelineState? _previewPipelineState;
         private ID3D12RootSignature? _nv12PreviewRootSignature;
         private ID3D12PipelineState? _nv12PreviewPipelineState;
+        private readonly FrameResource[] _frameResources = new FrameResource[FrameCount];
         private ID3D12Resource? _cameraTexture;
-        private ID3D12Resource? _cameraUploadBuffer;
         private PlacedSubresourceFootPrint _cameraTextureFootprint;
         private ResourceStates _cameraTextureState;
         private ID3D12Resource? _nv12YTexture;
         private ID3D12Resource? _nv12UvTexture;
-        private ID3D12Resource? _nv12YUploadBuffer;
-        private ID3D12Resource? _nv12UvUploadBuffer;
         private PlacedSubresourceFootPrint _nv12YFootprint;
         private PlacedSubresourceFootPrint _nv12UvFootprint;
         private ResourceStates _nv12YTextureState;
         private ResourceStates _nv12UvTextureState;
         private IDXGISwapChain3 _swapChain;
         private ulong _fenceValue;
-        private ulong _lastSubmittedFrameFenceValue;
         private int _cameraTextureWidth;
         private int _cameraTextureHeight;
         private int _nv12TextureWidth;
@@ -402,11 +496,16 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             TryCreatePreviewShaderPipeline();
             TryCreateNv12PreviewShaderPipeline();
 
-            _commandAllocator = _device.CreateCommandAllocator<ID3D12CommandAllocator>(CommandListType.Direct);
+            for (var i = 0; i < FrameCount; i++)
+            {
+                _frameResources[i] = new FrameResource(
+                    _device.CreateCommandAllocator<ID3D12CommandAllocator>(CommandListType.Direct));
+            }
+
             _commandList = _device.CreateCommandList<ID3D12GraphicsCommandList>(
                 0,
                 CommandListType.Direct,
-                _commandAllocator,
+                _frameResources[0].CommandAllocator,
                 null);
             _commandList.Close();
             _fence = _device.CreateFence<ID3D12Fence>(0);
@@ -423,11 +522,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return;
             }
 
-            WaitForSubmittedFrame();
-            var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var frameResource = BeginFrame(out var frameIndex);
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
-            _commandAllocator.Reset();
-            _commandList.Reset(_commandAllocator);
 
             var toRenderTarget = ResourceBarrier.BarrierTransition(
                 renderTarget,
@@ -449,10 +545,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 ResourceStates.RenderTarget,
                 ResourceStates.Present);
             _commandList.ResourceBarrier([toPresent]);
-            _commandList.Close();
-            _commandQueue.ExecuteCommandList(_commandList);
-            _swapChain.Present(0, PresentFlags.None);
-            SignalFrameSubmitted();
+            ExecuteAndPresent(frameResource);
         }
 
         public unsafe void RenderBgraFrame(byte[] bgraBytes, int width, int height, int stride, long frameNumber)
@@ -595,11 +688,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _device.CreateShaderResourceView(cameraResource, ySrvDescription, GetSrvCpuHandle(1));
             _device.CreateShaderResourceView(cameraResource, uvSrvDescription, GetSrvCpuHandle(2));
 
-            WaitForSubmittedFrame();
-            var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var frameResource = BeginFrame(out var frameIndex);
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
-            _commandAllocator.Reset();
-            _commandList.Reset(_commandAllocator);
 
             var cameraToPixelShaderResource = ResourceBarrier.BarrierTransition(
                 cameraResource,
@@ -634,10 +724,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 ResourceStates.PixelShaderResource,
                 ResourceStates.Common);
             _commandList.ResourceBarrier([toPresent, cameraToCommon]);
-            _commandList.Close();
-            _commandQueue.ExecuteCommandList(_commandList);
-            _swapChain.Present(0, PresentFlags.None);
-            SignalFrameSubmitted();
+            ExecuteAndPresent(frameResource);
         }
 
         private unsafe bool TryRenderNv12FrameWithShader(
@@ -658,20 +745,17 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 EnsureNv12Textures(width, height);
                 var yTexture = _nv12YTexture;
                 var uvTexture = _nv12UvTexture;
-                var yUploadBuffer = _nv12YUploadBuffer;
-                var uvUploadBuffer = _nv12UvUploadBuffer;
+                var frameResource = BeginFrame(out var frameIndex);
+                var yUploadBuffer = frameResource.Nv12YUploadBuffer;
+                var uvUploadBuffer = frameResource.Nv12UvUploadBuffer;
                 if (yTexture is null || uvTexture is null || yUploadBuffer is null || uvUploadBuffer is null)
                 {
                     return false;
                 }
 
-                WaitForSubmittedFrame();
-                CopyNv12FrameToUploadBuffers(yUploadBuffer, uvUploadBuffer, nv12Bytes, width, height, stride);
+                CopyNv12FrameToUploadBuffers(frameResource, nv12Bytes, width, height, stride);
 
-                var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
                 var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
-                _commandAllocator.Reset();
-                _commandList.Reset(_commandAllocator);
 
                 if (_nv12YTextureState != ResourceStates.CopyDest)
                 {
@@ -745,10 +829,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     ResourceStates.RenderTarget,
                     ResourceStates.Present);
                 _commandList.ResourceBarrier([toPresent]);
-                _commandList.Close();
-                _commandQueue.ExecuteCommandList(_commandList);
-                _swapChain.Present(0, PresentFlags.None);
-                SignalFrameSubmitted();
+                ExecuteAndPresent(frameResource);
                 return true;
             }
             catch
@@ -769,19 +850,16 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             {
                 EnsureCameraTexture(width, height);
                 var cameraTexture = _cameraTexture;
-                var uploadBuffer = _cameraUploadBuffer;
+                var frameResource = BeginFrame(out var frameIndex);
+                var uploadBuffer = frameResource.CameraUploadBuffer;
                 if (cameraTexture is null || uploadBuffer is null)
                 {
                     return false;
                 }
 
-                WaitForSubmittedFrame();
-                CopyBgraFrameToUploadBuffer(uploadBuffer, bgraBytes, width, height, stride);
+                CopyBgraFrameToUploadBuffer(frameResource, bgraBytes, width, height, stride);
 
-                var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
                 var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
-                _commandAllocator.Reset();
-                _commandList.Reset(_commandAllocator);
 
                 if (_cameraTextureState != ResourceStates.CopyDest)
                 {
@@ -832,10 +910,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     ResourceStates.RenderTarget,
                     ResourceStates.Present);
                 _commandList.ResourceBarrier([toPresent]);
-                _commandList.Close();
-                _commandQueue.ExecuteCommandList(_commandList);
-                _swapChain.Present(0, PresentFlags.None);
-                SignalFrameSubmitted();
+                ExecuteAndPresent(frameResource);
                 return true;
             }
             catch
@@ -847,11 +922,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         private unsafe void RenderBgraFrameToBackBuffer(byte[] bgraBytes, int height, int stride)
         {
-            WaitForSubmittedFrame();
-            var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var frameResource = BeginFrame(out var frameIndex);
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
-            _commandAllocator.Reset();
-            _commandList.Reset(_commandAllocator);
 
             var toCommon = ResourceBarrier.BarrierTransition(
                 renderTarget,
@@ -872,23 +944,20 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     (uint)(stride * height));
             }
 
-            _commandAllocator.Reset();
-            _commandList.Reset(_commandAllocator);
+            frameResource.CommandAllocator.Reset();
+            _commandList.Reset(frameResource.CommandAllocator);
             var toPresent = ResourceBarrier.BarrierTransition(
                 renderTarget,
                 ResourceStates.Common,
                 ResourceStates.Present);
             _commandList.ResourceBarrier([toPresent]);
-            _commandList.Close();
-            _commandQueue.ExecuteCommandList(_commandList);
-            _swapChain.Present(0, PresentFlags.None);
-            SignalFrameSubmitted();
+            ExecuteAndPresent(frameResource);
         }
 
         private void EnsureCameraTexture(int width, int height)
         {
             if (_cameraTexture is not null
-                && _cameraUploadBuffer is not null
+                && CameraUploadBuffersReady()
                 && _cameraTextureWidth == width
                 && _cameraTextureHeight == height)
             {
@@ -897,9 +966,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
             WaitForGpu();
             _cameraTexture?.Dispose();
-            _cameraUploadBuffer?.Dispose();
+            ReleaseCameraUploadBuffers();
             _cameraTexture = null;
-            _cameraUploadBuffer = null;
             _cameraTextureWidth = width;
             _cameraTextureHeight = height;
             var description = new ResourceDescription(
@@ -933,11 +1001,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 rowSizesInBytes,
                 out var uploadBytes);
             _cameraTextureFootprint = layouts[0];
-            _cameraUploadBuffer = _device.CreateCommittedResource<ID3D12Resource>(
-                new HeapProperties(HeapType.Upload),
-                HeapFlags.None,
-                ResourceDescription.Buffer(uploadBytes, ResourceFlags.None, 0),
-                ResourceStates.GenericRead);
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.CreateCameraUploadBuffer(_device, uploadBytes);
+            }
+
             var srvDescription = new ShaderResourceViewDescription
             {
                 Format = Format.B8G8R8A8_UNorm,
@@ -958,8 +1026,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         {
             if (_nv12YTexture is not null
                 && _nv12UvTexture is not null
-                && _nv12YUploadBuffer is not null
-                && _nv12UvUploadBuffer is not null
+                && Nv12UploadBuffersReady()
                 && _nv12TextureWidth == width
                 && _nv12TextureHeight == height)
             {
@@ -969,12 +1036,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             WaitForGpu();
             _nv12YTexture?.Dispose();
             _nv12UvTexture?.Dispose();
-            _nv12YUploadBuffer?.Dispose();
-            _nv12UvUploadBuffer?.Dispose();
+            ReleaseNv12UploadBuffers();
             _nv12YTexture = null;
             _nv12UvTexture = null;
-            _nv12YUploadBuffer = null;
-            _nv12UvUploadBuffer = null;
             _nv12TextureWidth = width;
             _nv12TextureHeight = height;
 
@@ -1016,8 +1080,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _nv12YTextureState = ResourceStates.CopyDest;
             _nv12UvTextureState = ResourceStates.CopyDest;
 
-            _nv12YFootprint = CreateUploadBufferForTexture(yDescription, out _nv12YUploadBuffer);
-            _nv12UvFootprint = CreateUploadBufferForTexture(uvDescription, out _nv12UvUploadBuffer);
+            _nv12YFootprint = GetTextureFootprint(yDescription, out var yUploadBytes);
+            _nv12UvFootprint = GetTextureFootprint(uvDescription, out var uvUploadBytes);
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.CreateNv12UploadBuffers(_device, yUploadBytes, uvUploadBytes);
+            }
 
             var ySrvDescription = new ShaderResourceViewDescription
             {
@@ -1043,9 +1111,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _device.CreateShaderResourceView(_nv12UvTexture, uvSrvDescription, GetSrvCpuHandle(2));
         }
 
-        private PlacedSubresourceFootPrint CreateUploadBufferForTexture(
+        private PlacedSubresourceFootPrint GetTextureFootprint(
             ResourceDescription description,
-            out ID3D12Resource uploadBuffer)
+            out ulong uploadBytes)
         {
             var layouts = new PlacedSubresourceFootPrint[1];
             var numRows = new uint[1];
@@ -1058,46 +1126,81 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 layouts,
                 numRows,
                 rowSizesInBytes,
-                out var uploadBytes);
-            uploadBuffer = _device.CreateCommittedResource<ID3D12Resource>(
-                new HeapProperties(HeapType.Upload),
-                HeapFlags.None,
-                ResourceDescription.Buffer(uploadBytes, ResourceFlags.None, 0),
-                ResourceStates.GenericRead);
+                out uploadBytes);
             return layouts[0];
         }
 
-        private unsafe void CopyBgraFrameToUploadBuffer(ID3D12Resource uploadBuffer, byte[] bgraBytes, int width, int height, int stride)
+        private bool CameraUploadBuffersReady()
         {
-            void* mappedPointer = null;
-            uploadBuffer.Map(0, null, &mappedPointer).CheckError();
-            var mappedData = (byte*)mappedPointer;
-            try
+            foreach (var frameResource in _frameResources)
             {
-                fixed (byte* sourceStart = bgraBytes)
+                if (frameResource.CameraUploadBuffer is null || frameResource.CameraUploadPointer == IntPtr.Zero)
                 {
-                    var sourceRowBytes = width * 4;
-                    var destinationStart = mappedData + (nint)_cameraTextureFootprint.Offset;
-                    var destinationStride = (nint)_cameraTextureFootprint.Footprint.RowPitch;
-                    for (var row = 0; row < height; row++)
-                    {
-                        Buffer.MemoryCopy(
-                            sourceStart + row * stride,
-                            destinationStart + row * destinationStride,
-                            destinationStride,
-                            sourceRowBytes);
-                    }
+                    return false;
                 }
             }
-            finally
+
+            return true;
+        }
+
+        private bool Nv12UploadBuffersReady()
+        {
+            foreach (var frameResource in _frameResources)
             {
-                uploadBuffer.Unmap(0, null);
+                if (frameResource.Nv12YUploadBuffer is null
+                    || frameResource.Nv12UvUploadBuffer is null
+                    || frameResource.Nv12YUploadPointer == IntPtr.Zero
+                    || frameResource.Nv12UvUploadPointer == IntPtr.Zero)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void ReleaseCameraUploadBuffers()
+        {
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.ReleaseCameraUploadBuffer();
+            }
+        }
+
+        private void ReleaseNv12UploadBuffers()
+        {
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.ReleaseNv12UploadBuffers();
+            }
+        }
+
+        private unsafe void CopyBgraFrameToUploadBuffer(FrameResource frameResource, byte[] bgraBytes, int width, int height, int stride)
+        {
+            var mappedData = (byte*)frameResource.CameraUploadPointer;
+            if (mappedData == null)
+            {
+                throw new InvalidOperationException("DX12 BGRA upload buffer is not mapped.");
+            }
+
+            fixed (byte* sourceStart = bgraBytes)
+            {
+                var sourceRowBytes = width * 4;
+                var destinationStart = mappedData + (nint)_cameraTextureFootprint.Offset;
+                var destinationStride = (nint)_cameraTextureFootprint.Footprint.RowPitch;
+                for (var row = 0; row < height; row++)
+                {
+                    Buffer.MemoryCopy(
+                        sourceStart + row * stride,
+                        destinationStart + row * destinationStride,
+                        destinationStride,
+                        sourceRowBytes);
+                }
             }
         }
 
         private unsafe void CopyNv12FrameToUploadBuffers(
-            ID3D12Resource yUploadBuffer,
-            ID3D12Resource uvUploadBuffer,
+            FrameResource frameResource,
             byte[] nv12Bytes,
             int width,
             int height,
@@ -1105,41 +1208,36 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         {
             var uvHeight = Math.Max(1, height / 2);
             var uvOffset = stride * height;
-            void* mappedYPointer = null;
-            void* mappedUvPointer = null;
-            yUploadBuffer.Map(0, null, &mappedYPointer).CheckError();
-            uvUploadBuffer.Map(0, null, &mappedUvPointer).CheckError();
-            try
+            var mappedYPointer = (byte*)frameResource.Nv12YUploadPointer;
+            var mappedUvPointer = (byte*)frameResource.Nv12UvUploadPointer;
+            if (mappedYPointer == null || mappedUvPointer == null)
             {
-                fixed (byte* sourceStart = nv12Bytes)
-                {
-                    var yDestinationStart = (byte*)mappedYPointer + (nint)_nv12YFootprint.Offset;
-                    var yDestinationStride = (nint)_nv12YFootprint.Footprint.RowPitch;
-                    for (var row = 0; row < height; row++)
-                    {
-                        Buffer.MemoryCopy(
-                            sourceStart + row * stride,
-                            yDestinationStart + row * yDestinationStride,
-                            yDestinationStride,
-                            width);
-                    }
-
-                    var uvDestinationStart = (byte*)mappedUvPointer + (nint)_nv12UvFootprint.Offset;
-                    var uvDestinationStride = (nint)_nv12UvFootprint.Footprint.RowPitch;
-                    for (var row = 0; row < uvHeight; row++)
-                    {
-                        Buffer.MemoryCopy(
-                            sourceStart + uvOffset + row * stride,
-                            uvDestinationStart + row * uvDestinationStride,
-                            uvDestinationStride,
-                            width);
-                    }
-                }
+                throw new InvalidOperationException("DX12 NV12 upload buffers are not mapped.");
             }
-            finally
+
+            fixed (byte* sourceStart = nv12Bytes)
             {
-                uvUploadBuffer.Unmap(0, null);
-                yUploadBuffer.Unmap(0, null);
+                var yDestinationStart = mappedYPointer + (nint)_nv12YFootprint.Offset;
+                var yDestinationStride = (nint)_nv12YFootprint.Footprint.RowPitch;
+                for (var row = 0; row < height; row++)
+                {
+                    Buffer.MemoryCopy(
+                        sourceStart + row * stride,
+                        yDestinationStart + row * yDestinationStride,
+                        yDestinationStride,
+                        width);
+                }
+
+                var uvDestinationStart = mappedUvPointer + (nint)_nv12UvFootprint.Offset;
+                var uvDestinationStride = (nint)_nv12UvFootprint.Footprint.RowPitch;
+                for (var row = 0; row < uvHeight; row++)
+                {
+                    Buffer.MemoryCopy(
+                        sourceStart + uvOffset + row * stride,
+                        uvDestinationStart + row * uvDestinationStride,
+                        uvDestinationStride,
+                        width);
+                }
             }
         }
 
@@ -1466,11 +1564,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _rtvHeap.Dispose();
             _srvHeap.Dispose();
             _cameraTexture?.Dispose();
-            _cameraUploadBuffer?.Dispose();
             _nv12YTexture?.Dispose();
             _nv12UvTexture?.Dispose();
-            _nv12YUploadBuffer?.Dispose();
-            _nv12UvUploadBuffer?.Dispose();
             _previewPipelineState?.Dispose();
             _previewRootSignature?.Dispose();
             _nv12PreviewPipelineState?.Dispose();
@@ -1478,7 +1573,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _fence.Dispose();
             _fenceEvent.Dispose();
             _commandList.Dispose();
-            _commandAllocator.Dispose();
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.Dispose();
+            }
+
             _factory.Dispose();
             _commandQueue.Dispose();
             _device.Dispose();
@@ -1519,6 +1618,24 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
         }
 
+        private FrameResource BeginFrame(out int frameIndex)
+        {
+            frameIndex = (int)_swapChain.CurrentBackBufferIndex;
+            var frameResource = _frameResources[frameIndex];
+            WaitForFrameResource(frameResource);
+            frameResource.CommandAllocator.Reset();
+            _commandList.Reset(frameResource.CommandAllocator);
+            return frameResource;
+        }
+
+        private void ExecuteAndPresent(FrameResource frameResource)
+        {
+            _commandList.Close();
+            _commandQueue.ExecuteCommandList(_commandList);
+            _swapChain.Present(0, PresentFlags.None);
+            SignalFrameSubmitted(frameResource);
+        }
+
         private void WaitForGpu()
         {
             if (_disposed)
@@ -1530,15 +1647,16 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandQueue.Signal(_fence, _fenceValue);
             if (_fence.CompletedValue >= _fenceValue)
             {
+                ClearFrameFenceValues();
                 return;
             }
 
             _fence.SetEventOnCompletion(_fenceValue, _fenceEvent);
             _fenceEvent.WaitOne();
-            _lastSubmittedFrameFenceValue = 0;
+            ClearFrameFenceValues();
         }
 
-        private void SignalFrameSubmitted()
+        private void SignalFrameSubmitted(FrameResource frameResource)
         {
             if (_disposed)
             {
@@ -1547,23 +1665,126 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
             _fenceValue++;
             _commandQueue.Signal(_fence, _fenceValue);
-            _lastSubmittedFrameFenceValue = _fenceValue;
+            frameResource.FenceValue = _fenceValue;
         }
 
-        private void WaitForSubmittedFrame()
+        private void WaitForFrameResource(FrameResource frameResource)
         {
-            if (_disposed || _lastSubmittedFrameFenceValue == 0)
+            if (_disposed || frameResource.FenceValue == 0)
             {
                 return;
             }
 
-            if (_fence.CompletedValue < _lastSubmittedFrameFenceValue)
+            if (_fence.CompletedValue < frameResource.FenceValue)
             {
-                _fence.SetEventOnCompletion(_lastSubmittedFrameFenceValue, _fenceEvent);
+                _fence.SetEventOnCompletion(frameResource.FenceValue, _fenceEvent);
                 _fenceEvent.WaitOne();
             }
 
-            _lastSubmittedFrameFenceValue = 0;
+            frameResource.FenceValue = 0;
+        }
+
+        private void ClearFrameFenceValues()
+        {
+            foreach (var frameResource in _frameResources)
+            {
+                frameResource.FenceValue = 0;
+            }
+        }
+
+        private sealed class FrameResource : IDisposable
+        {
+            public FrameResource(ID3D12CommandAllocator commandAllocator)
+            {
+                CommandAllocator = commandAllocator;
+            }
+
+            public ID3D12CommandAllocator CommandAllocator { get; }
+
+            public ID3D12Resource? CameraUploadBuffer { get; private set; }
+
+            public IntPtr CameraUploadPointer { get; private set; }
+
+            public ID3D12Resource? Nv12YUploadBuffer { get; private set; }
+
+            public IntPtr Nv12YUploadPointer { get; private set; }
+
+            public ID3D12Resource? Nv12UvUploadBuffer { get; private set; }
+
+            public IntPtr Nv12UvUploadPointer { get; private set; }
+
+            public ulong FenceValue { get; set; }
+
+            public unsafe void CreateCameraUploadBuffer(ID3D12Device device, ulong uploadBytes)
+            {
+                ReleaseCameraUploadBuffer();
+                CameraUploadBuffer = CreateMappedUploadBuffer(device, uploadBytes, out var mappedPointer);
+                CameraUploadPointer = mappedPointer;
+            }
+
+            public unsafe void CreateNv12UploadBuffers(ID3D12Device device, ulong yUploadBytes, ulong uvUploadBytes)
+            {
+                ReleaseNv12UploadBuffers();
+                Nv12YUploadBuffer = CreateMappedUploadBuffer(device, yUploadBytes, out var mappedYPointer);
+                Nv12YUploadPointer = mappedYPointer;
+                Nv12UvUploadBuffer = CreateMappedUploadBuffer(device, uvUploadBytes, out var mappedUvPointer);
+                Nv12UvUploadPointer = mappedUvPointer;
+            }
+
+            public void ReleaseCameraUploadBuffer()
+            {
+                if (CameraUploadBuffer is not null)
+                {
+                    CameraUploadBuffer.Unmap(0, null);
+                    CameraUploadBuffer.Dispose();
+                    CameraUploadBuffer = null;
+                }
+
+                CameraUploadPointer = IntPtr.Zero;
+            }
+
+            public void ReleaseNv12UploadBuffers()
+            {
+                if (Nv12YUploadBuffer is not null)
+                {
+                    Nv12YUploadBuffer.Unmap(0, null);
+                    Nv12YUploadBuffer.Dispose();
+                    Nv12YUploadBuffer = null;
+                }
+
+                if (Nv12UvUploadBuffer is not null)
+                {
+                    Nv12UvUploadBuffer.Unmap(0, null);
+                    Nv12UvUploadBuffer.Dispose();
+                    Nv12UvUploadBuffer = null;
+                }
+
+                Nv12YUploadPointer = IntPtr.Zero;
+                Nv12UvUploadPointer = IntPtr.Zero;
+            }
+
+            public void Dispose()
+            {
+                ReleaseCameraUploadBuffer();
+                ReleaseNv12UploadBuffers();
+                CommandAllocator.Dispose();
+            }
+
+            private static unsafe ID3D12Resource CreateMappedUploadBuffer(
+                ID3D12Device device,
+                ulong uploadBytes,
+                out IntPtr mappedPointer)
+            {
+                var uploadBuffer = device.CreateCommittedResource<ID3D12Resource>(
+                    new HeapProperties(HeapType.Upload),
+                    HeapFlags.None,
+                    ResourceDescription.Buffer(uploadBytes, ResourceFlags.None, 0),
+                    ResourceStates.GenericRead);
+                void* mapped = null;
+                uploadBuffer.Map(0, null, &mapped).CheckError();
+                mappedPointer = (IntPtr)mapped;
+                return uploadBuffer;
+            }
         }
     }
 }
