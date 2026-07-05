@@ -265,6 +265,7 @@ static Task<int> RunDx12TexturePreviewProbeAsync(CameraDevice camera, CameraVide
             stream = new TextureNativeCameraStream(camera, mode, startImmediately: false);
             window = CreateProbeWindow("DX12 Texture Preview Probe", visible);
 
+            stream.StatusChanged += (_, status) => Console.WriteLine(status);
             stream.FrameAvailable += (_, _) => Interlocked.Increment(ref infoFrames);
             stream.TextureFrameAvailable += (_, lease) =>
             {

@@ -117,6 +117,15 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     return;
                 }
 
+                string? sharedBridgeFailureReason = null;
+                if (frame.D3D12SharedTextureHandle != IntPtr.Zero
+                    && _renderer.RenderSharedD3D11BridgeFrame(frame, denoiseEnabled, denoiseStrength, out sharedBridgeFailureReason))
+                {
+                    ReportPreviewPath("DX12 D3D11 bridge texture preview");
+                    return;
+                }
+
+                var textureFailureReason = directTextureFailureReason ?? sharedBridgeFailureReason;
                 if (frame.Nv12PreviewBytes is not null && frame.Nv12PreviewStride > 0)
                 {
                     if (_renderer.RenderNv12Frame(
@@ -128,7 +137,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                         denoiseEnabled,
                         denoiseStrength))
                     {
-                        ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", directTextureFailureReason));
+                        ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", textureFailureReason));
                         return;
                     }
                 }
@@ -141,12 +150,12 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                         frame.Height,
                         frame.BgraPreviewStride,
                         frame.FrameNumber);
-                    ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", directTextureFailureReason));
+                    ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", textureFailureReason));
                     return;
                 }
 
                 _renderer.RenderProofFrame(frame.FrameNumber);
-                ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", directTextureFailureReason));
+                ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", textureFailureReason));
             }
         }
         catch (Exception ex)
@@ -481,6 +490,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private string? _nv12PreviewFailureReason;
         private bool _nativeTexturePreviewUnavailable;
         private string? _nativeTexturePreviewFailureReason;
+        private bool _sharedD3D11BridgePreviewUnavailable;
+        private string? _sharedD3D11BridgePreviewFailureReason;
         private readonly bool _usesSharedCaptureDevice;
 
         public Direct3D12SwapChainRenderer(IntPtr hwnd, int width, int height, IntPtr nativeD3D12Device = default)
@@ -717,6 +728,65 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             {
                 _nativeTexturePreviewUnavailable = true;
                 _nativeTexturePreviewFailureReason = ex.Message;
+                failureReason = ex.Message;
+                return false;
+            }
+        }
+
+        public bool RenderSharedD3D11BridgeFrame(
+            TextureNativeFrameLease frame,
+            bool denoiseEnabled,
+            double denoiseStrength,
+            out string? failureReason)
+        {
+            failureReason = null;
+            if (_disposed)
+            {
+                failureReason = "renderer disposed";
+                return false;
+            }
+
+            if (_sharedD3D11BridgePreviewUnavailable)
+            {
+                failureReason = _sharedD3D11BridgePreviewFailureReason ?? "D3D11 bridge texture rendering disabled after an earlier failure";
+                return false;
+            }
+
+            if (_nv12PreviewRootSignature is null || _nv12PreviewPipelineState is null)
+            {
+                failureReason = "NV12 shader pipeline unavailable";
+                return false;
+            }
+
+            if (frame.D3D12SharedTextureHandle == IntPtr.Zero)
+            {
+                failureReason = "D3D11 bridge shared texture handle is missing";
+                return false;
+            }
+
+            if (!frame.MediaSubtype.Contains("NV12", StringComparison.OrdinalIgnoreCase))
+            {
+                failureReason = $"media subtype {frame.MediaSubtype} is not NV12";
+                return false;
+            }
+
+            if (frame.Width != _width || frame.Height != _height)
+            {
+                Resize(frame.Width, frame.Height);
+            }
+
+            try
+            {
+                using var sharedResource = _device.OpenSharedHandle<ID3D12Resource>(frame.D3D12SharedTextureHandle);
+                RenderNativeNv12Resource(sharedResource, frame.Width, frame.Height, denoiseEnabled, denoiseStrength);
+                WaitForGpu();
+                _sharedD3D11BridgePreviewFailureReason = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _sharedD3D11BridgePreviewUnavailable = true;
+                _sharedD3D11BridgePreviewFailureReason = ex.Message;
                 failureReason = ex.Message;
                 return false;
             }

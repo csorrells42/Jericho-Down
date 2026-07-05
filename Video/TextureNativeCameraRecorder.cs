@@ -59,6 +59,7 @@ public sealed record TextureNativePreviewFrame(
 public sealed class TextureNativeFrameLease : IDisposable
 {
     private IntPtr _resource;
+    private IntPtr _d3d12SharedTextureHandle;
 
     internal TextureNativeFrameLease(
         IntPtr resource,
@@ -69,6 +70,7 @@ public sealed class TextureNativeFrameLease : IDisposable
         string deviceMode,
         string mediaSubtype,
         long frameNumber,
+        IntPtr d3d12SharedTextureHandle = default,
         byte[]? nv12PreviewBytes = null,
         int nv12PreviewStride = 0,
         byte[]? bgraPreviewBytes = null,
@@ -82,6 +84,7 @@ public sealed class TextureNativeFrameLease : IDisposable
         DeviceMode = deviceMode;
         MediaSubtype = mediaSubtype;
         FrameNumber = frameNumber;
+        _d3d12SharedTextureHandle = d3d12SharedTextureHandle;
         Nv12PreviewBytes = nv12PreviewBytes;
         Nv12PreviewStride = nv12PreviewStride;
         BgraPreviewBytes = bgraPreviewBytes;
@@ -104,6 +107,8 @@ public sealed class TextureNativeFrameLease : IDisposable
 
     public long FrameNumber { get; }
 
+    public IntPtr D3D12SharedTextureHandle => _d3d12SharedTextureHandle;
+
     public byte[]? Nv12PreviewBytes { get; }
 
     public int Nv12PreviewStride { get; }
@@ -123,6 +128,14 @@ public sealed class TextureNativeFrameLease : IDisposable
         }
 
         System.Runtime.InteropServices.Marshal.AddRef(resource);
+        var sharedTextureHandle = IntPtr.Zero;
+        if (D3D12SharedTextureHandle != IntPtr.Zero
+            && !TryDuplicateHandle(D3D12SharedTextureHandle, out sharedTextureHandle))
+        {
+            System.Runtime.InteropServices.Marshal.Release(resource);
+            return null;
+        }
+
         return new TextureNativeFrameLease(
             resource,
             Subresource,
@@ -132,6 +145,7 @@ public sealed class TextureNativeFrameLease : IDisposable
             DeviceMode,
             MediaSubtype,
             FrameNumber,
+            sharedTextureHandle,
             Nv12PreviewBytes,
             Nv12PreviewStride,
             BgraPreviewBytes,
@@ -145,7 +159,42 @@ public sealed class TextureNativeFrameLease : IDisposable
         {
             System.Runtime.InteropServices.Marshal.Release(resource);
         }
+
+        var sharedTextureHandle = Interlocked.Exchange(ref _d3d12SharedTextureHandle, IntPtr.Zero);
+        if (sharedTextureHandle != IntPtr.Zero)
+        {
+            CloseHandle(sharedTextureHandle);
+        }
     }
+
+    private static bool TryDuplicateHandle(IntPtr sourceHandle, out IntPtr duplicatedHandle)
+    {
+        var currentProcess = GetCurrentProcess();
+        return DuplicateHandle(
+            currentProcess,
+            sourceHandle,
+            currentProcess,
+            out duplicatedHandle,
+            0,
+            false,
+            0x2);
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DuplicateHandle(
+        IntPtr sourceProcessHandle,
+        IntPtr sourceHandle,
+        IntPtr targetProcessHandle,
+        out IntPtr targetHandle,
+        uint desiredAccess,
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)] bool inheritHandle,
+        uint options);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 }
 
 internal static class Nv12FrameConverter
@@ -556,6 +605,8 @@ public sealed class TextureNativeCameraStream : IDisposable
     private long _sampleDuration;
     private MediaFoundationTextureVideoRecorder? _recorder;
     private MediaFoundationVideoRecorder? _processedRecorder;
+    private Direct3D11SharedTextureBridge? _d3d11SharedTextureBridge;
+    private bool _d3d11SharedTextureBridgeUnavailable;
     private byte[]? _previousProcessedDenoiseFrame;
     private string? _recordingPath;
     private string _recordingPipeline = "Media Foundation texture-native raw camera samples";
@@ -811,6 +862,9 @@ public sealed class TextureNativeCameraStream : IDisposable
         _streamReady.Dispose();
         MediaFoundationInterop.ReleaseComObject(_reader);
         MediaFoundationInterop.ReleaseComObject(_mediaSource);
+        _d3d11SharedTextureBridge?.Dispose();
+        _d3d11SharedTextureBridge = null;
+        _d3d11SharedTextureBridgeUnavailable = false;
         _deviceManager?.Dispose();
         _mediaFoundationScope?.Dispose();
     }
@@ -1044,6 +1098,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     return null;
                 }
 
+                var d3d12SharedTextureHandle = TryCreateD3D11SharedTextureHandle(resource, deviceManager);
                 var nv12PreviewBytes = TryCreateNv12Preview(buffer, out var nv12PreviewStride);
                 var bgraPreviewStride = 0;
                 var bgraPreviewBytes = frameNumber % 16 == 0
@@ -1059,6 +1114,7 @@ public sealed class TextureNativeCameraStream : IDisposable
                     deviceManager.ModeName,
                     MediaFoundationInterop.FormatSubtype(_subtype),
                     frameNumber,
+                    d3d12SharedTextureHandle,
                     nv12PreviewBytes,
                     nv12PreviewStride,
                     bgraPreviewBytes,
@@ -1073,6 +1129,49 @@ public sealed class TextureNativeCameraStream : IDisposable
         {
             MediaFoundationInterop.ReleaseComObject(buffer);
         }
+    }
+
+    private IntPtr TryCreateD3D11SharedTextureHandle(IntPtr sourceTexture, ITextureNativeDeviceManager deviceManager)
+    {
+        if (_subtype != MediaFoundationGuids.MFVideoFormat_NV12
+            || deviceManager is not Direct3D11DeviceManager direct3D11DeviceManager
+            || _d3d11SharedTextureBridgeUnavailable)
+        {
+            return IntPtr.Zero;
+        }
+
+        try
+        {
+            _d3d11SharedTextureBridge ??= direct3D11DeviceManager.CreateSharedTextureBridge(_width, _height);
+            if (_d3d11SharedTextureBridge.TryCopyToSharedHandle(sourceTexture, out var sharedHandle, out var failureReason))
+            {
+                return sharedHandle;
+            }
+
+            if (!string.IsNullOrWhiteSpace(failureReason))
+            {
+                DisableD3D11SharedTextureBridge(failureReason);
+            }
+        }
+        catch (Exception ex)
+        {
+            DisableD3D11SharedTextureBridge(ex.Message);
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void DisableD3D11SharedTextureBridge(string? reason)
+    {
+        if (_d3d11SharedTextureBridgeUnavailable)
+        {
+            return;
+        }
+
+        _d3d11SharedTextureBridgeUnavailable = true;
+        _d3d11SharedTextureBridge?.Dispose();
+        _d3d11SharedTextureBridge = null;
+        ReportStatus($"D3D11 shared texture bridge unavailable: {reason ?? "unknown failure"}");
     }
 
     private byte[]? TryCreateNv12Preview(IMFMediaBuffer buffer, out int nv12Stride)
