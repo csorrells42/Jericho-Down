@@ -15,6 +15,8 @@ var tests = new (string Name, Action Test)[]
     ("File browser watcher ignores changed events", FileBrowserWatcherIgnoresChangedEvents),
     ("Texture preview failure cache is scoped by mode", TexturePreviewFailureCacheIsScopedByMode),
     ("Texture preview failure cache clears successful modes", TexturePreviewFailureCacheClearsSuccessfulModes),
+    ("Camera catalog groups physical fallback paths", CameraCatalogGroupsPhysicalFallbackPaths),
+    ("Camera catalog keeps software cameras separate", CameraCatalogKeepsSoftwareCamerasSeparate),
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
@@ -197,6 +199,41 @@ static void TexturePreviewFailureCacheClearsSuccessfulModes()
     Assert(!cache.TryGetFailure(camera, CameraVideoMode.Auto, out _), "successful mode should clear its cached failure");
     Assert(cache.TryGetFailure(sameNamedDirectShowCamera, CameraVideoMode.Auto, out var reason), "camera source should be part of the cache key");
     Assert(reason == "directshow failed", "clearing one source should not clear another source");
+}
+
+static void CameraCatalogGroupsPhysicalFallbackPaths()
+{
+    const string physicalIdentity = @"\\?\usb#vid_2e1a&pid_4c06&mi_00#8&3818689d&0&0000";
+    var mediaFoundation = new[]
+    {
+        new CameraDevice(0, "Insta360 Link 2 Pro", physicalIdentity + @"#{e5323777-f976-4f5b-9b55-b94699c46e44}\global", "Media Foundation")
+    };
+    var directShow = new[]
+    {
+        new CameraDevice(0, "Insta360 Link 2 Pro", physicalIdentity + @"#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global", "DirectShow")
+    };
+
+    var merged = CameraDeviceCatalog.MergeDevices(mediaFoundation, directShow);
+
+    Assert(merged.Count == 1, "same physical camera should be shown once");
+    Assert(merged[0].Source == "Media Foundation", "Media Foundation should remain the visible primary source");
+    Assert(merged[0].FallbackDevice?.Source == "DirectShow", "DirectShow twin should be retained as fallback");
+    Assert(merged[0].ToString() == "Insta360 Link 2 Pro", "grouped physical camera should hide backend source text");
+}
+
+static void CameraCatalogKeepsSoftwareCamerasSeparate()
+{
+    var mediaFoundation = Array.Empty<CameraDevice>();
+    var directShow = new[]
+    {
+        new CameraDevice(0, "OBS Virtual Camera", @"@device:sw:{category}\{obs}", "DirectShow"),
+        new CameraDevice(1, "Camera (NVIDIA Broadcast)", @"@device:sw:{category}\{broadcast}", "DirectShow")
+    };
+
+    var merged = CameraDeviceCatalog.MergeDevices(mediaFoundation, directShow);
+
+    Assert(merged.Count == 2, "software cameras should remain separate sources");
+    Assert(merged.All(camera => camera.FallbackDevice is null), "software cameras should not receive hidden fallbacks");
 }
 
 static void VoiceProcessorProducesFiniteSamples()

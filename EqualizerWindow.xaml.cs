@@ -236,6 +236,7 @@ public partial class EqualizerWindow : Window
     private bool _isLoadingCameraModes;
     private bool _isCameraFrameUpdateQueued;
     private bool _isCameraServiceStopPending;
+    private bool _isDirectShowPreviewActive;
     private int _cameraServiceStopOperationVersion;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = 2d;
@@ -464,7 +465,7 @@ public partial class EqualizerWindow : Window
         CameraProfileComboBox.ItemsSource = CameraProfileNames;
         LoadCameraProfileList();
 
-        var cameras = MergeCameraDevices(
+        var cameras = CameraDeviceCatalog.MergeDevices(
             MediaFoundationCameraEnumerator.GetVideoInputDevices(),
             DirectShowCameraEnumerator.GetVideoInputDevices());
 
@@ -498,32 +499,6 @@ public partial class EqualizerWindow : Window
         LoadWarmRadioPreset();
         _audioDeviceFormatTimer.Start();
         UpdateAudioFormatRouteText();
-    }
-
-    private static IReadOnlyList<CameraDevice> MergeCameraDevices(
-        IReadOnlyList<CameraDevice> mediaFoundationDevices,
-        IReadOnlyList<CameraDevice> directShowDevices)
-    {
-        var devices = new List<CameraDevice>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        AddCameraDevices(mediaFoundationDevices);
-        AddCameraDevices(directShowDevices);
-        return devices;
-
-        void AddCameraDevices(IEnumerable<CameraDevice> candidates)
-        {
-            foreach (var candidate in candidates)
-            {
-                var key = string.IsNullOrWhiteSpace(candidate.DevicePath)
-                    ? $"name:{candidate.Name}|source:{candidate.Source}"
-                    : $"path:{candidate.DevicePath}";
-                if (seen.Add(key))
-                {
-                    devices.Add(candidate);
-                }
-            }
-        }
     }
 
     private static bool IsDirectShowCamera(CameraDevice camera)
@@ -1318,7 +1293,8 @@ public partial class EqualizerWindow : Window
 
     private bool IsSelectedDirectShowCamera()
     {
-        return CameraComboBox.SelectedItem is CameraDevice camera && IsDirectShowCamera(camera);
+        return _isDirectShowPreviewActive
+            || CameraComboBox.SelectedItem is CameraDevice camera && IsDirectShowCamera(camera);
     }
 
     private bool TryStartTextureNativeRecording(string? videoPath)
@@ -1626,19 +1602,14 @@ public partial class EqualizerWindow : Window
 
         StopTextureNativeCameraStream();
         _directShowPreviewService.Stop();
+        _isDirectShowPreviewActive = false;
         ShowDirect3D12PreviewHost(IntPtr.Zero);
         CameraPreviewImage.Visibility = Visibility.Collapsed;
 
         if (IsDirectShowCamera(camera))
         {
-            _cameraPreviewService.Stop();
-            _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
-            _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-            _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
-            CameraPreviewStatusText.Text = $"Starting DirectShow preview for {camera.Name}";
-            if (_directShowPreviewService.Start(camera, mode))
+            if (TryStartDirectShowPreview(camera, camera, mode, isFallback: false))
             {
-                CameraPreviewStatusText.Text = FormatCameraStatus("Starting", camera, mode);
                 return;
             }
 
@@ -1650,6 +1621,11 @@ public partial class EqualizerWindow : Window
 
         if (!_cameraPreviewService.IsAvailable)
         {
+            if (TryStartDirectShowFallbackPreview(camera, mode))
+            {
+                return;
+            }
+
             _isCameraEnabled = false;
             StopCameraPreview("Windows Media Foundation camera preview is unavailable");
             UpdateCameraEnabledState();
@@ -1661,6 +1637,7 @@ public partial class EqualizerWindow : Window
         _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
         if (_cameraPreviewService.Start(camera, mode))
         {
+            _isDirectShowPreviewActive = false;
             CameraPreviewStatusText.Text = FormatCameraStatus("Starting", camera, mode);
             return;
         }
@@ -1670,14 +1647,53 @@ public partial class EqualizerWindow : Window
             _cameraPreviewService.DenoiseEnabled = false;
             if (_cameraPreviewService.Start(camera, mode))
             {
+                _isDirectShowPreviewActive = false;
                 CameraPreviewStatusText.Text = $"{FormatCameraStatus("Starting", camera, mode)} - denoise bypassed because the camera rejected it";
                 return;
             }
         }
 
+        if (TryStartDirectShowFallbackPreview(camera, mode))
+        {
+            return;
+        }
+
         _isCameraEnabled = false;
         StopCameraPreview($"Could not open preview for {camera.Name}");
         UpdateCameraEnabledState();
+    }
+
+    private bool TryStartDirectShowFallbackPreview(CameraDevice primaryCamera, CameraVideoMode mode)
+    {
+        var fallback = primaryCamera.FallbackDevice;
+        return fallback is not null
+            && IsDirectShowCamera(fallback)
+            && TryStartDirectShowPreview(primaryCamera, fallback, mode, isFallback: true);
+    }
+
+    private bool TryStartDirectShowPreview(
+        CameraDevice displayCamera,
+        CameraDevice directShowCamera,
+        CameraVideoMode mode,
+        bool isFallback)
+    {
+        _cameraPreviewService.Stop();
+        _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
+        CameraPreviewStatusText.Text = isFallback
+            ? $"Starting DirectShow fallback for {displayCamera.Name}"
+            : $"Starting DirectShow preview for {directShowCamera.Name}";
+        if (_directShowPreviewService.Start(directShowCamera, mode))
+        {
+            _isDirectShowPreviewActive = true;
+            CameraPreviewStatusText.Text = isFallback
+                ? $"{FormatCameraStatus("Starting", displayCamera, mode)} - DirectShow fallback"
+                : FormatCameraStatus("Starting", displayCamera, mode);
+            return true;
+        }
+
+        return false;
     }
 
     private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
@@ -1686,6 +1702,7 @@ public partial class EqualizerWindow : Window
         StopTextureNativeCameraStream();
         _cameraPreviewService.Stop();
         _directShowPreviewService.Stop();
+        _isDirectShowPreviewActive = false;
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
         _cameraPreviewBitmap = null;
@@ -1712,6 +1729,7 @@ public partial class EqualizerWindow : Window
                 return false;
             }
 
+            _isDirectShowPreviewActive = false;
             return true;
         }
         catch (Exception ex)
@@ -1743,6 +1761,7 @@ public partial class EqualizerWindow : Window
     {
         StopTextureNativeCameraStream();
         _isCameraFrameUpdateQueued = false;
+        _isDirectShowPreviewActive = false;
         _pendingCameraFrame = null;
         _cameraPreviewBitmap = null;
         CameraPreviewImage.Source = null;
@@ -6134,8 +6153,10 @@ public partial class EqualizerWindow : Window
         if (!string.IsNullOrWhiteSpace(profile.CameraDevicePath))
         {
             var pathMatch = cameras.FirstOrDefault(camera =>
-                camera.DevicePath.Equals(profile.CameraDevicePath, StringComparison.OrdinalIgnoreCase)
-                && camera.Source.Equals(profile.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+                CameraMatchesProfileSource(
+                    camera,
+                    profile.CameraDevicePath,
+                    profile.CameraSource));
             if (pathMatch is not null)
             {
                 return pathMatch;
@@ -6143,10 +6164,26 @@ public partial class EqualizerWindow : Window
         }
 
         return cameras.FirstOrDefault(camera =>
-            camera.Name.Equals(profile.CameraName ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-            && camera.Source.Equals(profile.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            CameraMatchesProfileNameAndSource(
+                camera,
+                profile.CameraName,
+                profile.CameraSource))
             ?? cameras.FirstOrDefault(camera =>
                 camera.Name.Equals(profile.CameraName ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool CameraMatchesProfileSource(CameraDevice camera, string? devicePath, string? source)
+    {
+        return camera.EnumerateSourceDevices().Any(sourceDevice =>
+            sourceDevice.DevicePath.Equals(devicePath ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool CameraMatchesProfileNameAndSource(CameraDevice camera, string? name, string? source)
+    {
+        return camera.EnumerateSourceDevices().Any(sourceDevice =>
+            sourceDevice.Name.Equals(name ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase));
     }
 
     private void SelectPendingCameraProfileMode()
