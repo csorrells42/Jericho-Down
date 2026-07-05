@@ -79,6 +79,8 @@ public partial class EqualizerWindow : Window
     private readonly MediaFoundationCameraModeService _cameraModeService = new();
     private readonly DirectShowCameraControlService _cameraControlService = new();
     private readonly TextureNativePreviewFailureCache _textureNativePreviewFailureCache = new();
+    private readonly AppSettingsState _appSettings = AppStateStore.LoadSettings();
+    private readonly AppStartupRecovery _startupRecovery = AppStateStore.StartupRecovery;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
@@ -201,6 +203,9 @@ public partial class EqualizerWindow : Window
     private bool _isRestartingAudioStream;
     private bool _isCheckingAudioDeviceFormat;
     private bool _isClosing;
+    private bool _isRestoringAppState;
+    private bool _safeStartCameraRecoveryActive;
+    private bool _safeStartDx12Disabled;
     private int _audioStreamOperationVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
     private string _outputFolder = System.IO.Path.Combine(
@@ -269,6 +274,8 @@ public partial class EqualizerWindow : Window
     private bool _showWaveform3D;
     private bool _showMicCompare;
     private bool _isLeftControlRailCollapsed;
+    private string _lastLoadedPresetName = "Warm Radio";
+    private bool _lastLoadedPresetIsUserPreset;
     private bool _isRecordingSession;
     private bool _isRecordingPaused;
     private string? _pendingCameraProfileModeLabel;
@@ -300,6 +307,9 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
+        ApplyPersistedWindowPlacement();
+        _safeStartCameraRecoveryActive = _startupRecovery.PreviousRunDidNotCloseCleanly;
+        _safeStartDx12Disabled = _startupRecovery.PreviousRunDidNotCloseCleanly;
         FreezeSharedBrushes();
         OrderMainTabs();
         DataContext = Settings;
@@ -429,12 +439,18 @@ public partial class EqualizerWindow : Window
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
     {
-        _processedTextureRecordingEnabled = GetDefaultProcessedTextureNativeRecording();
+        _isRestoringAppState = true;
+        var hasPersistedState = HasPersistedAppState();
+        _processedTextureRecordingEnabled = hasPersistedState
+            ? _appSettings.ProcessedTextureRecordingEnabled
+            : GetDefaultProcessedTextureNativeRecording();
         if (ProcessedTextureRecordingCheckBox is not null)
         {
             ProcessedTextureRecordingCheckBox.IsChecked = _processedTextureRecordingEnabled;
         }
 
+        RestorePersistedFolders();
+        RestorePersistedVideoDenoise();
         UpdateVideoColorPolishSettings();
 
         ApplyDarkTitleBar();
@@ -444,13 +460,13 @@ public partial class EqualizerWindow : Window
             new InputChannelOption(InputChannelMode.Input1Left, "Input 1 L"),
             new InputChannelOption(InputChannelMode.Input2Right, "Input 2 R")
         };
-        InputChannelComboBox.SelectedIndex = 0;
+        RestoreInputChannelSelection();
 
         var devices = MicrophoneSpectrumService.GetInputDevices();
         MicrophoneComboBox.ItemsSource = devices;
         if (devices.Count > 0)
         {
-            MicrophoneComboBox.SelectedIndex = 0;
+            MicrophoneComboBox.SelectedItem = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? devices[0];
         }
         else
         {
@@ -459,7 +475,19 @@ public partial class EqualizerWindow : Window
 
         var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
         OutputDeviceComboBox.ItemsSource = outputDevices;
-        OutputDeviceComboBox.SelectedIndex = 0;
+        if (outputDevices.Count > 0)
+        {
+            OutputDeviceComboBox.SelectedItem = FindAudioOutputDevice(
+                outputDevices,
+                _appSettings.OutputEndpointId,
+                _appSettings.OutputDeviceName) ?? outputDevices[0];
+        }
+
+        if (ProcessedOutputCheckBox is not null)
+        {
+            ProcessedOutputCheckBox.IsChecked = _appSettings.ProcessedOutputEnabled;
+        }
+
         UserPresetComboBox.ItemsSource = UserPresetNames;
         LoadUserPresetList();
         CameraProfileComboBox.ItemsSource = CameraProfileNames;
@@ -472,7 +500,7 @@ public partial class EqualizerWindow : Window
         CameraComboBox.ItemsSource = cameras;
         if (cameras.Count > 0)
         {
-            CameraComboBox.SelectedIndex = 0;
+            CameraComboBox.SelectedItem = FindCameraForAppState(cameras, _appSettings) ?? cameras[0];
             CameraComboBox.IsEnabled = true;
             _cameraAvailable = true;
         }
@@ -484,6 +512,12 @@ public partial class EqualizerWindow : Window
             _cameraAvailable = false;
         }
 
+        _pendingCameraProfileModeLabel = _appSettings.CameraModeLabel;
+        _isCameraEnabled = hasPersistedState && _appSettings.CameraEnabled && !_safeStartCameraRecoveryActive;
+        _isLeftControlRailCollapsed = _appSettings.LeftControlRailCollapsed;
+        ApplyLeftControlRailLayout();
+        _lastAudioRecordingPath = _appSettings.LastAudioRecordingPath;
+        _lastSessionRecordingPath = _appSettings.LastSessionRecordingPath;
         _ = LoadCameraModesAsync();
         ResetCameraControlPanel("Camera controls are available after mode loading. Use Refresh if you want to query the selected camera.");
         UpdateCameraEnabledState();
@@ -496,9 +530,202 @@ public partial class EqualizerWindow : Window
         UpdateStandaloneAudioRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
 
-        LoadWarmRadioPreset();
+        RestorePersistedPresetOrDefault();
         _audioDeviceFormatTimer.Start();
         UpdateAudioFormatRouteText();
+        if (_startupRecovery.PreviousRunDidNotCloseCleanly)
+        {
+            CameraPreviewStatusText.Text = "Safe start: previous run did not close cleanly. Camera auto-start, DX12 preview, and video denoise are disabled for this run.";
+            CameraControlStatusText.Text = "Safe start is active. Turn the camera on manually after confirming devices look right.";
+        }
+
+        _isRestoringAppState = false;
+        SaveAppStateNow();
+    }
+
+    private bool HasPersistedAppState()
+    {
+        return _appSettings.UpdatedAt != default;
+    }
+
+    private void RestorePersistedFolders()
+    {
+        if (!string.IsNullOrWhiteSpace(_appSettings.OutputFolder))
+        {
+            _outputFolder = _appSettings.OutputFolder;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_appSettings.AudioRecordingFolder))
+        {
+            _audioRecordingFolder = _appSettings.AudioRecordingFolder;
+        }
+    }
+
+    private void RestoreInputChannelSelection()
+    {
+        var mode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
+            ? parsedMode
+            : InputChannelMode.MonoSum;
+        var option = InputChannelComboBox.Items
+            .OfType<InputChannelOption>()
+            .FirstOrDefault(candidate => candidate.Mode == mode);
+        InputChannelComboBox.SelectedItem = option ?? InputChannelComboBox.Items.OfType<InputChannelOption>().FirstOrDefault();
+    }
+
+    private static AudioInputDevice? FindAudioInputDevice(
+        IReadOnlyList<AudioInputDevice> devices,
+        string? name)
+    {
+        return string.IsNullOrWhiteSpace(name)
+            ? null
+            : devices.FirstOrDefault(device =>
+                device.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static AudioOutputDevice? FindAudioOutputDevice(
+        IReadOnlyList<AudioOutputDevice> devices,
+        string? endpointId,
+        string? name)
+    {
+        if (!string.IsNullOrWhiteSpace(endpointId))
+        {
+            var endpointMatch = devices.FirstOrDefault(device =>
+                device.EndpointId?.Equals(endpointId, StringComparison.OrdinalIgnoreCase) == true);
+            if (endpointMatch is not null)
+            {
+                return endpointMatch;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(name)
+            ? null
+            : devices.FirstOrDefault(device =>
+                device.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static CameraDevice? FindCameraForAppState(
+        IReadOnlyList<CameraDevice> cameras,
+        AppSettingsState state)
+    {
+        if (!string.IsNullOrWhiteSpace(state.CameraDevicePath))
+        {
+            var pathMatch = cameras.FirstOrDefault(camera =>
+                camera.EnumerateSourceDevices().Any(sourceDevice =>
+                    sourceDevice.DevicePath.Equals(state.CameraDevicePath, StringComparison.OrdinalIgnoreCase)
+                    && sourceDevice.Source.Equals(state.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase)));
+            if (pathMatch is not null)
+            {
+                return pathMatch;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(state.CameraName)
+            ? null
+            : cameras.FirstOrDefault(camera =>
+                camera.EnumerateSourceDevices().Any(sourceDevice =>
+                    sourceDevice.Name.Equals(state.CameraName, StringComparison.OrdinalIgnoreCase)
+                    && sourceDevice.Source.Equals(state.CameraSource ?? string.Empty, StringComparison.OrdinalIgnoreCase)))
+                ?? cameras.FirstOrDefault(camera =>
+                    camera.Name.Equals(state.CameraName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void RestorePersistedVideoDenoise()
+    {
+        if (VideoDenoiseModeComboBox is not null && !string.IsNullOrWhiteSpace(_appSettings.VideoDenoiseMode))
+        {
+            var modeItem = VideoDenoiseModeComboBox.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(item =>
+                    string.Equals(item.Content?.ToString(), _appSettings.VideoDenoiseMode, StringComparison.OrdinalIgnoreCase));
+            if (modeItem is not null)
+            {
+                VideoDenoiseModeComboBox.SelectedItem = modeItem;
+                _videoDenoiseMode = modeItem.Content?.ToString() ?? _videoDenoiseMode;
+            }
+        }
+
+        if (VideoDenoiseSlider is not null && _appSettings.VideoDenoiseStrength is { } strength && double.IsFinite(strength))
+        {
+            VideoDenoiseSlider.Value = Math.Clamp(strength, VideoDenoiseSlider.Minimum, VideoDenoiseSlider.Maximum);
+            _videoDenoiseSliderStrength = VideoDenoiseSlider.Value;
+        }
+
+        if (VideoDenoiseCheckBox is not null)
+        {
+            VideoDenoiseCheckBox.IsChecked = _appSettings.VideoDenoiseEnabled && !_safeStartCameraRecoveryActive;
+        }
+
+        UpdateVideoDenoiseSettings(restartPreview: false);
+    }
+
+    private void RestorePersistedPresetOrDefault()
+    {
+        if (!string.IsNullOrWhiteSpace(_appSettings.ActivePresetName))
+        {
+            try
+            {
+                if (_appSettings.ActivePresetIsUserPreset)
+                {
+                    var preset = LoadUserPreset(_appSettings.ActivePresetName);
+                    if (preset is not null)
+                    {
+                        ApplyUserPreset(preset);
+                        return;
+                    }
+                }
+                else if (ApplyBuiltInPreset(_appSettings.ActivePresetName))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppStateStore.LogDiagnostic("preset-restore-failed", ex);
+            }
+        }
+
+        LoadWarmRadioPreset();
+    }
+
+    private bool ApplyBuiltInPreset(string presetName)
+    {
+        if (presetName.Equals("Flat", StringComparison.OrdinalIgnoreCase))
+        {
+            FlatPresetClicked(this, new RoutedEventArgs());
+            return true;
+        }
+
+        if (presetName.Equals("Podcast Clean", StringComparison.OrdinalIgnoreCase))
+        {
+            PodcastCleanPresetClicked(this, new RoutedEventArgs());
+            return true;
+        }
+
+        if (presetName.Equals("Warm Radio", StringComparison.OrdinalIgnoreCase))
+        {
+            LoadWarmRadioPreset();
+            return true;
+        }
+
+        if (presetName.Equals("Deep Warm", StringComparison.OrdinalIgnoreCase))
+        {
+            DeepWarmPresetClicked(this, new RoutedEventArgs());
+            return true;
+        }
+
+        if (presetName.Equals("Noisy Room", StringComparison.OrdinalIgnoreCase))
+        {
+            NoisyRoomPresetClicked(this, new RoutedEventArgs());
+            return true;
+        }
+
+        if (presetName.Equals("Bright Headset", StringComparison.OrdinalIgnoreCase))
+        {
+            BrightHeadsetPresetClicked(this, new RoutedEventArgs());
+            return true;
+        }
+
+        return false;
     }
 
     private static bool IsDirectShowCamera(CameraDevice camera)
@@ -528,6 +755,105 @@ public partial class EqualizerWindow : Window
         catch
         {
         }
+    }
+
+    private void ApplyPersistedWindowPlacement()
+    {
+        if (!HasPersistedAppState())
+        {
+            return;
+        }
+
+        var width = _appSettings.WindowWidth;
+        var height = _appSettings.WindowHeight;
+        if (width is > 0 && height is > 0 && double.IsFinite(width.Value) && double.IsFinite(height.Value))
+        {
+            Width = Math.Max(MinWidth, width.Value);
+            Height = Math.Max(MinHeight, height.Value);
+        }
+
+        var left = _appSettings.WindowLeft;
+        var top = _appSettings.WindowTop;
+        if (left is not null
+            && top is not null
+            && double.IsFinite(left.Value)
+            && double.IsFinite(top.Value)
+            && IsWindowPointOnVirtualScreen(left.Value, top.Value))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = left.Value;
+            Top = top.Value;
+        }
+
+        if (_appSettings.WindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private static bool IsWindowPointOnVirtualScreen(double left, double top)
+    {
+        return left >= SystemParameters.VirtualScreenLeft - 80
+            && top >= SystemParameters.VirtualScreenTop - 80
+            && left <= SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 80
+            && top <= SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 80;
+    }
+
+    private void PersistAppState()
+    {
+        if (_isRestoringAppState || _isClosing)
+        {
+            return;
+        }
+
+        SaveAppStateNow();
+    }
+
+    private void SaveAppStateNow()
+    {
+        AppStateStore.SaveSettings(CaptureAppSettingsState());
+    }
+
+    private AppSettingsState CaptureAppSettingsState()
+    {
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+        var camera = CameraComboBox?.SelectedItem as CameraDevice;
+        var mode = GetSelectedCameraMode();
+        var selectedAudioPath = GetSelectedAudioRecordingPath();
+        var selectedSessionPath = GetSelectedSessionRecordingPath();
+        return new AppSettingsState
+        {
+            WindowLeft = double.IsFinite(bounds.Left) ? bounds.Left : null,
+            WindowTop = double.IsFinite(bounds.Top) ? bounds.Top : null,
+            WindowWidth = double.IsFinite(bounds.Width) ? bounds.Width : null,
+            WindowHeight = double.IsFinite(bounds.Height) ? bounds.Height : null,
+            WindowMaximized = WindowState == WindowState.Maximized,
+            LeftControlRailCollapsed = _isLeftControlRailCollapsed,
+            MicrophoneName = _selectedDevice?.Name,
+            InputChannelMode = _selectedInputChannelMode.ToString(),
+            OutputDeviceName = _selectedOutputDevice?.Name,
+            OutputEndpointId = _selectedOutputDevice?.EndpointId,
+            ProcessedOutputEnabled = ProcessedOutputCheckBox?.IsChecked == true,
+            OutputFolder = _outputFolder,
+            AudioRecordingFolder = _audioRecordingFolder,
+            LastAudioRecordingPath = !string.IsNullOrWhiteSpace(selectedAudioPath) ? selectedAudioPath : _lastAudioRecordingPath,
+            LastSessionRecordingPath = !string.IsNullOrWhiteSpace(selectedSessionPath) ? selectedSessionPath : _lastSessionRecordingPath,
+            CameraName = camera?.Name,
+            CameraSource = camera?.Source,
+            CameraDevicePath = camera?.DevicePath,
+            CameraEnabled = _isCameraEnabled,
+            CameraModeLabel = mode.Label,
+            CameraModeWidth = mode.Width,
+            CameraModeHeight = mode.Height,
+            CameraModeFramesPerSecond = mode.FramesPerSecond,
+            CameraModeInputFormat = mode.InputFormat,
+            VideoDenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
+            VideoDenoiseMode = GetSelectedVideoDenoiseMode(),
+            VideoDenoiseStrength = VideoDenoiseSlider?.Value,
+            ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true,
+            ActivePresetName = _lastLoadedPresetName,
+            ActivePresetIsUserPreset = _lastLoadedPresetIsUserPreset
+        };
     }
 
     private static int RgbToColorRef(byte red, byte green, byte blue)
@@ -598,6 +924,7 @@ public partial class EqualizerWindow : Window
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
+        SaveAppStateNow();
         _isClosing = true;
         _audioStreamOperationVersion++;
         CompositionTarget.Rendering -= CompositionTargetRendering;
@@ -646,6 +973,7 @@ public partial class EqualizerWindow : Window
     {
         _isLeftControlRailCollapsed = !_isLeftControlRailCollapsed;
         ApplyLeftControlRailLayout();
+        PersistAppState();
     }
 
     private void ApplyLeftControlRailLayout()
@@ -690,6 +1018,7 @@ public partial class EqualizerWindow : Window
 
         _outputFolder = dialog.FolderName;
         UpdateOutputFolderText();
+        PersistAppState();
     }
 
     private void BrowseAudioRecordingFolderClicked(object sender, RoutedEventArgs e)
@@ -710,6 +1039,7 @@ public partial class EqualizerWindow : Window
 
         _audioRecordingFolder = dialog.FolderName;
         UpdateAudioRecordingFolderText();
+        PersistAppState();
     }
 
     private void StartAudioRecordingClicked(object sender, RoutedEventArgs e)
@@ -794,6 +1124,7 @@ public partial class EqualizerWindow : Window
             : $"Saved {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
         _lastAudioRecordingPath = savedPath;
         RefreshAudioRecordingFiles(savedPath);
+        PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
     }
 
@@ -820,6 +1151,8 @@ public partial class EqualizerWindow : Window
 
     private void RecordingFilesSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        _lastAudioRecordingPath = GetSelectedAudioRecordingPath();
+        PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
     }
 
@@ -951,6 +1284,8 @@ public partial class EqualizerWindow : Window
 
     private void SessionFilesSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        _lastSessionRecordingPath = GetSelectedSessionRecordingPath();
+        PersistAppState();
         UpdateSessionPlaybackTransportControls();
     }
 
@@ -1355,8 +1690,13 @@ public partial class EqualizerWindow : Window
         return IsEnabledEnvironmentValue(value);
     }
 
-    private static bool ShouldUseSharedTextureCameraStream()
+    private bool ShouldUseSharedTextureCameraStream()
     {
+        if (_safeStartDx12Disabled)
+        {
+            return false;
+        }
+
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
         return string.Equals(value, "force", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
@@ -1427,10 +1767,17 @@ public partial class EqualizerWindow : Window
         }
 
         _isCameraEnabled = CameraEnabledToggle.IsChecked == true && _cameraAvailable;
+        if (_isCameraEnabled)
+        {
+            _safeStartCameraRecoveryActive = false;
+            _safeStartDx12Disabled = false;
+        }
+
         CameraPreviewStatusText.Text = _isCameraEnabled
             ? "Camera toggle received - starting preview"
             : "Camera toggle received - stopping preview";
         UpdateCameraEnabledState();
+        PersistAppState();
     }
 
     private void CameraSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1438,6 +1785,7 @@ public partial class EqualizerWindow : Window
         _ = LoadCameraModesAsync();
         ResetCameraControlPanel("Camera changed. Use Refresh after modes load if you want to query Windows camera controls.");
         UpdateCameraEnabledState();
+        PersistAppState();
     }
 
     private void RefreshCameraControlsClicked(object sender, RoutedEventArgs e)
@@ -1448,11 +1796,13 @@ public partial class EqualizerWindow : Window
     private void VideoDenoiseChanged(object sender, RoutedEventArgs e)
     {
         UpdateVideoDenoiseSettings(restartPreview: false);
+        PersistAppState();
     }
 
     private void VideoDenoiseChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateVideoDenoiseSettings(restartPreview: false);
+        PersistAppState();
     }
 
     private void VideoDenoiseModeChanged(object sender, SelectionChangedEventArgs e)
@@ -1470,12 +1820,14 @@ public partial class EqualizerWindow : Window
         }
 
         UpdateVideoDenoiseSettings(restartPreview: false);
+        PersistAppState();
     }
 
     private void ProcessedTextureRecordingChanged(object sender, RoutedEventArgs e)
     {
         _processedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true;
         UpdateProcessedTextureRecordingStatus();
+        PersistAppState();
     }
 
     private void VideoColorPolishChanged(object sender, RoutedEventArgs e)
@@ -1498,10 +1850,12 @@ public partial class EqualizerWindow : Window
         if (_isCameraEnabled)
         {
             StartCameraPreview();
+            PersistAppState();
             return;
         }
 
         UpdateCameraIdleStatus();
+        PersistAppState();
     }
 
     private void UpdateCameraEnabledState()
@@ -1603,8 +1957,16 @@ public partial class EqualizerWindow : Window
         StopTextureNativeCameraStream();
         _directShowPreviewService.Stop();
         _isDirectShowPreviewActive = false;
-        ShowDirect3D12PreviewHost(IntPtr.Zero);
-        CameraPreviewImage.Visibility = Visibility.Collapsed;
+        if (_safeStartDx12Disabled)
+        {
+            HideDirect3D12PreviewHost();
+            CameraPreviewImage.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ShowDirect3D12PreviewHost(IntPtr.Zero);
+            CameraPreviewImage.Visibility = Visibility.Collapsed;
+        }
 
         if (IsDirectShowCamera(camera))
         {
@@ -3189,6 +3551,7 @@ public partial class EqualizerWindow : Window
 
         _selectedDeviceFormat = selectedDeviceFormat;
         await RestartSelectedAudioStreamAsync("Listening");
+        PersistAppState();
     }
 
     private async void InputChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3199,17 +3562,20 @@ public partial class EqualizerWindow : Window
         }
 
         await RestartSelectedAudioStreamAsync("Listening");
+        PersistAppState();
     }
 
     private void OutputDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _selectedOutputDevice = OutputDeviceComboBox.SelectedItem as AudioOutputDevice;
         UpdateOutputRouting();
+        PersistAppState();
     }
 
     private void ProcessedOutputChanged(object sender, RoutedEventArgs e)
     {
         UpdateOutputRouting();
+        PersistAppState();
     }
 
     private void UpdateOutputRouting()
@@ -4045,6 +4411,7 @@ public partial class EqualizerWindow : Window
             : $"Saved {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
         _lastAudioRecordingPath = savedPath;
         RefreshAudioRecordingFiles(savedPath);
+        PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
     }
 
@@ -4065,6 +4432,7 @@ public partial class EqualizerWindow : Window
             _lastAudioRecordingPath = path;
             _isStoppingAudioPlayback = false;
             output.Play();
+            PersistAppState();
 
             AudioRecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
         }
@@ -4154,6 +4522,7 @@ public partial class EqualizerWindow : Window
             _isSessionPlaybackPlaying = true;
             _isSessionPlaybackEnded = false;
             _sessionPlaybackPositionTimer.Start();
+            PersistAppState();
 
             RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
         }
@@ -5485,7 +5854,10 @@ public partial class EqualizerWindow : Window
         SyncEqualizerSettings();
         SetProcessingSliderDefaults(description);
         SetActivePresetButton(name);
+        _lastLoadedPresetName = name;
+        _lastLoadedPresetIsUserPreset = false;
         StatusText.Text = $"{name} preset loaded";
+        PersistAppState();
     }
 
     private void UserPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -6204,6 +6576,7 @@ public partial class EqualizerWindow : Window
         {
             CameraModeComboBox.SelectedItem = match;
             _pendingCameraProfileModeLabel = null;
+            PersistAppState();
         }
     }
 
@@ -6370,7 +6743,10 @@ public partial class EqualizerWindow : Window
             ? $"User preset: {name}"
             : preset.Description);
         SetActivePresetButton(null);
+        _lastLoadedPresetName = name;
+        _lastLoadedPresetIsUserPreset = true;
         StatusText.Text = $"User preset loaded: {name}";
+        PersistAppState();
     }
 
     private void SetActivePresetButton(string? presetName)
