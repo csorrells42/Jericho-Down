@@ -11,6 +11,7 @@ using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -18,6 +19,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
 using ShapePath = System.Windows.Shapes.Path;
@@ -50,14 +52,9 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly string UserPresetFolder = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "PodcastWorkbench",
-        "Presets");
-    private static readonly string CameraProfileFolder = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "PodcastWorkbench",
-        "CameraProfiles");
+    private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
+    private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
+    private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
     private static readonly JsonSerializerOptions UserPresetJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -227,6 +224,32 @@ public partial class EqualizerWindow : Window
     private AudioFileReader? _audioPlaybackReader;
     private string? _audioPlaybackPath;
     private bool _isStoppingAudioPlayback;
+    private readonly DispatcherTimer _karaokePlaybackPositionTimer = new();
+    private WaveOutEvent? _karaokeTrackOutput;
+    private AudioFileReader? _karaokeTrackReader;
+    private KaraokeRateSampleProvider? _karaokeTrackRateProvider;
+    private SmbPitchShiftingSampleProvider? _karaokeTrackPitchProvider;
+    private KaraokeVocalReductionSampleProvider? _karaokeTrackVocalReductionProvider;
+    private string? _karaokeTrackPath;
+    private TimeSpan _karaokeTrackDuration;
+    private string? _karaokeBrowserFolder;
+    private double _karaokeKeySemitones;
+    private double _karaokeTempoPercent = 100d;
+    private bool _karaokeVocalReductionEnabled;
+    private bool _isKaraokeTrackPlaying;
+    private bool _isStoppingKaraokePlayback;
+    private bool _isScrubbingKaraokePlayback;
+    private bool _isUpdatingKaraokePlaybackPosition;
+    private bool _isUpdatingKaraokeAdjustments;
+    private bool _isKaraokeVocalRecording;
+    private string? _karaokeVocalRecordingPath;
+    private DateTime _karaokeVocalRecordingStartedAt;
+    private readonly ObservableCollection<KaraokeTrackItem> _karaokeQueue = [];
+    private readonly ObservableCollection<KaraokeBrowserFileItem> _karaokeBrowserFiles = [];
+    private readonly ObservableCollection<KaraokeLyricLineItem> _karaokeLyricDisplayLines = [];
+    private List<KaraokeTimedLyricLine> _karaokeTimedLyrics = [];
+    private int _karaokeActiveLineIndex = -1;
+    private int _karaokeActiveTokenIndex = -1;
     private string? _activeRecordingSessionFolder;
     private string? _lastSessionRecordingPath;
     private int _activeRecordingSetNumber;
@@ -245,7 +268,6 @@ public partial class EqualizerWindow : Window
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = DenoiseDefaultStrength;
     private double _videoDenoiseSliderStrength = DenoiseDefaultStrength;
-    private bool _processedTextureRecordingEnabled;
     private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
@@ -360,6 +382,8 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
+        _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
+        _karaokePlaybackPositionTimer.Tick += KaraokePlaybackPositionTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
     }
 
@@ -389,6 +413,7 @@ public partial class EqualizerWindow : Window
         string[] preferredOrder =
         [
             "Video / Recording",
+            "Karaoke",
             "Mic / DSP"
         ];
 
@@ -438,17 +463,11 @@ public partial class EqualizerWindow : Window
     {
         _isRestoringAppState = true;
         var hasPersistedState = HasPersistedAppState();
-        _processedTextureRecordingEnabled = hasPersistedState
-            ? _appSettings.ProcessedTextureRecordingEnabled
-            : GetDefaultProcessedTextureNativeRecording();
-        if (ProcessedTextureRecordingCheckBox is not null)
-        {
-            ProcessedTextureRecordingCheckBox.IsChecked = _processedTextureRecordingEnabled;
-        }
 
         RestorePersistedFolders();
         RestorePersistedVideoDenoise();
         UpdateVideoColorPolishSettings();
+        UpdateAdvancedCameraControlsVisibility(loadWhenOpened: false);
 
         ApplyDarkTitleBar();
         InputChannelComboBox.ItemsSource = new[]
@@ -515,6 +534,9 @@ public partial class EqualizerWindow : Window
         ApplyLeftControlRailLayout();
         _lastAudioRecordingPath = _appSettings.LastAudioRecordingPath;
         _lastSessionRecordingPath = _appSettings.LastSessionRecordingPath;
+        KaraokeQueueDataGrid.ItemsSource = _karaokeQueue;
+        KaraokeBrowserFilesListBox.ItemsSource = _karaokeBrowserFiles;
+        RestoreKaraokeState();
         _ = LoadCameraModesAsync();
         ResetCameraControlPanel("Camera controls are available after mode loading. Use Refresh if you want to query the selected camera.");
         UpdateCameraEnabledState();
@@ -556,6 +578,63 @@ public partial class EqualizerWindow : Window
         {
             _audioRecordingFolder = _appSettings.AudioRecordingFolder;
         }
+    }
+
+    private void RestoreKaraokeState()
+    {
+        var restoredTrackPaths = (_appSettings.KaraokeTrackPaths ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(_appSettings.KaraokeTrackPath)
+            && File.Exists(_appSettings.KaraokeTrackPath)
+            && !restoredTrackPaths.Contains(_appSettings.KaraokeTrackPath, StringComparer.OrdinalIgnoreCase))
+        {
+            restoredTrackPaths.Insert(0, _appSettings.KaraokeTrackPath);
+        }
+
+        AddKaraokeTracksToQueue(restoredTrackPaths, selectFirstAdded: false);
+
+        _karaokeBrowserFolder = Directory.Exists(_appSettings.KaraokeBrowserFolder)
+            ? _appSettings.KaraokeBrowserFolder
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+        RefreshKaraokeBrowserFiles();
+
+        if (KaraokeLyricsTextBox is not null)
+        {
+            KaraokeLyricsTextBox.Text = _appSettings.KaraokeLyrics ?? string.Empty;
+        }
+
+        _isUpdatingKaraokeAdjustments = true;
+        try
+        {
+            _karaokeKeySemitones = Math.Clamp(_appSettings.KaraokeKeySemitones ?? 0d, -6d, 6d);
+            _karaokeTempoPercent = Math.Clamp(_appSettings.KaraokeTempoPercent ?? 100d, 75d, 125d);
+            _karaokeVocalReductionEnabled = _appSettings.KaraokeVocalReductionEnabled;
+            KaraokeKeySlider.Value = _karaokeKeySemitones;
+            KaraokeTempoSlider.Value = _karaokeTempoPercent;
+            KaraokeVocalReductionCheckBox.IsChecked = _karaokeVocalReductionEnabled;
+        }
+        finally
+        {
+            _isUpdatingKaraokeAdjustments = false;
+        }
+
+        var restoredTrack = !string.IsNullOrWhiteSpace(_appSettings.KaraokeTrackPath) && File.Exists(_appSettings.KaraokeTrackPath)
+            ? _appSettings.KaraokeTrackPath
+            : _karaokeQueue.FirstOrDefault()?.Path;
+        if (!string.IsNullOrWhiteSpace(restoredTrack))
+        {
+            SetKaraokeTrack(restoredTrack, updateQueueSelection: true);
+        }
+        else
+        {
+            UpdateKaraokeTrackUi();
+        }
+
+        UpdateKaraokeLyricsDisplay();
+        UpdateKaraokeAdjustmentStatus();
+        UpdateKaraokeTransportControls();
     }
 
     private void RestoreInputChannelSelection()
@@ -822,6 +901,13 @@ public partial class EqualizerWindow : Window
             AudioRecordingFolder = _audioRecordingFolder,
             LastAudioRecordingPath = !string.IsNullOrWhiteSpace(selectedAudioPath) ? selectedAudioPath : _lastAudioRecordingPath,
             LastSessionRecordingPath = !string.IsNullOrWhiteSpace(selectedSessionPath) ? selectedSessionPath : _lastSessionRecordingPath,
+            KaraokeTrackPath = _karaokeTrackPath,
+            KaraokeTrackPaths = _karaokeQueue.Select(track => track.Path).ToList(),
+            KaraokeBrowserFolder = _karaokeBrowserFolder,
+            KaraokeLyrics = KaraokeLyricsTextBox?.Text,
+            KaraokeKeySemitones = _karaokeKeySemitones,
+            KaraokeTempoPercent = _karaokeTempoPercent,
+            KaraokeVocalReductionEnabled = _karaokeVocalReductionEnabled,
             CameraName = camera?.Name,
             CameraSource = camera?.Source,
             CameraDevicePath = camera?.DevicePath,
@@ -833,7 +919,6 @@ public partial class EqualizerWindow : Window
             CameraModeInputFormat = mode.InputFormat,
             VideoDenoiseEnabled = VideoDenoiseCheckBox?.IsChecked == true,
             VideoDenoiseStrength = VideoDenoiseSlider?.Value,
-            ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true,
             ActivePresetName = _lastLoadedPresetName,
             ActivePresetIsUserPreset = _lastLoadedPresetIsUserPreset
         };
@@ -918,6 +1003,13 @@ public partial class EqualizerWindow : Window
         DisposeAudioRecordingFolderWatcher();
         DisposeSessionFolderWatcher();
         StopAudioPlayback();
+        StopKaraokePlayback(clearTrack: false);
+        if (_isKaraokeVocalRecording)
+        {
+            _spectrumService.StopProcessedAudioRecording();
+            _isKaraokeVocalRecording = false;
+        }
+
         StopSessionPlayback();
         _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
@@ -1032,6 +1124,14 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (_spectrumService.IsProcessedAudioRecording)
+        {
+            AudioRecordingStatusText.Text = "Another processed audio recording is already running.";
+            UpdateStandaloneAudioRecordingTransportControls();
+            UpdateKaraokeTransportControls();
+            return;
+        }
+
         if (!_spectrumService.IsRunning)
         {
             AudioRecordingStatusText.Text = "Select a microphone before recording.";
@@ -1059,6 +1159,7 @@ public partial class EqualizerWindow : Window
         }
 
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateKaraokeTransportControls();
     }
 
     private void PauseAudioRecordingClicked(object sender, RoutedEventArgs e)
@@ -1084,6 +1185,7 @@ public partial class EqualizerWindow : Window
         }
 
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateKaraokeTransportControls();
     }
 
     private void StopAudioRecordingClicked(object sender, RoutedEventArgs e)
@@ -1109,6 +1211,7 @@ public partial class EqualizerWindow : Window
         RefreshAudioRecordingFiles(savedPath);
         PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateKaraokeTransportControls();
     }
 
     private void PlayAudioFileClicked(object sender, RoutedEventArgs e)
@@ -1615,6 +1718,11 @@ public partial class EqualizerWindow : Window
             || CameraComboBox.SelectedItem is CameraDevice camera && IsDirectShowCamera(camera);
     }
 
+    private bool ShouldRecordProcessedTextureOutput()
+    {
+        return _pendingVideoDenoiseEnabled;
+    }
+
     private bool TryStartTextureNativeRecording(string? videoPath)
     {
         _lastTextureNativeRecordingResult = null;
@@ -1627,7 +1735,7 @@ public partial class EqualizerWindow : Window
                 return _textureNativeCameraStream.StartRecording(
                     videoPath,
                     new TextureNativeRecordingOptions(
-                        _processedTextureRecordingEnabled,
+                        ShouldRecordProcessedTextureOutput(),
                         _pendingVideoDenoiseEnabled,
                         _pendingVideoDenoiseStrength));
             }
@@ -1653,7 +1761,7 @@ public partial class EqualizerWindow : Window
                 GetSelectedCameraMode(),
                 videoPath,
                 new TextureNativeRecordingOptions(
-                    _processedTextureRecordingEnabled,
+                    ShouldRecordProcessedTextureOutput(),
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength));
             return true;
@@ -1683,12 +1791,6 @@ public partial class EqualizerWindow : Window
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
         return string.Equals(value, "force", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool GetDefaultProcessedTextureNativeRecording()
-    {
-        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_PROCESSED_TEXTURE_RECORDING");
-        return IsEnabledEnvironmentValue(value);
     }
 
     private static bool IsEnabledEnvironmentValue(string? value)
@@ -1776,6 +1878,11 @@ public partial class EqualizerWindow : Window
         LoadCameraControls();
     }
 
+    private void AdvancedCameraControlsChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateAdvancedCameraControlsVisibility(loadWhenOpened: true);
+    }
+
     private void VideoDenoiseChanged(object sender, RoutedEventArgs e)
     {
         UpdateVideoDenoiseSettings(restartPreview: false);
@@ -1785,13 +1892,6 @@ public partial class EqualizerWindow : Window
     private void VideoDenoiseChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         UpdateVideoDenoiseSettings(restartPreview: false);
-        PersistAppState();
-    }
-
-    private void ProcessedTextureRecordingChanged(object sender, RoutedEventArgs e)
-    {
-        _processedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true;
-        UpdateProcessedTextureRecordingStatus();
         PersistAppState();
     }
 
@@ -2536,7 +2636,7 @@ public partial class EqualizerWindow : Window
         var denoiseStatus = _pendingVideoDenoiseEnabled
             ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}"
             : "DX12 denoise off";
-        var recordingStatus = _processedTextureRecordingEnabled ? "processed recording armed" : "raw recording armed";
+        var recordingStatus = ShouldRecordProcessedTextureOutput() ? "recording follows denoise" : "raw recording";
         return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
     }
 
@@ -2581,6 +2681,21 @@ public partial class EqualizerWindow : Window
         if (CameraControlStatusText is not null)
         {
             CameraControlStatusText.Text = status;
+        }
+    }
+
+    private void UpdateAdvancedCameraControlsVisibility(bool loadWhenOpened)
+    {
+        if (AdvancedCameraControlsPanel is null || AdvancedCameraControlsCheckBox is null)
+        {
+            return;
+        }
+
+        var isVisible = AdvancedCameraControlsCheckBox.IsChecked == true;
+        AdvancedCameraControlsPanel.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (isVisible && loadWhenOpened && CameraControlPanel is not null && CameraControlPanel.Children.Count == 0)
+        {
+            LoadCameraControls();
         }
     }
 
@@ -2710,7 +2825,9 @@ public partial class EqualizerWindow : Window
             {
                 control.Value = rounded;
                 control.IsAuto = false;
+                _isUpdatingCameraControls = true;
                 autoCheckBox.IsChecked = false;
+                _isUpdatingCameraControls = false;
                 if (Math.Abs(slider.Value - rounded) > 0.001d && rounded == control.DefaultValue)
                 {
                     _isUpdatingCameraControls = true;
@@ -2724,7 +2841,10 @@ public partial class EqualizerWindow : Window
         {
             if (!_isUpdatingCameraControls)
             {
-                SetCameraControl(camera, control, control.Value, isAuto: true);
+                if (!SetCameraControl(camera, control, control.Value, isAuto: true))
+                {
+                    RestoreCameraAutoCheckBox(autoCheckBox, control);
+                }
             }
         };
 
@@ -2732,7 +2852,10 @@ public partial class EqualizerWindow : Window
         {
             if (!_isUpdatingCameraControls)
             {
-                SetCameraControl(camera, control, control.Value, isAuto: false);
+                if (!SetCameraControl(camera, control, control.Value, isAuto: false))
+                {
+                    RestoreCameraAutoCheckBox(autoCheckBox, control);
+                }
             }
         };
 
@@ -2752,6 +2875,13 @@ public partial class EqualizerWindow : Window
 
         container.Child = layout;
         return container;
+    }
+
+    private void RestoreCameraAutoCheckBox(CheckBox autoCheckBox, CameraControlItem control)
+    {
+        _isUpdatingCameraControls = true;
+        autoCheckBox.IsChecked = control.IsAuto;
+        _isUpdatingCameraControls = false;
     }
 
     private RepeatButton CreateCameraNudgeButton(string content, string toolTip)
@@ -2835,6 +2965,11 @@ public partial class EqualizerWindow : Window
         _videoDenoiseSliderStrength = strength;
         var effectiveStrength = strength;
         _pendingVideoDenoiseEnabled = VideoDenoiseCheckBox.IsChecked == true;
+        if (VideoDenoiseControlsPanel is not null)
+        {
+            VideoDenoiseControlsPanel.Visibility = _pendingVideoDenoiseEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         _pendingVideoDenoiseStrength = effectiveStrength;
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
@@ -2858,7 +2993,7 @@ public partial class EqualizerWindow : Window
             if (_textureNativeCameraStream is not null)
             {
                 CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                    ? "DX12 video grain reduction is live on the preview. Texture-native recording still uses the raw camera stream unless processed recording is enabled."
+                    ? "DX12 video grain reduction is live on the preview and will be included in texture-native recordings."
                     : "DX12 video grain reduction is off on the preview.";
                 return;
             }
@@ -2880,8 +3015,14 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        var enabled = VideoColorPolishCheckBox.IsChecked == true;
+        if (VideoColorPolishControlsPanel is not null)
+        {
+            VideoColorPolishControlsPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         _pendingVideoColorSettings = new VideoFrameColorSettings(
-            VideoColorPolishCheckBox.IsChecked == true,
+            enabled,
             Math.Clamp(VideoExposureSlider.Value, VideoExposureSlider.Minimum, VideoExposureSlider.Maximum),
             Math.Clamp(VideoContrastSlider.Value, VideoContrastSlider.Minimum, VideoContrastSlider.Maximum),
             Math.Clamp(VideoSaturationSlider.Value, VideoSaturationSlider.Minimum, VideoSaturationSlider.Maximum),
@@ -2934,26 +3075,6 @@ public partial class EqualizerWindow : Window
         {
             VideoWarmthValueText.Text = _pendingVideoColorSettings.Warmth.ToString("+0;-0;0");
         }
-    }
-
-    private void UpdateProcessedTextureRecordingStatus()
-    {
-        if (CameraControlStatusText is null)
-        {
-            return;
-        }
-
-        if (_isRecordingSession)
-        {
-            CameraControlStatusText.Text = _processedTextureRecordingEnabled
-                ? "Processed DX12 video recording will apply to the next recording."
-                : "Raw texture-native video recording will apply to the next recording.";
-            return;
-        }
-
-        CameraControlStatusText.Text = _processedTextureRecordingEnabled
-            ? "Processed DX12 bridge recording is enabled for shared GPU camera recordings."
-            : "Raw texture-native recording is enabled for shared GPU camera recordings.";
     }
 
     private static int RoundToCameraStep(double value, CameraControlItem control)
@@ -4155,15 +4276,9 @@ public partial class EqualizerWindow : Window
                 return "DX12 texture preview color is raw";
             }
 
-            if ((_pendingVideoDenoiseEnabled || _pendingVideoColorSettings.HasVisibleAdjustments) && !_processedTextureRecordingEnabled)
-            {
-                isGood = false;
-                return "preview effects armed; raw texture recording";
-            }
-
             isGood = true;
-            return _processedTextureRecordingEnabled
-                ? "preview = processed DX12 recording"
+            return ShouldRecordProcessedTextureOutput()
+                ? "recording includes grain reduction"
                 : "preview = raw texture recording";
         }
 
@@ -4199,7 +4314,7 @@ public partial class EqualizerWindow : Window
         {
             var previewPath = _direct3D12PreviewHost?.PreviewPathDescription ?? "DX12 texture preview pending";
             var colorStatus = _pendingVideoColorSettings.HasVisibleAdjustments ? "; texture preview color raw" : string.Empty;
-            return $"{previewPath}; recording {(_processedTextureRecordingEnabled ? "processed bridge" : "raw texture-native")}{colorStatus}";
+            return $"{previewPath}; recording {(ShouldRecordProcessedTextureOutput() ? "grain reduction bridge" : "raw texture-native")}{colorStatus}";
         }
 
         if (IsSelectedDirectShowCamera())
@@ -4267,13 +4382,14 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        AudioRecordButton.IsEnabled = !_isStandaloneAudioRecording;
+        var otherProcessedRecordingActive = _spectrumService.IsProcessedAudioRecording && !_isStandaloneAudioRecording;
+        AudioRecordButton.IsEnabled = !_isStandaloneAudioRecording && !otherProcessedRecordingActive;
         AudioPauseButton.IsEnabled = _isStandaloneAudioRecording;
         AudioPauseButton.Content = _isStandaloneAudioRecordingPaused ? "Resume" : "Pause";
         AudioStopButton.IsEnabled = _isStandaloneAudioRecording;
-        AudioPlayFileButton.IsEnabled = !_isStandaloneAudioRecording;
+        AudioPlayFileButton.IsEnabled = !_isStandaloneAudioRecording && !otherProcessedRecordingActive;
         AudioPlayFileButton.Content = _audioPlaybackOutput is null ? "Play File" : "Stop Play";
-        AudioOpenLocationButton.IsEnabled = !_isStandaloneAudioRecording;
+        AudioOpenLocationButton.IsEnabled = !_isStandaloneAudioRecording && !otherProcessedRecordingActive;
     }
 
     private void SyncStandaloneAudioRecordingState()
@@ -4299,6 +4415,7 @@ public partial class EqualizerWindow : Window
         RefreshAudioRecordingFiles(savedPath);
         PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateKaraokeTransportControls();
     }
 
     private void StartAudioPlayback(string path)
@@ -4389,6 +4506,1444 @@ public partial class EqualizerWindow : Window
         }
 
         _isStoppingAudioPlayback = false;
+    }
+
+    private void LoadKaraokeTrackClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Add karaoke backing tracks",
+            Filter = "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        if (AddKaraokeTracksToQueue(dialog.FileNames, selectFirstAdded: true) > 0)
+        {
+            PersistAppState();
+        }
+    }
+
+    private bool SetKaraokeTrack(string path, bool updateQueueSelection = false)
+    {
+        try
+        {
+            StopKaraokePlayback(clearTrack: false);
+            var track = _karaokeQueue.FirstOrDefault(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase))
+                ?? CreateKaraokeTrackItem(path);
+            _karaokeTrackPath = path;
+            _karaokeTrackDuration = track.Duration;
+            if (updateQueueSelection && KaraokeQueueDataGrid is not null)
+            {
+                KaraokeQueueDataGrid.SelectedItem = _karaokeQueue.FirstOrDefault(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase));
+                if (KaraokeQueueDataGrid.SelectedItem is not null)
+                {
+                    KaraokeQueueDataGrid.ScrollIntoView(KaraokeQueueDataGrid.SelectedItem);
+                }
+            }
+
+            UpdateKaraokeTrackUi();
+            var lyricsLoaded = TryAutoLoadKaraokeLyricsForTrack(path);
+            KaraokePlaybackStatusText.Text = $"Loaded {track.Name}.";
+            KaraokeStatusText.Text = lyricsLoaded
+                ? "Backing track ready with matching local lyrics."
+                : "Backing track ready.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _karaokeTrackPath = null;
+            _karaokeTrackDuration = TimeSpan.Zero;
+            UpdateKaraokeTrackUi();
+            KaraokePlaybackStatusText.Text = $"Track load failed: {ex.Message}";
+            KaraokeStatusText.Text = "Backing track could not be loaded.";
+            return false;
+        }
+    }
+
+    private void BrowseKaraokeFolderClicked(object sender, RoutedEventArgs e)
+    {
+        var initialFolder = Directory.Exists(_karaokeBrowserFolder)
+            ? _karaokeBrowserFolder
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Choose karaoke song folder",
+            InitialDirectory = initialFolder
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        _karaokeBrowserFolder = dialog.FolderName;
+        RefreshKaraokeBrowserFiles();
+        PersistAppState();
+    }
+
+    private void RefreshKaraokeBrowserFiles()
+    {
+        if (KaraokeBrowserFolderText is not null)
+        {
+            KaraokeBrowserFolderText.Text = _karaokeBrowserFolder ?? string.Empty;
+        }
+
+        _karaokeBrowserFiles.Clear();
+        if (string.IsNullOrWhiteSpace(_karaokeBrowserFolder) || !Directory.Exists(_karaokeBrowserFolder))
+        {
+            if (KaraokeStatusText is not null)
+            {
+                KaraokeStatusText.Text = "Choose a song folder to browse backing tracks.";
+            }
+
+            return;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(_karaokeBrowserFolder)
+                     .Where(IsSupportedKaraokeTrackFile)
+                     .OrderBy(System.IO.Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var track = CreateKaraokeTrackItem(path);
+                _karaokeBrowserFiles.Add(new KaraokeBrowserFileItem(
+                    path,
+                    track.Name,
+                    $"{track.Artist}  {track.DurationText}"));
+            }
+            catch
+            {
+            }
+        }
+
+        KaraokeStatusText.Text = _karaokeBrowserFiles.Count == 0
+            ? "No supported WAV or MP3 backing tracks found in that folder."
+            : $"Found {_karaokeBrowserFiles.Count} backing tracks.";
+    }
+
+    private void AddSelectedKaraokeBrowserFilesClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedPaths = KaraokeBrowserFilesListBox.SelectedItems
+            .OfType<KaraokeBrowserFileItem>()
+            .Select(item => item.Path)
+            .ToList();
+        if (selectedPaths.Count == 0)
+        {
+            KaraokeStatusText.Text = "Select one or more songs to queue.";
+            return;
+        }
+
+        if (AddKaraokeTracksToQueue(selectedPaths, selectFirstAdded: true) > 0)
+        {
+            PersistAppState();
+        }
+    }
+
+    private void KaraokeBrowserFileDoubleClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (KaraokeBrowserFilesListBox.SelectedItem is not KaraokeBrowserFileItem item)
+        {
+            return;
+        }
+
+        if (AddKaraokeTracksToQueue([item.Path], selectFirstAdded: true) > 0)
+        {
+            PersistAppState();
+        }
+    }
+
+    private int AddKaraokeTracksToQueue(IEnumerable<string> paths, bool selectFirstAdded)
+    {
+        var added = new List<KaraokeTrackItem>();
+        foreach (var path in paths
+                     .Where(IsSupportedKaraokeTrackFile)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (_karaokeQueue.Any(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            try
+            {
+                var track = CreateKaraokeTrackItem(path);
+                _karaokeQueue.Add(track);
+                added.Add(track);
+            }
+            catch (Exception ex)
+            {
+                KaraokeStatusText.Text = $"Could not add {System.IO.Path.GetFileName(path)}: {ex.Message}";
+            }
+        }
+
+        if (added.Count > 0)
+        {
+            var selectedTrack = selectFirstAdded
+                ? added[0]
+                : _karaokeQueue.FirstOrDefault(item => string.Equals(item.Path, _karaokeTrackPath, StringComparison.OrdinalIgnoreCase))
+                  ?? _karaokeQueue.FirstOrDefault();
+            if (selectedTrack is not null)
+            {
+                KaraokeQueueDataGrid.SelectedItem = selectedTrack;
+                SetKaraokeTrack(selectedTrack.Path);
+            }
+
+            KaraokeStatusText.Text = added.Count == 1
+                ? $"Queued {added[0].Name}."
+                : $"Queued {added.Count} backing tracks.";
+        }
+
+        UpdateKaraokeQueueControls();
+        UpdateKaraokeTransportControls();
+        return added.Count;
+    }
+
+    private void KaraokeQueueSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (KaraokeQueueDataGrid.SelectedItem is not KaraokeTrackItem item)
+        {
+            UpdateKaraokeQueueControls();
+            return;
+        }
+
+        if (!string.Equals(_karaokeTrackPath, item.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            SetKaraokeTrack(item.Path);
+            PersistAppState();
+        }
+
+        UpdateKaraokeQueueControls();
+    }
+
+    private void KaraokeQueueMouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (KaraokeQueueDataGrid.SelectedItem is KaraokeTrackItem item)
+        {
+            SetKaraokeTrack(item.Path);
+            StartKaraokePlayback();
+        }
+    }
+
+    private void RemoveSelectedKaraokeTrackClicked(object sender, RoutedEventArgs e)
+    {
+        if (KaraokeQueueDataGrid.SelectedItem is not KaraokeTrackItem item)
+        {
+            return;
+        }
+
+        var removedCurrentTrack = string.Equals(_karaokeTrackPath, item.Path, StringComparison.OrdinalIgnoreCase);
+        var index = _karaokeQueue.IndexOf(item);
+        _karaokeQueue.Remove(item);
+
+        if (removedCurrentTrack)
+        {
+            StopKaraokePlayback(clearTrack: true);
+            var next = _karaokeQueue.Count == 0 ? null : _karaokeQueue[Math.Clamp(index, 0, _karaokeQueue.Count - 1)];
+            if (next is not null)
+            {
+                KaraokeQueueDataGrid.SelectedItem = next;
+                SetKaraokeTrack(next.Path);
+            }
+            else
+            {
+                UpdateKaraokeTrackUi();
+            }
+        }
+
+        KaraokeStatusText.Text = $"Removed {item.Name} from the queue.";
+        UpdateKaraokeQueueControls();
+        UpdateKaraokeTransportControls();
+        PersistAppState();
+    }
+
+    private void ClearKaraokeQueueClicked(object sender, RoutedEventArgs e)
+    {
+        StopKaraokePlayback(clearTrack: true);
+        _karaokeQueue.Clear();
+        KaraokeQueueDataGrid.SelectedItem = null;
+        KaraokeStatusText.Text = "Karaoke queue cleared.";
+        UpdateKaraokeTrackUi();
+        UpdateKaraokeQueueControls();
+        UpdateKaraokeTransportControls();
+        PersistAppState();
+    }
+
+    private bool TryAdvanceKaraokeQueue()
+    {
+        if (_karaokeQueue.Count == 0)
+        {
+            return false;
+        }
+
+        var index = _karaokeQueue.ToList().FindIndex(item => string.Equals(item.Path, _karaokeTrackPath, StringComparison.OrdinalIgnoreCase));
+        if (index < 0 || index + 1 >= _karaokeQueue.Count)
+        {
+            return false;
+        }
+
+        var next = _karaokeQueue[index + 1];
+        KaraokeQueueDataGrid.SelectedItem = next;
+        SetKaraokeTrack(next.Path);
+        return true;
+    }
+
+    private void UpdateKaraokeQueueControls()
+    {
+        if (KaraokeRemoveTrackButton is null)
+        {
+            return;
+        }
+
+        KaraokeRemoveTrackButton.IsEnabled = KaraokeQueueDataGrid.SelectedItem is KaraokeTrackItem;
+    }
+
+    private KaraokeTrackItem CreateKaraokeTrackItem(string path)
+    {
+        using var reader = new AudioFileReader(path);
+        var fileName = System.IO.Path.GetFileNameWithoutExtension(path);
+        var artist = "Unknown";
+        var name = fileName;
+        var separatorIndex = fileName.IndexOf(" - ", StringComparison.Ordinal);
+        if (separatorIndex > 0 && separatorIndex + 3 < fileName.Length)
+        {
+            artist = fileName[..separatorIndex].Trim();
+            name = fileName[(separatorIndex + 3)..].Trim();
+        }
+
+        return new KaraokeTrackItem(
+            path,
+            string.IsNullOrWhiteSpace(name) ? System.IO.Path.GetFileName(path) : name,
+            string.IsNullOrWhiteSpace(artist) ? "Unknown" : artist,
+            reader.TotalTime,
+            FormatDuration(reader.TotalTime));
+    }
+
+    private static bool IsSupportedKaraokeTrackFile(string path)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        return extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".aac", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void KaraokePlayPauseClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isKaraokeTrackPlaying)
+        {
+            PauseKaraokePlayback();
+            return;
+        }
+
+        StartKaraokePlayback();
+    }
+
+    private void KaraokeStopClicked(object sender, RoutedEventArgs e)
+    {
+        StopKaraokePlayback(clearTrack: false);
+        ResetKaraokePlaybackProgress();
+        KaraokePlaybackStatusText.Text = string.IsNullOrWhiteSpace(_karaokeTrackPath)
+            ? "Load a backing track."
+            : "Backing track stopped.";
+        UpdateKaraokeTransportControls();
+    }
+
+    private void StartKaraokePlayback()
+    {
+        if (string.IsNullOrWhiteSpace(_karaokeTrackPath) || !File.Exists(_karaokeTrackPath))
+        {
+            KaraokePlaybackStatusText.Text = "Choose a backing track first.";
+            return;
+        }
+
+        try
+        {
+            if (_karaokeTrackOutput is null || _karaokeTrackReader is null)
+            {
+                var reader = new AudioFileReader(_karaokeTrackPath);
+                var rateProvider = new KaraokeRateSampleProvider(reader, GetKaraokeTempoRatio());
+                var pitchProvider = new SmbPitchShiftingSampleProvider(rateProvider)
+                {
+                    PitchFactor = (float)GetKaraokePitchFactor()
+                };
+                var vocalReductionProvider = new KaraokeVocalReductionSampleProvider(pitchProvider, _karaokeVocalReductionEnabled);
+                var output = new WaveOutEvent
+                {
+                    DeviceNumber = _selectedOutputDevice?.DeviceNumber ?? -1,
+                    DesiredLatency = 90
+                };
+                output.PlaybackStopped += KaraokePlaybackStopped;
+                output.Init(vocalReductionProvider);
+                _karaokeTrackReader = reader;
+                _karaokeTrackRateProvider = rateProvider;
+                _karaokeTrackPitchProvider = pitchProvider;
+                _karaokeTrackVocalReductionProvider = vocalReductionProvider;
+                _karaokeTrackOutput = output;
+                _karaokeTrackDuration = reader.TotalTime;
+                SeekKaraokePlaybackTo(TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider.Value, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds))));
+            }
+            else
+            {
+                ApplyKaraokeTimePitchSettings();
+                _karaokeTrackVocalReductionProvider?.SetEnabled(_karaokeVocalReductionEnabled);
+            }
+
+            _isStoppingKaraokePlayback = false;
+            _karaokeTrackOutput.Play();
+            _isKaraokeTrackPlaying = true;
+            _karaokePlaybackPositionTimer.Start();
+            KaraokePlaybackStatusText.Text = $"Playing {System.IO.Path.GetFileName(_karaokeTrackPath)}.";
+        }
+        catch (Exception ex)
+        {
+            StopKaraokePlayback(clearTrack: false);
+            KaraokePlaybackStatusText.Text = $"Playback failed: {ex.Message}";
+        }
+
+        UpdateKaraokeTransportControls();
+    }
+
+    private void PauseKaraokePlayback()
+    {
+        if (_karaokeTrackOutput is null)
+        {
+            return;
+        }
+
+        _karaokeTrackOutput.Pause();
+        _isKaraokeTrackPlaying = false;
+        _karaokePlaybackPositionTimer.Stop();
+        UpdateKaraokePlaybackProgress();
+        KaraokePlaybackStatusText.Text = "Backing track paused.";
+        UpdateKaraokeTransportControls();
+    }
+
+    private void StopKaraokePlayback(bool clearTrack)
+    {
+        _karaokePlaybackPositionTimer.Stop();
+        _isKaraokeTrackPlaying = false;
+        _isScrubbingKaraokePlayback = false;
+        if (KaraokeSeekSlider is not null && KaraokeSeekSlider.IsMouseCaptured)
+        {
+            KaraokeSeekSlider.ReleaseMouseCapture();
+        }
+
+        var output = _karaokeTrackOutput;
+        var reader = _karaokeTrackReader;
+        _karaokeTrackOutput = null;
+        _karaokeTrackReader = null;
+        _karaokeTrackRateProvider = null;
+        _karaokeTrackPitchProvider = null;
+        _karaokeTrackVocalReductionProvider = null;
+        if (output is not null)
+        {
+            _isStoppingKaraokePlayback = true;
+            try
+            {
+                output.PlaybackStopped -= KaraokePlaybackStopped;
+                output.Stop();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                output.Dispose();
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            reader?.Dispose();
+        }
+        catch
+        {
+        }
+
+        _isStoppingKaraokePlayback = false;
+        if (clearTrack)
+        {
+            _karaokeTrackPath = null;
+            _karaokeTrackDuration = TimeSpan.Zero;
+        }
+    }
+
+    private void KaraokePlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var wasStoppedByUser = _isStoppingKaraokePlayback;
+            var trackName = string.IsNullOrWhiteSpace(_karaokeTrackPath)
+                ? "track"
+                : System.IO.Path.GetFileName(_karaokeTrackPath);
+            StopKaraokePlayback(clearTrack: false);
+            if (e.Exception is not null)
+            {
+                KaraokePlaybackStatusText.Text = $"Playback failed: {e.Exception.Message}";
+            }
+            else if (!wasStoppedByUser)
+            {
+                SeekKaraokePlaybackTo(_karaokeTrackDuration);
+                if (TryAdvanceKaraokeQueue())
+                {
+                    KaraokePlaybackStatusText.Text = $"Finished {trackName}. Starting next track.";
+                    StartKaraokePlayback();
+                }
+                else
+                {
+                    KaraokePlaybackStatusText.Text = $"Finished {trackName}.";
+                }
+            }
+
+            UpdateKaraokeTransportControls();
+        }, DispatcherPriority.Background);
+    }
+
+    private void KaraokePlaybackPositionTimerTick(object? sender, EventArgs e)
+    {
+        if (!_isScrubbingKaraokePlayback)
+        {
+            UpdateKaraokePlaybackProgress();
+        }
+    }
+
+    private void UpdateKaraokePlaybackProgress()
+    {
+        if (KaraokeSeekSlider is null)
+        {
+            return;
+        }
+
+        var position = _karaokeTrackReader?.CurrentTime ?? TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider.Value, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds)));
+        var duration = _karaokeTrackDuration;
+        var maxSeconds = Math.Max(1d, duration.TotalSeconds);
+        var positionSeconds = Math.Clamp(position.TotalSeconds, 0d, maxSeconds);
+
+        _isUpdatingKaraokePlaybackPosition = true;
+        try
+        {
+            KaraokeSeekSlider.Minimum = 0d;
+            KaraokeSeekSlider.Maximum = maxSeconds;
+            KaraokeSeekSlider.Value = positionSeconds;
+        }
+        finally
+        {
+            _isUpdatingKaraokePlaybackPosition = false;
+        }
+
+        KaraokePositionText.Text = FormatDuration(TimeSpan.FromSeconds(positionSeconds));
+        KaraokeDurationText.Text = duration > TimeSpan.Zero ? FormatDuration(duration) : "00:00:00";
+        UpdateActiveKaraokeLyric(TimeSpan.FromSeconds(positionSeconds));
+    }
+
+    private void ResetKaraokePlaybackProgress()
+    {
+        _isUpdatingKaraokePlaybackPosition = true;
+        try
+        {
+            KaraokeSeekSlider.Minimum = 0d;
+            KaraokeSeekSlider.Maximum = Math.Max(1d, _karaokeTrackDuration.TotalSeconds);
+            KaraokeSeekSlider.Value = 0d;
+        }
+        finally
+        {
+            _isUpdatingKaraokePlaybackPosition = false;
+        }
+
+        KaraokePositionText.Text = "00:00:00";
+        KaraokeDurationText.Text = _karaokeTrackDuration > TimeSpan.Zero ? FormatDuration(_karaokeTrackDuration) : "00:00:00";
+        UpdateActiveKaraokeLyric(TimeSpan.Zero);
+    }
+
+    private void SeekKaraokePlaybackFromPoint(Point point)
+    {
+        if (_karaokeTrackDuration <= TimeSpan.Zero || KaraokeSeekSlider.ActualWidth <= 0d)
+        {
+            return;
+        }
+
+        var ratio = Math.Clamp(point.X / KaraokeSeekSlider.ActualWidth, 0d, 1d);
+        SeekKaraokePlaybackTo(TimeSpan.FromSeconds(_karaokeTrackDuration.TotalSeconds * ratio));
+    }
+
+    private void SeekKaraokePlaybackTo(TimeSpan position)
+    {
+        var duration = _karaokeTrackDuration;
+        var maxSeconds = Math.Max(0d, duration.TotalSeconds);
+        var clamped = TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0d, maxSeconds));
+        if (_karaokeTrackReader is not null)
+        {
+            _karaokeTrackReader.CurrentTime = clamped;
+            _karaokeTrackRateProvider?.Reset();
+        }
+
+        _isUpdatingKaraokePlaybackPosition = true;
+        try
+        {
+            KaraokeSeekSlider.Maximum = Math.Max(1d, maxSeconds);
+            KaraokeSeekSlider.Value = clamped.TotalSeconds;
+        }
+        finally
+        {
+            _isUpdatingKaraokePlaybackPosition = false;
+        }
+
+        KaraokePositionText.Text = FormatDuration(clamped);
+        KaraokeDurationText.Text = duration > TimeSpan.Zero ? FormatDuration(duration) : "00:00:00";
+        UpdateActiveKaraokeLyric(clamped);
+    }
+
+    private void KaraokeSeekSliderPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_karaokeTrackDuration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        _isScrubbingKaraokePlayback = true;
+        KaraokeSeekSlider.CaptureMouse();
+        SeekKaraokePlaybackFromPoint(e.GetPosition(KaraokeSeekSlider));
+    }
+
+    private void KaraokeSeekSliderPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isScrubbingKaraokePlayback || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        SeekKaraokePlaybackFromPoint(e.GetPosition(KaraokeSeekSlider));
+    }
+
+    private void KaraokeSeekSliderPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isScrubbingKaraokePlayback)
+        {
+            return;
+        }
+
+        SeekKaraokePlaybackFromPoint(e.GetPosition(KaraokeSeekSlider));
+        _isScrubbingKaraokePlayback = false;
+        if (KaraokeSeekSlider.IsMouseCaptured)
+        {
+            KaraokeSeekSlider.ReleaseMouseCapture();
+        }
+    }
+
+    private void KaraokeSeekSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingKaraokePlaybackPosition || _karaokeTrackDuration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        SeekKaraokePlaybackTo(TimeSpan.FromSeconds(e.NewValue));
+    }
+
+    private void LoadKaraokeLyricsClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose karaoke lyrics",
+            Filter = "Lyrics and text files|*.lrc;*.txt|All files|*.*",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            KaraokeLyricsTextBox.Text = File.ReadAllText(dialog.FileName);
+            KaraokeStatusText.Text = $"Loaded lyrics from {System.IO.Path.GetFileName(dialog.FileName)}.";
+            PersistAppState();
+        }
+        catch (Exception ex)
+        {
+            KaraokeStatusText.Text = $"Lyrics load failed: {ex.Message}";
+        }
+    }
+
+    private void ClearKaraokeLyricsClicked(object sender, RoutedEventArgs e)
+    {
+        KaraokeLyricsTextBox.Clear();
+        KaraokeStatusText.Text = "Lyrics cleared.";
+        PersistAppState();
+    }
+
+    private void KaraokeLyricsTextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdateKaraokeLyricsDisplay();
+    }
+
+    private void UpdateKaraokeLyricsDisplay()
+    {
+        if (KaraokeLyricsDisplayPanel is null || KaraokeLyricsTextBox is null)
+        {
+            return;
+        }
+
+        var text = KaraokeLyricsTextBox.Text;
+        _karaokeTimedLyrics = ParseKaraokeTimedLyrics(text);
+        _karaokeLyricDisplayLines.Clear();
+
+        if (_karaokeTimedLyrics.Count > 0)
+        {
+            for (var i = 0; i < _karaokeTimedLyrics.Count; i++)
+            {
+                var line = _karaokeTimedLyrics[i];
+                var end = i + 1 < _karaokeTimedLyrics.Count
+                    ? _karaokeTimedLyrics[i + 1].Start
+                    : EstimateKaraokeFinalLineEnd(line.Start, line.Text);
+                _karaokeLyricDisplayLines.Add(CreateKaraokeLyricLineItem(line.Text, line.Start, end));
+            }
+        }
+        else
+        {
+            var lines = ExtractPlainKaraokeLyricLines(text);
+            if (lines.Count == 0)
+            {
+                _karaokeLyricDisplayLines.Add(new KaraokeLyricLineItem(
+                    "Load a backing track, paste lyrics, and sing through the processed mic chain.",
+                    null,
+                    null,
+                    []));
+            }
+            else
+            {
+                foreach (var line in lines)
+                {
+                    _karaokeLyricDisplayLines.Add(CreateKaraokeLyricLineItem(line, null, null));
+                }
+            }
+        }
+
+        _karaokeActiveLineIndex = -1;
+        _karaokeActiveTokenIndex = -1;
+        RenderKaraokeLyrics(-1, -1);
+
+        var position = _karaokeTrackReader?.CurrentTime
+            ?? TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider?.Value ?? 0d, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds)));
+        UpdateActiveKaraokeLyric(position);
+    }
+
+    private bool TryAutoLoadKaraokeLyricsForTrack(string trackPath)
+    {
+        if (KaraokeLyricsTextBox is null
+            || string.IsNullOrWhiteSpace(trackPath)
+            || !File.Exists(trackPath)
+            || !string.IsNullOrWhiteSpace(KaraokeLyricsTextBox.Text))
+        {
+            return false;
+        }
+
+        var lyricsPath = FindLocalKaraokeLyricsFile(trackPath);
+        if (string.IsNullOrWhiteSpace(lyricsPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            KaraokeLyricsTextBox.Text = File.ReadAllText(lyricsPath);
+            KaraokeStatusText.Text = $"Auto-loaded lyrics from {System.IO.Path.GetFileName(lyricsPath)}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            KaraokeStatusText.Text = $"Auto lyrics load failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static string? FindLocalKaraokeLyricsFile(string trackPath)
+    {
+        var folder = System.IO.Path.GetDirectoryName(trackPath);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            return null;
+        }
+
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(trackPath);
+        var candidateFolders = new[]
+        {
+            folder,
+            System.IO.Path.Combine(folder, "Lyrics"),
+            System.IO.Path.Combine(folder, "lyrics")
+        };
+        foreach (var candidateFolder in candidateFolders.Where(Directory.Exists))
+        {
+            foreach (var extension in new[] { ".lrc", ".txt" })
+            {
+                var exactPath = System.IO.Path.Combine(candidateFolder, baseName + extension);
+                if (File.Exists(exactPath))
+                {
+                    return exactPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private async void AutoTimeKaraokeLyricsClicked(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_karaokeTrackPath) || !File.Exists(_karaokeTrackPath))
+        {
+            KaraokeStatusText.Text = "Load a backing track before auto-timing lyrics.";
+            return;
+        }
+
+        var lyricLines = ExtractPlainKaraokeLyricLines(KaraokeLyricsTextBox.Text);
+        if (lyricLines.Count == 0)
+        {
+            KaraokeStatusText.Text = "Paste or load lyric lines before auto-timing.";
+            return;
+        }
+
+        KaraokeStatusText.Text = "Analyzing backing track for lyric timing...";
+        try
+        {
+            var trackPath = _karaokeTrackPath;
+            var timedLines = await Task.Run(() => GenerateKaraokeLyricTimingsFromAudio(trackPath, lyricLines));
+            KaraokeLyricsTextBox.Text = string.Join(
+                Environment.NewLine,
+                timedLines.Select(line => $"{FormatLyricTimestamp(line.Start)} {line.Text}"));
+            KaraokeStatusText.Text = $"Auto-timed {timedLines.Count} lyric lines from the backing track.";
+            PersistAppState();
+        }
+        catch (Exception ex)
+        {
+            KaraokeStatusText.Text = $"Auto timing failed: {ex.Message}";
+        }
+    }
+
+    private static List<KaraokeTimedLyricLine> ParseKaraokeTimedLyrics(string text)
+    {
+        var timedLines = new List<KaraokeTimedLyricLine>();
+        foreach (var rawLine in SplitKaraokeLyricLines(text))
+        {
+            var matches = KaraokeLyricTimestampRegex.Matches(rawLine);
+            if (matches.Count == 0)
+            {
+                continue;
+            }
+
+            var lyricText = KaraokeLyricTimestampRegex.Replace(rawLine, string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(lyricText))
+            {
+                continue;
+            }
+
+            foreach (Match match in matches)
+            {
+                if (TryParseLyricTimestamp(match, out var timestamp))
+                {
+                    timedLines.Add(new KaraokeTimedLyricLine(timestamp, lyricText));
+                }
+            }
+        }
+
+        return timedLines
+            .OrderBy(line => line.Start)
+            .ThenBy(line => line.Text, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> ExtractPlainKaraokeLyricLines(string text)
+    {
+        return SplitKaraokeLyricLines(text)
+            .Select(line => KaraokeLyricTimestampRegex.Replace(line, string.Empty).Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Where(line => !(line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal)))
+            .ToList();
+    }
+
+    private static IEnumerable<string> SplitKaraokeLyricLines(string text)
+    {
+        return (text ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+    }
+
+    private static bool TryParseLyricTimestamp(Match match, out TimeSpan timestamp)
+    {
+        timestamp = TimeSpan.Zero;
+        if (!int.TryParse(match.Groups["minutes"].Value, out var minutes)
+            || !int.TryParse(match.Groups["seconds"].Value, out var seconds))
+        {
+            return false;
+        }
+
+        var fractionText = match.Groups["fraction"].Value;
+        var milliseconds = 0;
+        if (!string.IsNullOrWhiteSpace(fractionText))
+        {
+            var normalized = fractionText.PadRight(3, '0')[..3];
+            _ = int.TryParse(normalized, out milliseconds);
+        }
+
+        timestamp = TimeSpan.FromMilliseconds(minutes * 60000d + seconds * 1000d + milliseconds);
+        return true;
+    }
+
+    private static List<KaraokeTimedLyricLine> GenerateKaraokeLyricTimingsFromAudio(string trackPath, IReadOnlyList<string> lyricLines)
+    {
+        using var reader = new AudioFileReader(trackPath);
+        var windows = ReadKaraokeAudioEnergyWindows(reader);
+        if (windows.Count == 0)
+        {
+            return GenerateEvenKaraokeLyricTimings(lyricLines, TimeSpan.Zero, reader.TotalTime);
+        }
+
+        var maxEnergy = windows.Max(window => window.Energy);
+        var threshold = Math.Max(0.0025d, maxEnergy * 0.06d);
+        var activeWindows = windows.Where(window => window.Energy >= threshold).ToList();
+        var activeStart = activeWindows.Count > 0
+            ? TimeSpan.FromSeconds(Math.Max(0d, activeWindows[0].TimeSeconds - 0.35d))
+            : TimeSpan.Zero;
+        var activeEnd = activeWindows.Count > 0
+            ? TimeSpan.FromSeconds(Math.Min(reader.TotalTime.TotalSeconds, activeWindows[^1].TimeSeconds + 0.5d))
+            : reader.TotalTime;
+
+        var weightedWindows = windows
+            .Where(window => window.TimeSeconds >= activeStart.TotalSeconds && window.TimeSeconds <= activeEnd.TotalSeconds)
+            .Select(window => new KaraokeAudioEnergyWindow(
+                window.TimeSeconds,
+                Math.Max(0.00001d, window.Energy - threshold * 0.35d)))
+            .ToList();
+        var totalWeight = weightedWindows.Sum(window => window.Energy);
+        if (weightedWindows.Count == 0 || totalWeight <= 0.0001d)
+        {
+            return GenerateEvenKaraokeLyricTimings(lyricLines, activeStart, activeEnd);
+        }
+
+        var timedLines = new List<KaraokeTimedLyricLine>(lyricLines.Count);
+        for (var i = 0; i < lyricLines.Count; i++)
+        {
+            var targetWeight = totalWeight * i / Math.Max(1d, lyricLines.Count);
+            var runningWeight = 0d;
+            var timestampSeconds = activeStart.TotalSeconds;
+            foreach (var window in weightedWindows)
+            {
+                runningWeight += window.Energy;
+                if (runningWeight >= targetWeight)
+                {
+                    timestampSeconds = window.TimeSeconds;
+                    break;
+                }
+            }
+
+            timedLines.Add(new KaraokeTimedLyricLine(TimeSpan.FromSeconds(timestampSeconds), lyricLines[i]));
+        }
+
+        return timedLines;
+    }
+
+    private static List<KaraokeAudioEnergyWindow> ReadKaraokeAudioEnergyWindows(AudioFileReader reader)
+    {
+        const double windowSeconds = 0.05d;
+        var channels = Math.Max(1, reader.WaveFormat.Channels);
+        var samplesPerWindow = Math.Max(channels, (int)(reader.WaveFormat.SampleRate * windowSeconds) * channels);
+        var buffer = new float[samplesPerWindow];
+        var windows = new List<KaraokeAudioEnergyWindow>();
+        var timeSeconds = 0d;
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            var sum = 0d;
+            for (var i = 0; i < read; i++)
+            {
+                sum += buffer[i] * buffer[i];
+            }
+
+            var rms = Math.Sqrt(sum / Math.Max(1, read));
+            windows.Add(new KaraokeAudioEnergyWindow(timeSeconds, rms));
+            timeSeconds += read / (double)channels / reader.WaveFormat.SampleRate;
+        }
+
+        return windows;
+    }
+
+    private static List<KaraokeTimedLyricLine> GenerateEvenKaraokeLyricTimings(
+        IReadOnlyList<string> lyricLines,
+        TimeSpan start,
+        TimeSpan end)
+    {
+        var durationSeconds = Math.Max(1d, (end - start).TotalSeconds);
+        var timedLines = new List<KaraokeTimedLyricLine>(lyricLines.Count);
+        for (var i = 0; i < lyricLines.Count; i++)
+        {
+            var ratio = i / Math.Max(1d, lyricLines.Count);
+            timedLines.Add(new KaraokeTimedLyricLine(start + TimeSpan.FromSeconds(durationSeconds * ratio), lyricLines[i]));
+        }
+
+        return timedLines;
+    }
+
+    private static string FormatLyricTimestamp(TimeSpan timestamp)
+    {
+        return $"[{(int)timestamp.TotalMinutes:00}:{timestamp.Seconds:00}.{timestamp.Milliseconds / 10:00}]";
+    }
+
+    private KaraokeLyricLineItem CreateKaraokeLyricLineItem(string text, TimeSpan? start, TimeSpan? end)
+    {
+        var tokens = CreateKaraokeLyricTokens(text, start, end);
+        return new KaraokeLyricLineItem(text, start, end, tokens);
+    }
+
+    private TimeSpan EstimateKaraokeFinalLineEnd(TimeSpan start, string text)
+    {
+        var minimumSeconds = Math.Clamp(EstimateKaraokeTokenWeight(text) * 0.18d, 1.5d, 6d);
+        var estimatedEnd = start + TimeSpan.FromSeconds(minimumSeconds);
+        if (_karaokeTrackDuration > TimeSpan.Zero)
+        {
+            return TimeSpan.FromSeconds(Math.Clamp(estimatedEnd.TotalSeconds, start.TotalSeconds + 1d, _karaokeTrackDuration.TotalSeconds));
+        }
+
+        return estimatedEnd;
+    }
+
+    private static List<KaraokeLyricToken> CreateKaraokeLyricTokens(string text, TimeSpan? start, TimeSpan? end)
+    {
+        var rawTokens = SplitKaraokeSyllableTokens(text);
+        if (!start.HasValue || !end.HasValue || end <= start || rawTokens.Count == 0)
+        {
+            return rawTokens
+                .Select(token => new KaraokeLyricToken(token.Text, null, null, token.IsSingable))
+                .ToList();
+        }
+
+        var weightedTokens = rawTokens
+            .Select(token => new
+            {
+                Token = token,
+                Weight = token.IsSingable ? Math.Max(1d, token.Text.Count(char.IsLetterOrDigit) * 0.72d) : 0.15d
+            })
+            .ToList();
+        var totalWeight = weightedTokens.Sum(token => token.Weight);
+        var lineDuration = end.Value - start.Value;
+        var cursor = start.Value;
+        var timedTokens = new List<KaraokeLyricToken>(weightedTokens.Count);
+        foreach (var item in weightedTokens)
+        {
+            var tokenDuration = TimeSpan.FromSeconds(lineDuration.TotalSeconds * item.Weight / Math.Max(0.01d, totalWeight));
+            var tokenEnd = cursor + tokenDuration;
+            timedTokens.Add(new KaraokeLyricToken(item.Token.Text, cursor, tokenEnd, item.Token.IsSingable));
+            cursor = tokenEnd;
+        }
+
+        return timedTokens;
+    }
+
+    private static List<KaraokeRawLyricToken> SplitKaraokeSyllableTokens(string text)
+    {
+        var tokens = new List<KaraokeRawLyricToken>();
+        foreach (Match match in Regex.Matches(text ?? string.Empty, @"[A-Za-z0-9']+|[^A-Za-z0-9']+"))
+        {
+            var part = match.Value;
+            if (part.Any(char.IsLetterOrDigit))
+            {
+                foreach (var syllable in SplitKaraokeWordIntoSyllables(part))
+                {
+                    tokens.Add(new KaraokeRawLyricToken(syllable, true));
+                }
+            }
+            else
+            {
+                tokens.Add(new KaraokeRawLyricToken(part, false));
+            }
+        }
+
+        return tokens;
+    }
+
+    private static List<string> SplitKaraokeWordIntoSyllables(string word)
+    {
+        if (word.Length <= 4)
+        {
+            return [word];
+        }
+
+        var parts = new List<string>();
+        var start = 0;
+        for (var i = 1; i < word.Length - 1; i++)
+        {
+            if (IsKaraokeVowel(word[i - 1]) && !IsKaraokeVowel(word[i]) && IsKaraokeVowel(word[i + 1]))
+            {
+                parts.Add(word[start..i]);
+                start = i;
+            }
+            else if (!IsKaraokeVowel(word[i - 1]) && IsKaraokeVowel(word[i]) && !IsKaraokeVowel(word[i + 1]) && i - start >= 3)
+            {
+                parts.Add(word[start..(i + 1)]);
+                start = i + 1;
+            }
+        }
+
+        if (start < word.Length)
+        {
+            parts.Add(word[start..]);
+        }
+
+        return parts.Count == 0 ? [word] : parts;
+    }
+
+    private static bool IsKaraokeVowel(char value)
+    {
+        return "aeiouyAEIOUY".IndexOf(value) >= 0;
+    }
+
+    private static double EstimateKaraokeTokenWeight(string text)
+    {
+        return SplitKaraokeSyllableTokens(text).Where(token => token.IsSingable).Sum(token => Math.Max(1, token.Text.Length));
+    }
+
+    private void UpdateActiveKaraokeLyric(TimeSpan position)
+    {
+        if (KaraokeLyricsDisplayPanel is null || _karaokeLyricDisplayLines.Count == 0)
+        {
+            return;
+        }
+
+        var activeLineIndex = 0;
+        var timedIndexes = _karaokeLyricDisplayLines
+            .Select((line, index) => new { Line = line, Index = index })
+            .Where(item => item.Line.Start.HasValue)
+            .ToList();
+        if (timedIndexes.Count > 0)
+        {
+            activeLineIndex = timedIndexes.LastOrDefault(item => item.Line.Start!.Value <= position)?.Index
+                ?? timedIndexes[0].Index;
+        }
+        else if (_karaokeTrackDuration > TimeSpan.Zero && _karaokeLyricDisplayLines.Count > 1)
+        {
+            var ratio = Math.Clamp(position.TotalSeconds / Math.Max(1d, _karaokeTrackDuration.TotalSeconds), 0d, 0.999d);
+            activeLineIndex = (int)(ratio * _karaokeLyricDisplayLines.Count);
+        }
+
+        var activeLine = _karaokeLyricDisplayLines[Math.Clamp(activeLineIndex, 0, _karaokeLyricDisplayLines.Count - 1)];
+        var activeTokenIndex = GetActiveKaraokeTokenIndex(activeLine, position);
+        if (_karaokeActiveLineIndex == activeLineIndex && _karaokeActiveTokenIndex == activeTokenIndex)
+        {
+            return;
+        }
+
+        _karaokeActiveLineIndex = activeLineIndex;
+        _karaokeActiveTokenIndex = activeTokenIndex;
+        RenderKaraokeLyrics(activeLineIndex, activeTokenIndex);
+    }
+
+    private static int GetActiveKaraokeTokenIndex(KaraokeLyricLineItem line, TimeSpan position)
+    {
+        if (line.Tokens.Count == 0)
+        {
+            return -1;
+        }
+
+        var timedTokenIndex = line.Tokens.FindLastIndex(token => token.IsSingable && token.Start.HasValue && token.Start.Value <= position);
+        if (timedTokenIndex >= 0)
+        {
+            return timedTokenIndex;
+        }
+
+        if (!line.Start.HasValue || !line.End.HasValue || line.End <= line.Start)
+        {
+            return line.Tokens.FindIndex(token => token.IsSingable);
+        }
+
+        var singableTokens = line.Tokens
+            .Select((token, index) => new { token, index })
+            .Where(item => item.token.IsSingable)
+            .ToList();
+        if (singableTokens.Count == 0)
+        {
+            return -1;
+        }
+
+        var ratio = Math.Clamp((position - line.Start.Value).TotalSeconds / Math.Max(0.1d, (line.End.Value - line.Start.Value).TotalSeconds), 0d, 0.999d);
+        return singableTokens[(int)(ratio * singableTokens.Count)].index;
+    }
+
+    private void RenderKaraokeLyrics(int activeLineIndex, int activeTokenIndex)
+    {
+        if (KaraokeLyricsDisplayPanel is null)
+        {
+            return;
+        }
+
+        KaraokeLyricsDisplayPanel.Children.Clear();
+        FrameworkElement? activeLineElement = null;
+        for (var lineIndex = 0; lineIndex < _karaokeLyricDisplayLines.Count; lineIndex++)
+        {
+            var line = _karaokeLyricDisplayLines[lineIndex];
+            var isActiveLine = lineIndex == activeLineIndex;
+            var textBlock = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = isActiveLine ? 38d : 30d,
+                FontWeight = isActiveLine ? FontWeights.Bold : FontWeights.SemiBold,
+                LineHeight = isActiveLine ? 54d : 44d,
+                Foreground = new SolidColorBrush(isActiveLine ? Colors.White : Color.FromRgb(141, 162, 183)),
+                Margin = new Thickness(0, 4, 0, 4)
+            };
+
+            if (line.Tokens.Count == 0)
+            {
+                textBlock.Text = line.Text;
+            }
+            else
+            {
+                for (var tokenIndex = 0; tokenIndex < line.Tokens.Count; tokenIndex++)
+                {
+                    var token = line.Tokens[tokenIndex];
+                    var isActiveToken = isActiveLine && tokenIndex == activeTokenIndex && token.IsSingable;
+                    if (isActiveToken)
+                    {
+                        textBlock.Inlines.Add(CreateKaraokeBallInline());
+                    }
+
+                    textBlock.Inlines.Add(new Run(token.Text)
+                    {
+                        Foreground = new SolidColorBrush(isActiveToken
+                            ? Color.FromRgb(53, 232, 216)
+                            : isActiveLine
+                                ? Colors.White
+                                : Color.FromRgb(141, 162, 183)),
+                        FontWeight = isActiveToken ? FontWeights.ExtraBold : textBlock.FontWeight,
+                        FontSize = isActiveToken ? textBlock.FontSize + 4d : textBlock.FontSize
+                    });
+                }
+            }
+
+            var border = new Border
+            {
+                Background = isActiveLine
+                    ? new SolidColorBrush(Color.FromArgb(105, 38, 61, 74))
+                    : Brushes.Transparent,
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 2, 0, 2),
+                Child = textBlock
+            };
+            KaraokeLyricsDisplayPanel.Children.Add(border);
+            if (isActiveLine)
+            {
+                activeLineElement = border;
+            }
+        }
+
+        activeLineElement?.BringIntoView();
+    }
+
+    private static InlineUIContainer CreateKaraokeBallInline()
+    {
+        var ball = new Ellipse
+        {
+            Width = 16,
+            Height = 16,
+            Fill = new SolidColorBrush(Color.FromRgb(53, 232, 216)),
+            Stroke = new SolidColorBrush(Color.FromRgb(215, 255, 249)),
+            StrokeThickness = 1,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        return new InlineUIContainer(ball)
+        {
+            BaselineAlignment = BaselineAlignment.Center
+        };
+    }
+
+    private void KaraokeKeySliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingKaraokeAdjustments)
+        {
+            return;
+        }
+
+        _karaokeKeySemitones = Math.Round(e.NewValue);
+        UpdateKaraokeAdjustmentStatus();
+        PersistAppState();
+    }
+
+    private void KaraokeTempoSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingKaraokeAdjustments)
+        {
+            return;
+        }
+
+        _karaokeTempoPercent = Math.Round(e.NewValue);
+        UpdateKaraokeAdjustmentStatus();
+        PersistAppState();
+    }
+
+    private void KaraokeVocalReductionChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingKaraokeAdjustments)
+        {
+            return;
+        }
+
+        _karaokeVocalReductionEnabled = KaraokeVocalReductionCheckBox.IsChecked == true;
+        _karaokeTrackVocalReductionProvider?.SetEnabled(_karaokeVocalReductionEnabled);
+        UpdateKaraokeAdjustmentStatus();
+        PersistAppState();
+    }
+
+    private void UpdateKaraokeAdjustmentStatus()
+    {
+        if (KaraokeKeyValueText is null || KaraokeTempoValueText is null || KaraokeAdjustmentStatusText is null)
+        {
+            return;
+        }
+
+        KaraokeKeyValueText.Text = $"{_karaokeKeySemitones:+0;-0;0} st";
+        KaraokeTempoValueText.Text = $"{_karaokeTempoPercent:0}%";
+        var vocalReductionText = _karaokeVocalReductionEnabled ? "lead vocal reduction on" : "normal song playback";
+        KaraokeAdjustmentStatusText.Text = $"Key {_karaokeKeySemitones:+0;-0;0} st, tempo {_karaokeTempoPercent:0}%, {vocalReductionText}.";
+        ApplyKaraokeTimePitchSettings();
+        _karaokeTrackVocalReductionProvider?.SetEnabled(_karaokeVocalReductionEnabled);
+    }
+
+    private double GetKaraokeTempoRatio()
+    {
+        return Math.Clamp(_karaokeTempoPercent / 100d, 0.5d, 2d);
+    }
+
+    private double GetKaraokeKeyRatio()
+    {
+        return Math.Clamp(Math.Pow(2d, _karaokeKeySemitones / 12d), 0.5d, 2d);
+    }
+
+    private double GetKaraokePitchFactor()
+    {
+        return Math.Clamp(GetKaraokeKeyRatio() / GetKaraokeTempoRatio(), 0.5d, 2d);
+    }
+
+    private void ApplyKaraokeTimePitchSettings()
+    {
+        _karaokeTrackRateProvider?.SetPlaybackRate(GetKaraokeTempoRatio());
+        if (_karaokeTrackPitchProvider is not null)
+        {
+            _karaokeTrackPitchProvider.PitchFactor = (float)GetKaraokePitchFactor();
+        }
+    }
+
+    private void KaraokeRecordVocalClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isKaraokeVocalRecording)
+        {
+            return;
+        }
+
+        if (!_spectrumService.IsRunning)
+        {
+            KaraokeVocalStatusText.Text = "Select a microphone before recording vocals.";
+            return;
+        }
+
+        if (_spectrumService.IsProcessedAudioRecording)
+        {
+            KaraokeVocalStatusText.Text = "Another processed audio recording is already running.";
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_audioRecordingFolder);
+            var path = CreateKaraokeVocalRecordingPath(DateTime.Now);
+            _spectrumService.StartProcessedAudioRecording(path);
+            _isKaraokeVocalRecording = true;
+            _karaokeVocalRecordingPath = path;
+            _karaokeVocalRecordingStartedAt = DateTime.UtcNow;
+            KaraokeVocalStatusText.Text = $"Recording karaoke DSP vocal: {System.IO.Path.GetFileName(path)}";
+            KaraokeStatusText.Text = "Karaoke recording is live.";
+        }
+        catch (Exception ex)
+        {
+            _isKaraokeVocalRecording = false;
+            _karaokeVocalRecordingPath = null;
+            KaraokeVocalStatusText.Text = $"Vocal recording failed: {ex.Message}";
+        }
+
+        UpdateKaraokeTransportControls();
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private void KaraokeStopVocalClicked(object sender, RoutedEventArgs e)
+    {
+        StopKaraokeVocalRecording();
+    }
+
+    private void StopKaraokeVocalRecording()
+    {
+        if (!_isKaraokeVocalRecording)
+        {
+            return;
+        }
+
+        var elapsed = DateTime.UtcNow - _karaokeVocalRecordingStartedAt;
+        var savedPath = _spectrumService.StopProcessedAudioRecording() ?? _karaokeVocalRecordingPath;
+        _isKaraokeVocalRecording = false;
+        _karaokeVocalRecordingPath = null;
+        _lastAudioRecordingPath = savedPath;
+        RefreshAudioRecordingFiles(savedPath);
+        KaraokeVocalStatusText.Text = string.IsNullOrWhiteSpace(savedPath)
+            ? $"Karaoke recording stopped at {FormatDuration(elapsed)}."
+            : $"Saved karaoke recording {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
+        KaraokeStatusText.Text = "Karaoke recording saved.";
+        UpdateKaraokeTransportControls();
+        UpdateStandaloneAudioRecordingTransportControls();
+        PersistAppState();
+    }
+
+    private string CreateKaraokeVocalRecordingPath(DateTime timestamp)
+    {
+        var fileName = $"karaokeRecording_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
+        return System.IO.Path.Combine(_audioRecordingFolder, fileName);
+    }
+
+    private void UpdateKaraokeTrackUi()
+    {
+        if (KaraokeTrackTitleText is null)
+        {
+            return;
+        }
+
+        KaraokeTrackTitleText.Text = string.IsNullOrWhiteSpace(_karaokeTrackPath)
+            ? "No backing track loaded"
+            : _karaokeQueue.FirstOrDefault(item => string.Equals(item.Path, _karaokeTrackPath, StringComparison.OrdinalIgnoreCase)) is { } track
+                ? $"{track.Artist} - {track.Name}"
+                : System.IO.Path.GetFileName(_karaokeTrackPath);
+        ResetKaraokePlaybackProgress();
+    }
+
+    private void UpdateKaraokeTransportControls()
+    {
+        if (KaraokePlayPauseButton is null || KaraokeRecordVocalButton is null)
+        {
+            return;
+        }
+
+        var hasTrack = !string.IsNullOrWhiteSpace(_karaokeTrackPath) && File.Exists(_karaokeTrackPath);
+        KaraokePlayPauseButton.IsEnabled = hasTrack;
+        KaraokeStopButton.IsEnabled = hasTrack;
+        KaraokePlayPauseButton.Content = _isKaraokeTrackPlaying ? "Pause" : "Play";
+        KaraokeRecordVocalButton.IsEnabled = !_isKaraokeVocalRecording && !_spectrumService.IsProcessedAudioRecording;
+        KaraokeStopVocalButton.IsEnabled = _isKaraokeVocalRecording;
+        UpdateKaraokeQueueControls();
     }
 
     private void StartSessionPlayback(string path)
@@ -6310,8 +7865,7 @@ public partial class EqualizerWindow : Window
             Exposure = VideoExposureSlider?.Value ?? _pendingVideoColorSettings.Exposure,
             Contrast = VideoContrastSlider?.Value ?? _pendingVideoColorSettings.Contrast,
             Saturation = VideoSaturationSlider?.Value ?? _pendingVideoColorSettings.Saturation,
-            Warmth = VideoWarmthSlider?.Value ?? _pendingVideoColorSettings.Warmth,
-            ProcessedTextureRecordingEnabled = ProcessedTextureRecordingCheckBox?.IsChecked == true
+            Warmth = VideoWarmthSlider?.Value ?? _pendingVideoColorSettings.Warmth
         };
     }
 
@@ -6352,11 +7906,6 @@ public partial class EqualizerWindow : Window
             VideoDenoiseSlider.Value = Math.Clamp(profile.DenoiseStrength, VideoDenoiseSlider.Minimum, VideoDenoiseSlider.Maximum);
         }
 
-        if (ProcessedTextureRecordingCheckBox is not null)
-        {
-            ProcessedTextureRecordingCheckBox.IsChecked = profile.ProcessedTextureRecordingEnabled;
-        }
-
         if (VideoColorPolishCheckBox is not null)
         {
             VideoColorPolishCheckBox.IsChecked = profile.ColorPolishEnabled;
@@ -6385,7 +7934,6 @@ public partial class EqualizerWindow : Window
         _isCameraEnabled = profile.CameraEnabled && _cameraAvailable;
         UpdateVideoDenoiseSettings(restartPreview: false);
         UpdateVideoColorPolishSettings();
-        UpdateProcessedTextureRecordingStatus();
         SelectPendingCameraProfileMode();
         UpdateCameraEnabledState();
 
@@ -6835,7 +8383,6 @@ public partial class EqualizerWindow : Window
 
         public double Warmth { get; set; }
 
-        public bool ProcessedTextureRecordingEnabled { get; set; }
     }
 
     private sealed record VoiceZone(string Name, double StartFrequencyHz, double EndFrequencyHz, string Description);
@@ -6850,6 +8397,156 @@ public partial class EqualizerWindow : Window
     private sealed record RecordingTarget(string SessionFolder, int SetNumber);
 
     private sealed record AudioRecordingFileItem(string Path, string Name, string Details);
+
+    private sealed record KaraokeTrackItem(string Path, string Name, string Artist, TimeSpan Duration, string DurationText);
+
+    private sealed record KaraokeBrowserFileItem(string Path, string Name, string Details);
+
+    private sealed record KaraokeLyricLineItem(string Text, TimeSpan? Start, TimeSpan? End, List<KaraokeLyricToken> Tokens);
+
+    private sealed record KaraokeTimedLyricLine(TimeSpan Start, string Text);
+
+    private sealed record KaraokeLyricToken(string Text, TimeSpan? Start, TimeSpan? End, bool IsSingable);
+
+    private sealed record KaraokeRawLyricToken(string Text, bool IsSingable);
+
+    private sealed record KaraokeAudioEnergyWindow(double TimeSeconds, double Energy);
+
+    private sealed class KaraokeRateSampleProvider : ISampleProvider
+    {
+        private readonly AudioFileReader _source;
+        private readonly int _channels;
+        private readonly float[] _currentFrame;
+        private readonly float[] _nextFrame;
+        private readonly float[] _readBuffer;
+        private bool _hasCurrentFrame;
+        private bool _hasNextFrame;
+        private double _framePosition;
+        private double _playbackRate;
+
+        public KaraokeRateSampleProvider(AudioFileReader source, double playbackRate)
+        {
+            _source = source;
+            _channels = Math.Max(1, source.WaveFormat.Channels);
+            _currentFrame = new float[_channels];
+            _nextFrame = new float[_channels];
+            _readBuffer = new float[_channels];
+            SetPlaybackRate(playbackRate);
+            Reset();
+        }
+
+        public WaveFormat WaveFormat => _source.WaveFormat;
+
+        public void SetPlaybackRate(double playbackRate)
+        {
+            _playbackRate = Math.Clamp(playbackRate, 0.5d, 2d);
+        }
+
+        public void Reset()
+        {
+            _framePosition = 0d;
+            _hasCurrentFrame = ReadFrame(_currentFrame);
+            _hasNextFrame = ReadFrame(_nextFrame);
+        }
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            if (!_hasCurrentFrame)
+            {
+                return 0;
+            }
+
+            var framesRequested = count / _channels;
+            var framesWritten = 0;
+            var writeIndex = offset;
+            while (framesWritten < framesRequested && _hasCurrentFrame)
+            {
+                var fraction = _hasNextFrame ? _framePosition : 0d;
+                for (var channel = 0; channel < _channels; channel++)
+                {
+                    var current = _currentFrame[channel];
+                    var next = _hasNextFrame ? _nextFrame[channel] : current;
+                    buffer[writeIndex++] = (float)(current + (next - current) * fraction);
+                }
+
+                framesWritten++;
+                _framePosition += _playbackRate;
+                while (_framePosition >= 1d && _hasCurrentFrame)
+                {
+                    _framePosition -= 1d;
+                    AdvanceFrame();
+                }
+            }
+
+            return framesWritten * _channels;
+        }
+
+        private void AdvanceFrame()
+        {
+            if (!_hasNextFrame)
+            {
+                _hasCurrentFrame = false;
+                return;
+            }
+
+            Array.Copy(_nextFrame, _currentFrame, _channels);
+            _hasCurrentFrame = true;
+            _hasNextFrame = ReadFrame(_nextFrame);
+        }
+
+        private bool ReadFrame(float[] target)
+        {
+            var read = _source.Read(_readBuffer, 0, _channels);
+            if (read <= 0)
+            {
+                Array.Clear(target);
+                return false;
+            }
+
+            for (var i = 0; i < _channels; i++)
+            {
+                target[i] = i < read ? _readBuffer[i] : 0f;
+            }
+
+            return true;
+        }
+    }
+
+    private sealed class KaraokeVocalReductionSampleProvider(ISampleProvider source, bool enabled) : ISampleProvider
+    {
+        private volatile bool _enabled = enabled;
+
+        public WaveFormat WaveFormat => source.WaveFormat;
+
+        public void SetEnabled(bool enabled)
+        {
+            _enabled = enabled;
+        }
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            var read = source.Read(buffer, offset, count);
+            if (!_enabled || WaveFormat.Channels < 2)
+            {
+                return read;
+            }
+
+            var channels = WaveFormat.Channels;
+            var end = offset + read - channels + 1;
+            for (var sample = offset; sample < end; sample += channels)
+            {
+                var left = buffer[sample];
+                var right = buffer[sample + 1];
+                var sideLeft = (left - right) * 0.72f;
+                var sideRight = (right - left) * 0.72f;
+
+                buffer[sample] = Math.Clamp(sideLeft, -1f, 1f);
+                buffer[sample + 1] = Math.Clamp(sideRight, -1f, 1f);
+            }
+
+            return read;
+        }
+    }
 
     private sealed record SessionRecordingItem(string Path, string SessionFolder, string Name, string Details, DateTime LastWriteTimeUtc)
     {

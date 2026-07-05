@@ -31,5 +31,9 @@
     </Content>
   </ItemGroup>
 
+  <Target Name="CreatePortableSettingsFolder" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)settings" />
+  </Target>
+
 </Project>
 

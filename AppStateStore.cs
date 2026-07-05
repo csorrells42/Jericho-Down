@@ -13,9 +13,7 @@ internal static class AppStateStore
         WriteIndented = true
     };
 
-    private static readonly string AppFolder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "PodcastWorkbench");
+    private static readonly string AppFolder = AppStoragePaths.SettingsFolder;
     private static readonly string SettingsPath = Path.Combine(AppFolder, "app-state.json");
     private static readonly string RunMarkerPath = Path.Combine(AppFolder, "run-state.json");
     private static readonly string DiagnosticsPath = Path.Combine(AppFolder, "diagnostics.log");
@@ -221,6 +219,20 @@ internal sealed class AppSettingsState
 
     public string? LastSessionRecordingPath { get; set; }
 
+    public string? KaraokeTrackPath { get; set; }
+
+    public List<string> KaraokeTrackPaths { get; set; } = [];
+
+    public string? KaraokeBrowserFolder { get; set; }
+
+    public string? KaraokeLyrics { get; set; }
+
+    public double? KaraokeKeySemitones { get; set; }
+
+    public double? KaraokeTempoPercent { get; set; }
+
+    public bool KaraokeVocalReductionEnabled { get; set; }
+
     public string? CameraName { get; set; }
 
     public string? CameraSource { get; set; }
@@ -242,8 +254,6 @@ internal sealed class AppSettingsState
     public bool VideoDenoiseEnabled { get; set; }
 
     public double? VideoDenoiseStrength { get; set; }
-
-    public bool ProcessedTextureRecordingEnabled { get; set; }
 
     public string? ActivePresetName { get; set; }
 

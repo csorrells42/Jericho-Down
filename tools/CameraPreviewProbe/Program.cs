@@ -73,7 +73,7 @@ if (textureProbe)
     using var cancellation = new CancellationTokenSource(options.Duration);
     var result = await TextureNativeCameraProbe.RunAsync(target.Name, mode, options.RequestedSamples, cancellation.Token);
     Console.WriteLine(result);
-    return result.SamplesRead > 0 ? 0 : 5;
+    return result.D3D12ResourceSamples > 0 ? 0 : 5;
 }
 
 if (dx12PreviewProbe)

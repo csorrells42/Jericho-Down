@@ -52,6 +52,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _processedOutputSampleRate;
     private int _processedOutputDeviceNumber = -1;
     private string? _processedOutputEndpointId;
+    private string? _processedOutputDeviceName;
+    private string _processedOutputBackendDescription = "not routed";
     private int _processedOutputEnabled;
     private int _processedOutputRampSamplesRemaining;
     private int _processedOutputRampSamplesTotal;
@@ -216,7 +218,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             var provider = _processedOutputProvider;
             return IsProcessedOutputEnabledVolatile() && provider is not null
-                ? $"Live route opened as {DescribeWaveFormat(provider.WaveFormat)}."
+                ? $"Live route opened via {_processedOutputBackendDescription} as {DescribeWaveFormat(provider.WaveFormat)}."
                 : "Live route is not open.";
         }
     }
@@ -449,6 +451,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             || !string.Equals(_processedOutputEndpointId, outputDevice.EndpointId, StringComparison.Ordinal);
         _processedOutputDeviceNumber = outputDevice.DeviceNumber;
         _processedOutputEndpointId = outputDevice.EndpointId;
+        _processedOutputDeviceName = outputDevice.Name;
         SetProcessedOutputEnabled(enabled);
 
         if (!enabled)
@@ -982,23 +985,44 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _processedOutputSampleRate = _activeSampleRate;
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
         var preferWasapiEndpoint = CanUseWasapiProcessedOutput();
+        var preferWaveOutForHardwareEndpoint = ShouldPreferWaveOutForHardwareEndpoint();
+        if (preferWaveOutForHardwareEndpoint && TryStartWaveOutProcessedOutput(floatProvider, out var hardwareFloatWaveOut))
+        {
+            _processedOutputProvider = floatProvider;
+            _processedOutput = hardwareFloatWaveOut;
+            _processedOutputBackendDescription = "speaker-safe WaveOut";
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
+        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
+        if (preferWaveOutForHardwareEndpoint && TryStartWaveOutProcessedOutput(pcmProvider, out var hardwarePcmWaveOut))
+        {
+            _processedOutputProvider = pcmProvider;
+            _processedOutput = hardwarePcmWaveOut;
+            _processedOutputBackendDescription = "speaker-safe WaveOut PCM";
+            ArmProcessedOutputRecoveryRamp();
+            return;
+        }
+
         if (preferWasapiEndpoint
             && TryStartWasapiProcessedOutput(floatProvider, out var endpointFloatOutput, out var endpointFloatPlaybackProvider))
         {
             _processedOutputProvider = floatProvider;
             _processedOutputPlaybackProvider = endpointFloatPlaybackProvider;
             _processedOutput = endpointFloatOutput;
+            _processedOutputBackendDescription = "WASAPI endpoint";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
 
-        var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
         if (preferWasapiEndpoint
             && TryStartWasapiProcessedOutput(pcmProvider, out var endpointPcmOutput, out var endpointPcmPlaybackProvider))
         {
             _processedOutputProvider = pcmProvider;
             _processedOutputPlaybackProvider = endpointPcmPlaybackProvider;
             _processedOutput = endpointPcmOutput;
+            _processedOutputBackendDescription = "WASAPI endpoint PCM";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1007,6 +1031,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             _processedOutputProvider = floatProvider;
             _processedOutput = floatWaveOut;
+            _processedOutputBackendDescription = "WaveOut";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1015,6 +1040,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             _processedOutputProvider = pcmProvider;
             _processedOutput = pcmWaveOut;
+            _processedOutputBackendDescription = "WaveOut PCM";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1025,6 +1051,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             _processedOutputProvider = floatProvider;
             _processedOutputPlaybackProvider = defaultFloatPlaybackProvider;
             _processedOutput = defaultFloatOutput;
+            _processedOutputBackendDescription = "default WASAPI";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1035,6 +1062,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             _processedOutputProvider = pcmProvider;
             _processedOutputPlaybackProvider = defaultPcmPlaybackProvider;
             _processedOutput = defaultPcmOutput;
+            _processedOutputBackendDescription = "default WASAPI PCM";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1051,6 +1079,29 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private bool CanUseWaveOutProcessedOutputFallback()
     {
         return string.IsNullOrWhiteSpace(_processedOutputEndpointId) || _processedOutputDeviceNumber >= 0;
+    }
+
+    private bool ShouldPreferWaveOutForHardwareEndpoint()
+    {
+        return !string.IsNullOrWhiteSpace(_processedOutputEndpointId)
+            && _processedOutputDeviceNumber >= 0
+            && !IsLikelyVirtualOutputDevice(_processedOutputDeviceName);
+    }
+
+    private static bool IsLikelyVirtualOutputDevice(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        return name.Contains("virtual", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("cable", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("vb-audio", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("voicemeeter", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("broadcast", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("obs", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("ndi", StringComparison.OrdinalIgnoreCase);
     }
 
     private static BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)
@@ -1215,6 +1266,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             _processedOutput = null;
             _processedOutputPlaybackProvider = null;
             _processedOutputProvider = null;
+            _processedOutputBackendDescription = "not routed";
             _processedOutputSampleRate = 0;
             _processedOutputRampSamplesRemaining = 0;
             _processedOutputRampSamplesTotal = 0;

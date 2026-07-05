@@ -5,6 +5,7 @@ obj/
 *.suo
 *.log
 Podcast Workbench Sessions/
+portable-build/
 .vs/
 *.user
 *.suo

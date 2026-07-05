@@ -44,50 +44,86 @@ public static class TextureNativeCameraProbe
             new TextureProbeAttempt("basic native", false, null, false)
         };
         var failedAttempts = new List<string>();
+        var productionAttempt = attempts.Take(1).ToArray();
+        var exploratoryAttempts = attempts.Skip(1).ToArray();
 
         using (var d3d12 = Direct3D12DeviceManager.Create())
         {
-            foreach (var attempt in attempts)
+            if (TryRunAttempts(
+                cameraName,
+                mode,
+                requestedSamples,
+                cancellationToken,
+                d3d12.Manager,
+                d3d12.ModeName,
+                Direct3D12DeviceManager.ID3D12Resource,
+                "D3D12",
+                productionAttempt,
+                failedAttempts,
+                "D3D12",
+                out var result))
             {
-                var result = TryRunAttempt(
-                    cameraName,
-                    mode,
-                    requestedSamples,
-                    cancellationToken,
-                    d3d12.Manager,
-                    d3d12.ModeName,
-                    Direct3D12DeviceManager.ID3D12Resource,
-                    "D3D12",
-                    attempt);
-                if (result.D3D12ResourceSamples > 0)
-                {
-                    return result with { Status = $"{result.Status} Attempt: {attempt.Name}." };
-                }
-
-                failedAttempts.Add($"D3D12 {attempt.Name}: {result.Status}");
+                return result;
             }
         }
 
         using (var d3d11 = Direct3D11DeviceManager.Create())
         {
-            foreach (var attempt in attempts)
+            if (TryRunAttempts(
+                cameraName,
+                mode,
+                requestedSamples,
+                cancellationToken,
+                d3d11.Manager,
+                d3d11.ModeName,
+                Direct3D11DeviceManager.ID3D11Texture2D,
+                "D3D11 texture bridge",
+                productionAttempt,
+                failedAttempts,
+                "D3D11 bridge",
+                out var result))
             {
-                var result = TryRunAttempt(
-                    cameraName,
-                    mode,
-                    requestedSamples,
-                    cancellationToken,
-                    d3d11.Manager,
-                    d3d11.ModeName,
-                    Direct3D11DeviceManager.ID3D11Texture2D,
-                    "D3D11 texture bridge",
-                    attempt);
-                if (result.D3D12ResourceSamples > 0)
-                {
-                    return result with { Status = $"{result.Status} Attempt: {attempt.Name}." };
-                }
+                return result;
+            }
+        }
 
-                failedAttempts.Add($"D3D11 bridge {attempt.Name}: {result.Status}");
+        using (var d3d12 = Direct3D12DeviceManager.Create())
+        {
+            if (TryRunAttempts(
+                cameraName,
+                mode,
+                requestedSamples,
+                cancellationToken,
+                d3d12.Manager,
+                d3d12.ModeName,
+                Direct3D12DeviceManager.ID3D12Resource,
+                "D3D12",
+                exploratoryAttempts,
+                failedAttempts,
+                "D3D12",
+                out var result))
+            {
+                return result;
+            }
+        }
+
+        using (var d3d11 = Direct3D11DeviceManager.Create())
+        {
+            if (TryRunAttempts(
+                cameraName,
+                mode,
+                requestedSamples,
+                cancellationToken,
+                d3d11.Manager,
+                d3d11.ModeName,
+                Direct3D11DeviceManager.ID3D11Texture2D,
+                "D3D11 texture bridge",
+                exploratoryAttempts,
+                failedAttempts,
+                "D3D11 bridge",
+                out var result))
+            {
+                return result;
             }
         }
 
@@ -102,6 +138,45 @@ public static class TextureNativeCameraProbe
             DxgiBackedSamples: 0,
             D3D12ResourceSamples: 0,
             Status: string.Join(" | ", failedAttempts));
+    }
+
+    private static bool TryRunAttempts(
+        string cameraName,
+        CameraVideoMode? mode,
+        int requestedSamples,
+        CancellationToken cancellationToken,
+        IMFDXGIDeviceManager deviceManager,
+        string deviceMode,
+        Guid resourceId,
+        string resourceLabel,
+        IEnumerable<TextureProbeAttempt> attempts,
+        List<string> failedAttempts,
+        string attemptGroupName,
+        out TextureNativeCameraProbeResult successfulResult)
+    {
+        foreach (var attempt in attempts)
+        {
+            var result = TryRunAttempt(
+                cameraName,
+                mode,
+                requestedSamples,
+                cancellationToken,
+                deviceManager,
+                deviceMode,
+                resourceId,
+                resourceLabel,
+                attempt);
+            if (result.D3D12ResourceSamples > 0)
+            {
+                successfulResult = result with { Status = $"{result.Status} Attempt: {attempt.Name}." };
+                return true;
+            }
+
+            failedAttempts.Add($"{attemptGroupName} {attempt.Name}: {result.Status}");
+        }
+
+        successfulResult = default!;
+        return false;
     }
 
     private static TextureNativeCameraProbeResult TryRunAttempt(
