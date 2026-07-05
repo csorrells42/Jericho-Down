@@ -338,6 +338,12 @@ internal static class MediaFoundationCameraDeviceFactory
 
     private static void ConfigureReader(IMFSourceReader reader, CameraVideoMode? mode)
     {
+        if (TrySetTextureMediaType(reader, mode, MediaFoundationGuids.MFVideoFormat_NV12, exactMode: true)
+            || TrySetTextureMediaType(reader, mode, MediaFoundationGuids.MFVideoFormat_NV12, exactMode: false))
+        {
+            return;
+        }
+
         var width = mode?.Width ?? 1280;
         var height = mode?.Height ?? 720;
         var fps = mode?.FramesPerSecond ?? 30d;

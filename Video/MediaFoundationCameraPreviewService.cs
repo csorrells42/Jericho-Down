@@ -22,6 +22,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     private int _activeWidth = 1280;
     private int _activeHeight = 720;
     private double _activeFramesPerSecond = 30d;
+    private Guid _activeSubtype = MediaFoundationGuids.MFVideoFormat_RGB32;
+    private int _activeStride;
 
     public event EventHandler<CameraFrame>? FrameAvailable;
     public event EventHandler<string>? StatusChanged;
@@ -326,7 +328,10 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             UpdateActiveFormat(reader, mode);
             var width = _activeWidth;
             var height = _activeHeight;
+            var subtype = _activeSubtype;
+            var stride = _activeStride;
             StatusChanged?.Invoke(this, $"Starting Media Foundation preview: {camera.Name}");
+            StatusChanged?.Invoke(this, $"Media Foundation preview format: {width}x{height}@{_activeFramesPerSecond:0.###} {MediaFoundationInterop.FormatSubtype(subtype)}, stride {stride}.");
             startup.TrySetResult(null);
 
             while (!cancellationToken.IsCancellationRequested)
@@ -360,9 +365,14 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
                 try
                 {
-                    if (TryReadFrame(sample, width, height, out var frame))
+                    if (TryReadFrame(sample, width, height, subtype, stride, out var frame))
                     {
-                        if (DenoiseEnabled)
+                        if (!frame.HasBgra && frame.HasNv12 && NeedsBgraFrame())
+                        {
+                            frame = CreateBgraFrameFromNv12(frame);
+                        }
+
+                        if (frame.HasBgra && DenoiseEnabled)
                         {
                             _denoiser.Apply(frame.BgraBytes, DenoiseStrength);
                         }
@@ -371,13 +381,16 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                             _denoiser.Reset();
                         }
 
-                        VideoFrameColorProcessor.Apply(frame.BgraBytes, ColorSettings);
+                        if (frame.HasBgra)
+                        {
+                            VideoFrameColorProcessor.Apply(frame.BgraBytes, ColorSettings);
+                        }
 
                         lock (_recordingLock)
                         {
                             try
                             {
-                                if (_recorder is not null)
+                                if (_recorder is not null && frame.HasBgra)
                                 {
                                     EnsureRecorderMatchesFrame(frame);
                                     if (_recorder?.WriteFrame(frame.BgraBytes) == false)
@@ -385,7 +398,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                                         StatusChanged?.Invoke(this, "Video frame write skipped: frame did not match the active recorder format.");
                                     }
                                 }
-                                else if (!string.IsNullOrWhiteSpace(_recordingPath))
+                                else if (!string.IsNullOrWhiteSpace(_recordingPath) && frame.HasBgra)
                                 {
                                     _recorder = new MediaFoundationVideoRecorder(
                                         _recordingPath,
@@ -480,7 +493,26 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         StatusChanged?.Invoke(this, $"Video recorder matched live frame size: {frame.Width}x{frame.Height}.");
     }
 
-    private static bool TryReadFrame(IMFSample sample, int width, int height, out CameraFrame frame)
+    private bool NeedsBgraFrame()
+    {
+        if (DenoiseEnabled || ColorSettings.HasVisibleAdjustments)
+        {
+            return true;
+        }
+
+        lock (_recordingLock)
+        {
+            return _recorder is not null || !string.IsNullOrWhiteSpace(_recordingPath);
+        }
+    }
+
+    private static bool TryReadFrame(
+        IMFSample sample,
+        int width,
+        int height,
+        Guid subtype,
+        int stride,
+        out CameraFrame frame)
     {
         frame = new CameraFrame([], 0, 0, 0);
         IMFMediaBuffer? buffer = null;
@@ -495,8 +527,24 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             MediaFoundationInterop.ThrowIfFailed(buffer.Lock(out var source, out _, out var currentLength));
             try
             {
-                var stride = width * 4;
-                var expectedBytes = stride * height;
+                if (subtype == MediaFoundationGuids.MFVideoFormat_NV12)
+                {
+                    var nv12Stride = stride != 0 ? Math.Abs(stride) : width;
+                    var uvHeight = (height + 1) / 2;
+                    var expectedNv12Bytes = nv12Stride * height + nv12Stride * uvHeight;
+                    if (currentLength < expectedNv12Bytes)
+                    {
+                        return false;
+                    }
+
+                    var nv12Bytes = new byte[expectedNv12Bytes];
+                    Marshal.Copy(source, nv12Bytes, 0, expectedNv12Bytes);
+                    frame = new CameraFrame([], width, height, 0, nv12Bytes, nv12Stride, "nv12");
+                    return true;
+                }
+
+                var bgraStride = stride != 0 ? Math.Abs(stride) : width * 4;
+                var expectedBytes = bgraStride * height;
                 if (currentLength < expectedBytes)
                 {
                     return false;
@@ -504,7 +552,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
                 var bytes = new byte[expectedBytes];
                 Marshal.Copy(source, bytes, 0, expectedBytes);
-                frame = new CameraFrame(bytes, width, height, stride);
+                frame = new CameraFrame(bytes, width, height, bgraStride);
                 return true;
             }
             finally
@@ -517,6 +565,49 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             MediaFoundationInterop.ReleaseComObject(buffer);
         }
     }
+
+    private static CameraFrame CreateBgraFrameFromNv12(CameraFrame frame)
+    {
+        var nv12Bytes = frame.Nv12Bytes;
+        if (nv12Bytes is null)
+        {
+            return frame;
+        }
+
+        var width = frame.Width;
+        var height = frame.Height;
+        var nv12Stride = frame.Nv12Stride;
+        var bgraStride = width * 4;
+        var bgraBytes = new byte[bgraStride * height];
+        var uvOffset = nv12Stride * height;
+
+        for (var y = 0; y < height; y++)
+        {
+            var yRow = y * nv12Stride;
+            var uvRow = uvOffset + y / 2 * nv12Stride;
+            var bgraRow = y * bgraStride;
+
+            for (var x = 0; x < width; x++)
+            {
+                var luma = (nv12Bytes[yRow + x] - 16) * (255d / 219d);
+                var uvIndex = uvRow + (x & ~1);
+                var chromaBlue = nv12Bytes[uvIndex] - 128d;
+                var chromaRed = nv12Bytes[uvIndex + 1] - 128d;
+                var red = luma + 1.5748d * chromaRed;
+                var green = luma - 0.1873d * chromaBlue - 0.4681d * chromaRed;
+                var blue = luma + 1.8556d * chromaBlue;
+                var destination = bgraRow + x * 4;
+                bgraBytes[destination] = ClampByte(blue);
+                bgraBytes[destination + 1] = ClampByte(green);
+                bgraBytes[destination + 2] = ClampByte(red);
+                bgraBytes[destination + 3] = 255;
+            }
+        }
+
+        return new CameraFrame(bgraBytes, width, height, bgraStride);
+    }
+
+    private static byte ClampByte(double value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
 
     private void CleanupPreviewObjects()
     {
@@ -537,6 +628,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         _activeWidth = 1280;
         _activeHeight = 720;
         _activeFramesPerSecond = 30d;
+        _activeSubtype = MediaFoundationGuids.MFVideoFormat_RGB32;
+        _activeStride = 0;
     }
 
     private void UpdateActiveFormat(IMFSourceReader reader, CameraVideoMode? requestedMode)
@@ -549,6 +642,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             _activeWidth = requestedMode?.Width ?? 1280;
             _activeHeight = requestedMode?.Height ?? 720;
             _activeFramesPerSecond = requestedMode?.FramesPerSecond ?? 30d;
+            _activeSubtype = MediaFoundationGuids.MFVideoFormat_RGB32;
+            _activeStride = _activeWidth * 4;
             return;
         }
 
@@ -563,6 +658,22 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
             if (MediaFoundationInterop.TryGetFrameRate(currentType, out var fps))
             {
                 _activeFramesPerSecond = fps;
+            }
+
+            if (!MediaFoundationInterop.Failed(currentType.GetGUID(MediaFoundationGuids.MF_MT_SUBTYPE, out var subtype)))
+            {
+                _activeSubtype = subtype;
+            }
+
+            if (!MediaFoundationInterop.Failed(currentType.GetUINT32(MediaFoundationGuids.MF_MT_DEFAULT_STRIDE, out var stride)))
+            {
+                _activeStride = stride;
+            }
+            else
+            {
+                _activeStride = _activeSubtype == MediaFoundationGuids.MFVideoFormat_RGB32
+                    ? _activeWidth * 4
+                    : _activeWidth;
             }
         }
         finally

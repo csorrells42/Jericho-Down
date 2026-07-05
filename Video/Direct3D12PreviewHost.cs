@@ -30,7 +30,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     private readonly AutoResetEvent _renderFrameReady = new(false);
     private Direct3D12SwapChainRenderer? _renderer;
     private Thread? _renderThread;
-    private QueuedBgraFrame? _pendingBgraFrame;
+    private QueuedCameraFrame? _pendingCameraFrame;
     private string _previewPathDescription = "DX12 preview path pending";
     private bool _renderWorkerStopping;
     private bool _disposed;
@@ -63,11 +63,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         lock (_renderWorkerLock)
         {
-            _pendingBgraFrame = new QueuedBgraFrame(
+            _pendingCameraFrame = new QueuedCameraFrame(
                 frame.BgraBytes,
                 frame.Width,
                 frame.Height,
                 frame.Stride,
+                frame.Nv12Bytes,
+                frame.Nv12Stride,
                 frameNumber);
         }
 
@@ -171,7 +173,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
             while (true)
             {
-                QueuedBgraFrame? frame;
+                QueuedCameraFrame? frame;
                 lock (_renderWorkerLock)
                 {
                     if (_renderWorkerStopping)
@@ -179,8 +181,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                         return;
                     }
 
-                    frame = _pendingBgraFrame;
-                    _pendingBgraFrame = null;
+                    frame = _pendingCameraFrame;
+                    _pendingCameraFrame = null;
                 }
 
                 if (frame is null)
@@ -194,6 +196,32 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     {
                         if (_renderer is null)
                         {
+                            break;
+                        }
+
+                        if (frame.Nv12Bytes is { Length: > 0 } nv12Bytes && frame.Nv12Stride > 0)
+                        {
+                            if (_renderer.RenderNv12Frame(
+                                nv12Bytes,
+                                frame.Width,
+                                frame.Height,
+                                frame.Nv12Stride,
+                                frame.FrameNumber,
+                                denoiseEnabled: false,
+                                denoiseStrength: 0d))
+                            {
+                                ReportPreviewPath("DX12 NV12 upload preview");
+                                continue;
+                            }
+
+                            StatusChanged?.Invoke(
+                                this,
+                                $"DX12 NV12 preview renderer refused {frame.Width}x{frame.Height}, stride {frame.Nv12Stride}, bytes {nv12Bytes.Length}: {_renderer.LastNv12PreviewFailureReason}");
+                        }
+
+                        if (frame.BgraBytes.Length <= 0 || frame.Stride <= 0)
+                        {
+                            StatusChanged?.Invoke(this, "DX12 preview skipped: frame had no renderable BGRA or NV12 payload.");
                             break;
                         }
 
@@ -220,7 +248,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         lock (_renderWorkerLock)
         {
             _renderWorkerStopping = true;
-            _pendingBgraFrame = null;
+            _pendingCameraFrame = null;
         }
 
         _renderFrameReady.Set();
@@ -229,7 +257,14 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         _renderFrameReady.Dispose();
     }
 
-    private sealed record QueuedBgraFrame(byte[] BgraBytes, int Width, int Height, int Stride, long FrameNumber);
+    private sealed record QueuedCameraFrame(
+        byte[] BgraBytes,
+        int Width,
+        int Height,
+        int Stride,
+        byte[]? Nv12Bytes,
+        int Nv12Stride,
+        long FrameNumber);
 
     private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
     {
@@ -438,6 +473,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private bool _disposed;
         private bool _shaderPreviewUnavailable;
         private bool _nv12PreviewUnavailable;
+        private string? _nv12PreviewFailureReason;
         private bool _nativeTexturePreviewUnavailable;
         private string? _nativeTexturePreviewFailureReason;
         private readonly bool _usesSharedCaptureDevice;
@@ -515,6 +551,8 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             ? "Direct3D 12 / DXGI flip model on shared capture device"
             : "Direct3D 12 / DXGI flip model";
 
+        public string LastNv12PreviewFailureReason => _nv12PreviewFailureReason ?? "no NV12 failure detail";
+
         public unsafe void RenderProofFrame(long frameNumber)
         {
             if (_disposed)
@@ -580,6 +618,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             var uvHeight = (height + 1) / 2;
             if (_disposed || stride < width || nv12Bytes.Length < stride * height + stride * uvHeight)
             {
+                _nv12PreviewFailureReason = _disposed
+                    ? "renderer disposed"
+                    : $"invalid NV12 payload: stride {stride}, width {width}, bytes {nv12Bytes.Length}, expected {stride * height + stride * uvHeight}";
                 return false;
             }
 
@@ -588,7 +629,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 Resize(width, height);
             }
 
-            return TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, denoiseEnabled, denoiseStrength);
+            var rendered = TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, denoiseEnabled, denoiseStrength);
+            if (rendered)
+            {
+                _nv12PreviewFailureReason = null;
+            }
+
+            return rendered;
         }
 
         public bool RenderNativeTextureFrame(
@@ -706,7 +753,6 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandList.SetPipelineState(_nv12PreviewPipelineState);
             _commandList.SetDescriptorHeaps([_srvHeap]);
             _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
-            SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
             var viewport = new Viewport(0, 0, _width, _height);
             var scissor = new RawRect(0, 0, _width, _height);
             _commandList.RSSetViewports(viewport);
@@ -737,6 +783,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         {
             if (_nv12PreviewUnavailable || _nv12PreviewRootSignature is null || _nv12PreviewPipelineState is null)
             {
+                _nv12PreviewFailureReason = _nv12PreviewUnavailable
+                    ? _nv12PreviewFailureReason ?? "NV12 preview disabled after earlier failure"
+                    : "NV12 shader pipeline unavailable";
                 return false;
             }
 
@@ -815,7 +864,6 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _commandList.SetPipelineState(_nv12PreviewPipelineState);
                 _commandList.SetDescriptorHeaps([_srvHeap]);
                 _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
-                SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
                 var viewport = new Viewport(0, 0, _width, _height);
                 var scissor = new RawRect(0, 0, _width, _height);
                 _commandList.RSSetViewports(viewport);
@@ -832,9 +880,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 ExecuteAndPresent(frameResource);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
                 _nv12PreviewUnavailable = true;
+                _nv12PreviewFailureReason = ex.Message;
                 return false;
             }
         }
@@ -1322,8 +1371,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 };
                 var parameters = new[]
                 {
-                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel),
-                    new RootParameter(new RootConstants(4, 0, 0), ShaderVisibility.Pixel)
+                    new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel)
                 };
                 var samplers = new[]
                 {
@@ -1363,9 +1411,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 };
                 _nv12PreviewPipelineState = _device.CreateGraphicsPipelineState<ID3D12PipelineState>(pipelineDescription);
             }
-            catch
+            catch (Exception ex)
             {
                 _nv12PreviewUnavailable = true;
+                _nv12PreviewFailureReason = $"NV12 shader pipeline creation failed: {ex.Message}";
             }
         }
 
@@ -1429,13 +1478,6 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             Texture2D<float2> CameraChroma : register(t1);
             SamplerState CameraSampler : register(s0);
 
-            cbuffer PreviewSettings : register(b0)
-            {
-                float DenoiseAmount;
-                float DenoiseEdgeThreshold;
-                float2 TexelSize;
-            };
-
             struct VertexOutput
             {
                 float4 Position : SV_POSITION;
@@ -1468,64 +1510,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return saturate((rawY - (16.0 / 255.0)) * (255.0 / 219.0));
             }
 
-            float EdgeAwareWeight(float centerY, float sampleY)
-            {
-                float distance = abs(sampleY - centerY);
-                return saturate(1.0 - distance / max(DenoiseEdgeThreshold, 0.0001));
-            }
-
-            float DenoiseLuma(float2 texCoord, float centerY)
-            {
-                if (DenoiseAmount <= 0.001)
-                {
-                    return centerY;
-                }
-
-                float2 offsets[4] =
-                {
-                    float2(TexelSize.x, 0.0),
-                    float2(-TexelSize.x, 0.0),
-                    float2(0.0, TexelSize.y),
-                    float2(0.0, -TexelSize.y)
-                };
-
-                float weightedSum = centerY;
-                float weightSum = 1.0;
-                for (int i = 0; i < 4; i++)
-                {
-                    float sampleY = NormalizeLuma(CameraLuma.Sample(CameraSampler, texCoord + offsets[i]));
-                    float weight = EdgeAwareWeight(centerY, sampleY);
-                    weightedSum += sampleY * weight;
-                    weightSum += weight;
-                }
-
-                float smoothed = weightedSum / weightSum;
-                return lerp(centerY, smoothed, saturate(DenoiseAmount * 0.72));
-            }
-
-            float2 DenoiseChroma(float2 texCoord, float2 centerUv)
-            {
-                if (DenoiseAmount <= 0.001)
-                {
-                    return centerUv;
-                }
-
-                float2 chromaTexel = TexelSize * 2.0;
-                float2 smoothed =
-                    centerUv +
-                    CameraChroma.Sample(CameraSampler, texCoord + float2(chromaTexel.x, 0.0)) +
-                    CameraChroma.Sample(CameraSampler, texCoord + float2(-chromaTexel.x, 0.0)) +
-                    CameraChroma.Sample(CameraSampler, texCoord + float2(0.0, chromaTexel.y)) +
-                    CameraChroma.Sample(CameraSampler, texCoord + float2(0.0, -chromaTexel.y));
-                smoothed *= 0.2;
-                return lerp(centerUv, smoothed, saturate(DenoiseAmount * 0.35));
-            }
-
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
-                float centerY = NormalizeLuma(CameraLuma.Sample(CameraSampler, input.TexCoord));
-                float y = DenoiseLuma(input.TexCoord, centerY);
-                float2 uv = DenoiseChroma(input.TexCoord, CameraChroma.Sample(CameraSampler, input.TexCoord)) - float2(0.5, 0.5);
+                float y = NormalizeLuma(CameraLuma.Sample(CameraSampler, input.TexCoord));
+                float2 uv = CameraChroma.Sample(CameraSampler, input.TexCoord) - float2(0.5, 0.5);
                 float3 rgb = float3(
                     y + 1.5748 * uv.y,
                     y - 0.1873 * uv.x - 0.4681 * uv.y,

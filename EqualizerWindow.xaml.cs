@@ -1866,15 +1866,24 @@ public partial class EqualizerWindow : Window
             }
             else
             {
-                UpdateCameraPreviewBitmap(latestFrame);
-                CameraPreviewImage.Visibility = Visibility.Visible;
+                if (latestFrame.HasBgra)
+                {
+                    UpdateCameraPreviewBitmap(latestFrame);
+                    CameraPreviewImage.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    CameraPreviewImage.Visibility = Visibility.Collapsed;
+                }
             }
 
             CameraPlaceholder.Visibility = Visibility.Collapsed;
 
             if (CameraComboBox.SelectedItem is CameraDevice camera)
             {
-                var renderer = _direct3D12PreviewHost?.IsReady == true ? "DX12 BGRA" : "WPF BGRA";
+                var renderer = _direct3D12PreviewHost?.IsReady == true
+                    ? latestFrame.HasNv12 ? "DX12 NV12" : "DX12 BGRA"
+                    : latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
                 var status = $"{FormatCameraStatus("Live", camera, GetSelectedCameraMode())} - {renderer}";
                 CameraPreviewStatusText.Text = status;
             }
@@ -3870,9 +3879,9 @@ public partial class EqualizerWindow : Window
 
     private string FormatCpuCameraPreviewPipeline(bool isDirectShow)
     {
-        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation CPU frames";
+        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation NV12/BGRA CPU frames";
         var presentationPath = _direct3D12PreviewHost?.IsReady == true
-            ? "DX12 BGRA presentation"
+            ? isDirectShow ? "DX12 BGRA presentation" : "DX12 NV12/BGRA presentation"
             : "WPF BGRA presentation";
         return $"{capturePath} -> {presentationPath}";
     }

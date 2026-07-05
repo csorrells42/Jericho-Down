@@ -11,7 +11,7 @@ Podcast Workbench is a standalone WPF podcast recording, camera preview, microph
 - High-pass filter, noise gate, compressor, makeup gain, and limiter controls.
 - Processed output routing to speakers, headphones, or a virtual cable device.
 - Standalone processed audio recording with saved-file browsing and playback.
-- Camera preview with Media Foundation, DirectShow, and texture-native DX12 paths.
+- Camera preview with Media Foundation NV12 DX12, DirectShow BGRA DX12, and texture-native DX12 paths.
 - Podcast session recording with video, processed mix WAV, optional raw backup WAV, session metadata, and a saved-video browser.
 - Camera profiles, Windows camera controls, video grain reduction, color polish, and preview/record parity reporting.
 
