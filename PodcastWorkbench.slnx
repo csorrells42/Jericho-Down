@@ -1,3 +1,5 @@
 <Solution>
   <Project Path="PodcastWorkbench.csproj" />
+  <Project Path="tests\PodcastWorkbench.Tests\PodcastWorkbench.Tests.csproj" />
+  <Project Path="tools\CameraPreviewProbe\CameraPreviewProbe.csproj" />
 </Solution>

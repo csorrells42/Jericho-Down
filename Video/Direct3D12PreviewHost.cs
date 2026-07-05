@@ -334,6 +334,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         private ResourceStates _nv12UvTextureState;
         private IDXGISwapChain3 _swapChain;
         private ulong _fenceValue;
+        private ulong _lastSubmittedFrameFenceValue;
         private int _cameraTextureWidth;
         private int _cameraTextureHeight;
         private int _nv12TextureWidth;
@@ -422,6 +423,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return;
             }
 
+            WaitForSubmittedFrame();
             var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
             _commandAllocator.Reset();
@@ -450,7 +452,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandList.Close();
             _commandQueue.ExecuteCommandList(_commandList);
             _swapChain.Present(0, PresentFlags.None);
-            WaitForGpu();
+            SignalFrameSubmitted();
         }
 
         public unsafe void RenderBgraFrame(byte[] bgraBytes, int width, int height, int stride, long frameNumber)
@@ -593,6 +595,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _device.CreateShaderResourceView(cameraResource, ySrvDescription, GetSrvCpuHandle(1));
             _device.CreateShaderResourceView(cameraResource, uvSrvDescription, GetSrvCpuHandle(2));
 
+            WaitForSubmittedFrame();
             var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
             _commandAllocator.Reset();
@@ -634,7 +637,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandList.Close();
             _commandQueue.ExecuteCommandList(_commandList);
             _swapChain.Present(0, PresentFlags.None);
-            WaitForGpu();
+            SignalFrameSubmitted();
         }
 
         private unsafe bool TryRenderNv12FrameWithShader(
@@ -662,6 +665,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     return false;
                 }
 
+                WaitForSubmittedFrame();
                 CopyNv12FrameToUploadBuffers(yUploadBuffer, uvUploadBuffer, nv12Bytes, width, height, stride);
 
                 var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
@@ -744,7 +748,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _commandList.Close();
                 _commandQueue.ExecuteCommandList(_commandList);
                 _swapChain.Present(0, PresentFlags.None);
-                WaitForGpu();
+                SignalFrameSubmitted();
                 return true;
             }
             catch
@@ -771,6 +775,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                     return false;
                 }
 
+                WaitForSubmittedFrame();
                 CopyBgraFrameToUploadBuffer(uploadBuffer, bgraBytes, width, height, stride);
 
                 var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
@@ -830,7 +835,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 _commandList.Close();
                 _commandQueue.ExecuteCommandList(_commandList);
                 _swapChain.Present(0, PresentFlags.None);
-                WaitForGpu();
+                SignalFrameSubmitted();
                 return true;
             }
             catch
@@ -842,6 +847,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
         private unsafe void RenderBgraFrameToBackBuffer(byte[] bgraBytes, int height, int stride)
         {
+            WaitForSubmittedFrame();
             var frameIndex = (int)_swapChain.CurrentBackBufferIndex;
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
             _commandAllocator.Reset();
@@ -876,7 +882,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             _commandList.Close();
             _commandQueue.ExecuteCommandList(_commandList);
             _swapChain.Present(0, PresentFlags.None);
-            WaitForGpu();
+            SignalFrameSubmitted();
         }
 
         private void EnsureCameraTexture(int width, int height)
@@ -1529,6 +1535,35 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 
             _fence.SetEventOnCompletion(_fenceValue, _fenceEvent);
             _fenceEvent.WaitOne();
+            _lastSubmittedFrameFenceValue = 0;
+        }
+
+        private void SignalFrameSubmitted()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _fenceValue++;
+            _commandQueue.Signal(_fence, _fenceValue);
+            _lastSubmittedFrameFenceValue = _fenceValue;
+        }
+
+        private void WaitForSubmittedFrame()
+        {
+            if (_disposed || _lastSubmittedFrameFenceValue == 0)
+            {
+                return;
+            }
+
+            if (_fence.CompletedValue < _lastSubmittedFrameFenceValue)
+            {
+                _fence.SetEventOnCompletion(_lastSubmittedFrameFenceValue, _fenceEvent);
+                _fenceEvent.WaitOne();
+            }
+
+            _lastSubmittedFrameFenceValue = 0;
         }
     }
 }

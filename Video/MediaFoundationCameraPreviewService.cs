@@ -11,7 +11,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
     private Direct3D12DeviceManager? _direct3D12;
     private CancellationTokenSource? _cancellation;
     private Task? _captureTask;
-    private byte[]? _previousDenoiseFrame;
+    private readonly VideoFrameDenoiser _denoiser = new();
     private MediaFoundationVideoRecorder? _recorder;
     private string? _recordingPath;
     private bool _recordingStopRequested;
@@ -364,11 +364,11 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                     {
                         if (DenoiseEnabled)
                         {
-                            ApplyTemporalDenoise(frame.BgraBytes);
+                            _denoiser.Apply(frame.BgraBytes, DenoiseStrength);
                         }
                         else
                         {
-                            _previousDenoiseFrame = null;
+                            _denoiser.Reset();
                         }
 
                         VideoFrameColorProcessor.Apply(frame.BgraBytes, ColorSettings);
@@ -518,34 +518,6 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
     }
 
-    private void ApplyTemporalDenoise(byte[] current)
-    {
-        var previous = _previousDenoiseFrame;
-        if (previous is null || previous.Length != current.Length)
-        {
-            _previousDenoiseFrame = (byte[])current.Clone();
-            return;
-        }
-
-        var strength = Math.Clamp(DenoiseStrength, 0.5d, 8d);
-        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
-        var currentWeight = 1d - previousWeight;
-        for (var i = 0; i < current.Length; i += 4)
-        {
-            current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
-            current[i + 1] = Blend(current[i + 1], previous[i + 1], currentWeight, previousWeight);
-            current[i + 2] = Blend(current[i + 2], previous[i + 2], currentWeight, previousWeight);
-            current[i + 3] = 255;
-        }
-
-        Buffer.BlockCopy(current, 0, previous, 0, current.Length);
-    }
-
-    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
-    {
-        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
-    }
-
     private void CleanupPreviewObjects()
     {
         ResetPreviewState();
@@ -561,7 +533,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     private void ResetPreviewState()
     {
-        _previousDenoiseFrame = null;
+        _denoiser.Reset();
         _activeWidth = 1280;
         _activeHeight = 720;
         _activeFramesPerSecond = 30d;

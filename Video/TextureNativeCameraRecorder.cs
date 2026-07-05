@@ -359,16 +359,9 @@ public static class TextureNativeCameraRecorder
         try
         {
             deviceManager = Direct3D12DeviceManager.Create();
-            var reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
-                camera,
-                mode,
-                deviceManager.Manager,
-                out mediaSource,
-                enableAdvancedVideoProcessing: true,
-                preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
-                configureMediaType: true);
-            EnsureTextureReaderProducesSample(reader, "D3D12");
-            return (deviceManager, reader, mediaSource);
+            ValidateTextureReader(camera, mode, deviceManager, "D3D12");
+            var (reader, liveMediaSource) = CreateTextureSourceReader(camera, mode, deviceManager);
+            return (deviceManager, reader, liveMediaSource);
         }
         catch (Exception ex)
         {
@@ -382,16 +375,8 @@ public static class TextureNativeCameraRecorder
         try
         {
             deviceManager = Direct3D11DeviceManager.Create();
-            var reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
-                camera,
-                mode,
-                deviceManager.Manager,
-                out mediaSource,
-                enableAdvancedVideoProcessing: true,
-                preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
-                configureMediaType: true);
-            EnsureTextureReaderProducesSample(reader, "D3D11 texture bridge");
-            return (deviceManager, reader, mediaSource);
+            var (reader, liveMediaSource) = CreateTextureSourceReader(camera, mode, deviceManager);
+            return (deviceManager, reader, liveMediaSource);
         }
         catch (Exception ex)
         {
@@ -400,6 +385,42 @@ public static class TextureNativeCameraRecorder
             throw new InvalidOperationException(
                 $"Texture-native camera reader unavailable. D3D12 path: {direct3D12Error?.Message ?? "not attempted"} D3D11 bridge: {ex.Message}",
                 ex);
+        }
+    }
+
+    private static (IMFSourceReader Reader, object MediaSource) CreateTextureSourceReader(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        ITextureNativeDeviceManager deviceManager)
+    {
+        var reader = MediaFoundationCameraDeviceFactory.CreateTextureSourceReader(
+            camera,
+            mode,
+            deviceManager.Manager,
+            out var mediaSource,
+            enableAdvancedVideoProcessing: true,
+            preferredSubtype: MediaFoundationGuids.MFVideoFormat_NV12,
+            configureMediaType: true);
+        return (reader, mediaSource);
+    }
+
+    private static void ValidateTextureReader(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        ITextureNativeDeviceManager deviceManager,
+        string pathName)
+    {
+        object? validationMediaSource = null;
+        IMFSourceReader? validationReader = null;
+        try
+        {
+            (validationReader, validationMediaSource) = CreateTextureSourceReader(camera, mode, deviceManager);
+            EnsureTextureReaderProducesSample(validationReader, pathName);
+        }
+        finally
+        {
+            MediaFoundationInterop.ReleaseComObject(validationReader);
+            MediaFoundationInterop.ReleaseComObject(validationMediaSource);
         }
     }
 
@@ -848,7 +869,7 @@ public sealed class TextureNativeCameraStream : IDisposable
             {
                 lock (_processedDenoiseLock)
                 {
-                    ApplyTemporalDenoise(bgraBytes, processedDenoiseStrength, ref _previousProcessedDenoiseFrame);
+                    VideoFrameDenoiser.ApplyTemporalDenoise(bgraBytes, processedDenoiseStrength, ref _previousProcessedDenoiseFrame);
                 }
             }
             else
@@ -929,34 +950,6 @@ public sealed class TextureNativeCameraStream : IDisposable
         {
             MediaFoundationInterop.ReleaseComObject(buffer);
         }
-    }
-
-    private static void ApplyTemporalDenoise(byte[] current, double denoiseStrength, ref byte[]? previousFrame)
-    {
-        var previous = previousFrame;
-        if (previous is null || previous.Length != current.Length)
-        {
-            previousFrame = (byte[])current.Clone();
-            return;
-        }
-
-        var strength = Math.Clamp(denoiseStrength, 0.5d, 8d);
-        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
-        var currentWeight = 1d - previousWeight;
-        for (var i = 0; i < current.Length; i += 4)
-        {
-            current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
-            current[i + 1] = Blend(current[i + 1], previous[i + 1], currentWeight, previousWeight);
-            current[i + 2] = Blend(current[i + 2], previous[i + 2], currentWeight, previousWeight);
-            current[i + 3] = 255;
-        }
-
-        Buffer.BlockCopy(current, 0, previous, 0, current.Length);
-    }
-
-    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
-    {
-        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
     }
 
     private TextureNativeFrameLease? TryCreateFrameLease(IMFSample sample, long frameNumber)
@@ -1371,7 +1364,7 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
             {
                 lock (_processedDenoiseLock)
                 {
-                    ApplyTemporalDenoise(bgraBytes, _recordingDenoiseStrength, ref _previousProcessedDenoiseFrame);
+                    VideoFrameDenoiser.ApplyTemporalDenoise(bgraBytes, _recordingDenoiseStrength, ref _previousProcessedDenoiseFrame);
                 }
             }
 
@@ -1430,34 +1423,6 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
         {
             MediaFoundationInterop.ReleaseComObject(buffer);
         }
-    }
-
-    private static void ApplyTemporalDenoise(byte[] current, double denoiseStrength, ref byte[]? previousFrame)
-    {
-        var previous = previousFrame;
-        if (previous is null || previous.Length != current.Length)
-        {
-            previousFrame = (byte[])current.Clone();
-            return;
-        }
-
-        var strength = Math.Clamp(denoiseStrength, 0.5d, 8d);
-        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
-        var currentWeight = 1d - previousWeight;
-        for (var i = 0; i < current.Length; i += 4)
-        {
-            current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
-            current[i + 1] = Blend(current[i + 1], previous[i + 1], currentWeight, previousWeight);
-            current[i + 2] = Blend(current[i + 2], previous[i + 2], currentWeight, previousWeight);
-            current[i + 3] = 255;
-        }
-
-        Buffer.BlockCopy(current, 0, previous, 0, current.Length);
-    }
-
-    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
-    {
-        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
     }
 
     private TextureNativeRecordingResult CreateResult(bool success, string status)

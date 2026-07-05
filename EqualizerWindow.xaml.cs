@@ -78,7 +78,9 @@ public partial class EqualizerWindow : Window
     private readonly DirectShowCameraPreviewService _directShowPreviewService = new();
     private readonly MediaFoundationCameraModeService _cameraModeService = new();
     private readonly DirectShowCameraControlService _cameraControlService = new();
+    private readonly TextureNativePreviewFailureCache _textureNativePreviewFailureCache = new();
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
+    private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly List<Line> _waveformGridLines = [];
     private readonly object _waveformLock = new();
@@ -215,7 +217,7 @@ public partial class EqualizerWindow : Window
     private bool _isStandaloneAudioRecordingPaused;
     private string? _lastAudioRecordingPath;
     private readonly ObservableCollection<AudioRecordingFileItem> _audioRecordingFiles = [];
-    private FileSystemWatcher? _audioRecordingFolderWatcher;
+    private FileBrowserWatcher? _audioRecordingFolderWatcher;
     private int _audioRecordingFolderRefreshQueued;
     private WaveOutEvent? _audioPlaybackOutput;
     private AudioFileReader? _audioPlaybackReader;
@@ -268,9 +270,14 @@ public partial class EqualizerWindow : Window
     private bool _isRecordingPaused;
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
-    private FileSystemWatcher? _sessionFolderWatcher;
+    private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
+    private bool _isScrubbingSessionPlayback;
+    private bool _isUpdatingSessionPlaybackPosition;
+    private bool _isSessionPlaybackPlaying;
+    private bool _isSessionPlaybackEnded;
+    private bool _startSessionPlaybackFromBeginning;
     private bool _isMicAnalysisRunning;
     private bool _micAnalysisReadyToFinalize;
     private DateTime _micAnalysisStartedAt;
@@ -341,6 +348,8 @@ public partial class EqualizerWindow : Window
         _directShowPreviewService.StatusChanged += CameraPreviewStatusChanged;
         _audioDeviceFormatTimer.Interval = AudioDeviceFormatPollInterval;
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
+        _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
+        _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
     }
 
@@ -991,6 +1000,14 @@ public partial class EqualizerWindow : Window
     {
         if (!string.IsNullOrWhiteSpace(_sessionPlaybackPath))
         {
+            if (_isSessionPlaybackEnded)
+            {
+                PlayLoadedSessionPlayback(restartIfAtEnd: true);
+                RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(_sessionPlaybackPath)}.";
+                UpdateSessionPlaybackTransportControls();
+                return;
+            }
+
             StopSessionPlayback();
             RecordingStatusText.Text = "Session playback stopped.";
             UpdateSessionPlaybackTransportControls();
@@ -1136,6 +1153,8 @@ public partial class EqualizerWindow : Window
         {
             return;
         }
+
+        StopSessionPlayback();
 
         var recordingTarget = CreatePodcastRecordingTarget();
         _activeRecordingSessionFolder = recordingTarget.SessionFolder;
@@ -1569,14 +1588,30 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        StopSessionPlayback();
+
         CameraPlaceholder.Visibility = Visibility.Collapsed;
         CameraPreviewImage.Visibility = Visibility.Visible;
 
+        var mode = CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
         if (ShouldUseSharedTextureCameraStream())
         {
-            if (StartTextureNativeCameraStream(camera, CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto))
+            if (_textureNativePreviewFailureCache.TryGetFailure(camera, mode, out var cachedTextureFailure))
             {
+                _lastTextureNativeCameraError = cachedTextureFailure;
+                CameraPreviewStatusText.Text = $"Shared GPU stream skipped for {camera.Name}: {cachedTextureFailure}";
+            }
+            else if (StartTextureNativeCameraStream(camera, mode))
+            {
+                _textureNativePreviewFailureCache.ForgetFailure(camera, mode);
                 return;
+            }
+            else
+            {
+                _textureNativePreviewFailureCache.RememberFailure(
+                    camera,
+                    mode,
+                    _lastTextureNativeCameraError ?? "shared texture preview attempt failed");
             }
 
             CameraPreviewStatusText.Text = $"Shared GPU stream unavailable; trying CPU preview for {camera.Name}: {_lastTextureNativeCameraError ?? "unknown error"}";
@@ -1587,7 +1622,6 @@ public partial class EqualizerWindow : Window
         ShowDirect3D12PreviewHost(IntPtr.Zero);
         CameraPreviewImage.Visibility = Visibility.Collapsed;
 
-        var mode = CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
         if (IsDirectShowCamera(camera))
         {
             _cameraPreviewService.Stop();
@@ -1663,7 +1697,8 @@ public partial class EqualizerWindow : Window
             _textureNativeCameraStream.StatusChanged += TextureNativeCameraStatusChanged;
             if (!WaitForTextureNativeFirstFrame(stream))
             {
-                _lastTextureNativeCameraError = $"No texture-native frames arrived within {TextureNativeFirstFrameTimeout.TotalSeconds:0.#} seconds.";
+                _lastTextureNativeCameraError =
+                    $"No texture-native frames arrived within {TextureNativeFirstFrameTimeout.TotalSeconds:0.#} seconds ({stream.DeviceMode}, {stream.Width}x{stream.Height}@{stream.FramesPerSecond:0.###}, {stream.MediaSubtype}).";
                 StopTextureNativeCameraStream();
                 CameraPreviewStatusText.Text = $"Shared GPU stream unavailable: {_lastTextureNativeCameraError}";
                 return false;
@@ -2811,7 +2846,7 @@ public partial class EqualizerWindow : Window
         var isDirectShow = IsSelectedDirectShowCamera();
         return new
         {
-            previewPipeline = isDirectShow ? "DirectShow RGB32 CPU preview" : "Media Foundation CPU preview",
+            previewPipeline = FormatCpuCameraPreviewPipeline(isDirectShow),
             previewDenoiseApplied = _pendingVideoDenoiseEnabled,
             previewDenoiseMode = _videoDenoiseMode,
             previewDenoiseSliderStrength = _videoDenoiseSliderStrength,
@@ -3822,15 +3857,24 @@ public partial class EqualizerWindow : Window
         if (IsSelectedDirectShowCamera())
         {
             return _pendingVideoColorSettings.HasVisibleAdjustments
-                ? "DirectShow RGB32 CPU preview + color; Media Foundation MP4 writer"
-                : "DirectShow RGB32 CPU preview; Media Foundation MP4 writer";
+                ? $"{FormatCpuCameraPreviewPipeline(isDirectShow: true)} + color; Media Foundation MP4 writer"
+                : $"{FormatCpuCameraPreviewPipeline(isDirectShow: true)}; Media Foundation MP4 writer";
         }
 
         var fallback = string.IsNullOrWhiteSpace(_lastTextureNativeCameraError)
             ? string.Empty
             : $" after DX12 shared stream fallback ({_lastTextureNativeCameraError})";
         var color = _pendingVideoColorSettings.HasVisibleAdjustments ? " + color" : string.Empty;
-        return $"Media Foundation CPU preview{color}; Media Foundation MP4 writer{fallback}";
+        return $"{FormatCpuCameraPreviewPipeline(isDirectShow: false)}{color}; Media Foundation MP4 writer{fallback}";
+    }
+
+    private string FormatCpuCameraPreviewPipeline(bool isDirectShow)
+    {
+        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation CPU frames";
+        var presentationPath = _direct3D12PreviewHost?.IsReady == true
+            ? "DX12 BGRA presentation"
+            : "WPF BGRA presentation";
+        return $"{capturePath} -> {presentationPath}";
     }
 
     private TimeSpan GetRecordingElapsed()
@@ -4005,9 +4049,15 @@ public partial class EqualizerWindow : Window
             SessionPlaybackElement.Source = new Uri(path);
             SessionPlaybackElement.Visibility = Visibility.Visible;
             CameraPlaceholder.Visibility = Visibility.Collapsed;
+            SessionPlaybackBar.Visibility = Visibility.Visible;
+            ResetSessionPlaybackProgress();
             _sessionPlaybackPath = path;
             _lastSessionRecordingPath = path;
+            _startSessionPlaybackFromBeginning = true;
             SessionPlaybackElement.Play();
+            _isSessionPlaybackPlaying = true;
+            _isSessionPlaybackEnded = false;
+            _sessionPlaybackPositionTimer.Start();
 
             RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
         }
@@ -4022,6 +4072,16 @@ public partial class EqualizerWindow : Window
 
     private void StopSessionPlayback()
     {
+        _sessionPlaybackPositionTimer.Stop();
+        _isScrubbingSessionPlayback = false;
+        _isSessionPlaybackPlaying = false;
+        _isSessionPlaybackEnded = false;
+        _startSessionPlaybackFromBeginning = false;
+        if (SessionPlaybackSeekSlider is not null && SessionPlaybackSeekSlider.IsMouseCaptured)
+        {
+            SessionPlaybackSeekSlider.ReleaseMouseCapture();
+        }
+
         try
         {
             SessionPlaybackElement.Stop();
@@ -4033,16 +4093,280 @@ public partial class EqualizerWindow : Window
         }
 
         _sessionPlaybackPath = null;
+        ResetSessionPlaybackProgress();
+        if (SessionPlaybackBar is not null)
+        {
+            SessionPlaybackBar.Visibility = Visibility.Collapsed;
+        }
+
         if (!_isCameraEnabled && CameraPlaceholder is not null)
         {
             CameraPlaceholder.Visibility = Visibility.Visible;
         }
     }
 
+    private void SessionPlaybackOpened(object sender, RoutedEventArgs e)
+    {
+        if (_startSessionPlaybackFromBeginning)
+        {
+            _startSessionPlaybackFromBeginning = false;
+            SessionPlaybackElement.Position = TimeSpan.Zero;
+        }
+
+        UpdateSessionPlaybackProgress();
+    }
+
+    private void SessionPlaybackBarPlayPauseClicked(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionPlaybackPath))
+        {
+            return;
+        }
+
+        if (_isSessionPlaybackPlaying)
+        {
+            PauseLoadedSessionPlayback();
+            RecordingStatusText.Text = $"Paused {System.IO.Path.GetFileName(_sessionPlaybackPath)}.";
+        }
+        else
+        {
+            PlayLoadedSessionPlayback(restartIfAtEnd: true);
+            RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(_sessionPlaybackPath)}.";
+        }
+
+        UpdateSessionPlaybackTransportControls();
+    }
+
+    private void PlayLoadedSessionPlayback(bool restartIfAtEnd)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionPlaybackPath))
+        {
+            return;
+        }
+
+        var duration = GetSessionPlaybackDuration();
+        if (restartIfAtEnd
+            && duration > TimeSpan.Zero
+            && SessionPlaybackElement.Position >= duration - TimeSpan.FromMilliseconds(250))
+        {
+            SeekSessionPlaybackTo(TimeSpan.Zero);
+        }
+
+        SessionPlaybackElement.Visibility = Visibility.Visible;
+        CameraPlaceholder.Visibility = Visibility.Collapsed;
+        SessionPlaybackBar.Visibility = Visibility.Visible;
+        SessionPlaybackElement.Play();
+        _isSessionPlaybackPlaying = true;
+        _isSessionPlaybackEnded = false;
+        _sessionPlaybackPositionTimer.Start();
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private void PauseLoadedSessionPlayback()
+    {
+        if (string.IsNullOrWhiteSpace(_sessionPlaybackPath))
+        {
+            return;
+        }
+
+        SessionPlaybackElement.Pause();
+        _isSessionPlaybackPlaying = false;
+        _isSessionPlaybackEnded = false;
+        _sessionPlaybackPositionTimer.Stop();
+        UpdateSessionPlaybackProgress();
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private void SessionPlaybackPositionTimerTick(object? sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_sessionPlaybackPath))
+        {
+            _sessionPlaybackPositionTimer.Stop();
+            return;
+        }
+
+        if (!_isScrubbingSessionPlayback)
+        {
+            UpdateSessionPlaybackProgress();
+        }
+    }
+
+    private void UpdateSessionPlaybackProgress()
+    {
+        if (SessionPlaybackSeekSlider is null)
+        {
+            return;
+        }
+
+        var position = SessionPlaybackElement.Position;
+        var duration = GetSessionPlaybackDuration();
+        var maxSeconds = Math.Max(1d, duration.TotalSeconds);
+        var positionSeconds = Math.Clamp(position.TotalSeconds, 0d, maxSeconds);
+
+        _isUpdatingSessionPlaybackPosition = true;
+        try
+        {
+            SessionPlaybackSeekSlider.Maximum = maxSeconds;
+            SessionPlaybackSeekSlider.Value = positionSeconds;
+        }
+        finally
+        {
+            _isUpdatingSessionPlaybackPosition = false;
+        }
+
+        SessionPlaybackPositionText.Text = FormatDuration(TimeSpan.FromSeconds(positionSeconds));
+        SessionPlaybackDurationText.Text = duration > TimeSpan.Zero
+            ? FormatDuration(duration)
+            : "00:00:00";
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private void ResetSessionPlaybackProgress()
+    {
+        if (SessionPlaybackSeekSlider is null)
+        {
+            return;
+        }
+
+        _isUpdatingSessionPlaybackPosition = true;
+        try
+        {
+            SessionPlaybackSeekSlider.Minimum = 0d;
+            SessionPlaybackSeekSlider.Maximum = 1d;
+            SessionPlaybackSeekSlider.Value = 0d;
+        }
+        finally
+        {
+            _isUpdatingSessionPlaybackPosition = false;
+        }
+
+        SessionPlaybackPositionText.Text = "00:00:00";
+        SessionPlaybackDurationText.Text = "00:00:00";
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private TimeSpan GetSessionPlaybackDuration()
+    {
+        return SessionPlaybackElement.NaturalDuration.HasTimeSpan
+            ? SessionPlaybackElement.NaturalDuration.TimeSpan
+            : TimeSpan.Zero;
+    }
+
+    private bool CanSeekSessionPlayback()
+    {
+        return !string.IsNullOrWhiteSpace(_sessionPlaybackPath)
+            && SessionPlaybackElement.NaturalDuration.HasTimeSpan
+            && SessionPlaybackElement.NaturalDuration.TimeSpan > TimeSpan.Zero;
+    }
+
+    private void SeekSessionPlaybackFromPoint(Point point)
+    {
+        if (!CanSeekSessionPlayback() || SessionPlaybackSeekSlider.ActualWidth <= 0d)
+        {
+            return;
+        }
+
+        var duration = GetSessionPlaybackDuration();
+        var ratio = Math.Clamp(point.X / SessionPlaybackSeekSlider.ActualWidth, 0d, 1d);
+        SeekSessionPlaybackTo(TimeSpan.FromSeconds(duration.TotalSeconds * ratio));
+    }
+
+    private void SeekSessionPlaybackTo(TimeSpan position)
+    {
+        if (!CanSeekSessionPlayback())
+        {
+            return;
+        }
+
+        var duration = GetSessionPlaybackDuration();
+        var clampedSeconds = Math.Clamp(position.TotalSeconds, 0d, duration.TotalSeconds);
+        var clamped = TimeSpan.FromSeconds(clampedSeconds);
+        SessionPlaybackElement.Position = clamped;
+
+        _isUpdatingSessionPlaybackPosition = true;
+        try
+        {
+            SessionPlaybackSeekSlider.Maximum = Math.Max(1d, duration.TotalSeconds);
+            SessionPlaybackSeekSlider.Value = clampedSeconds;
+        }
+        finally
+        {
+            _isUpdatingSessionPlaybackPosition = false;
+        }
+
+        SessionPlaybackPositionText.Text = FormatDuration(clamped);
+        SessionPlaybackDurationText.Text = FormatDuration(duration);
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private void SessionPlaybackSeekSliderPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!CanSeekSessionPlayback())
+        {
+            return;
+        }
+
+        _isScrubbingSessionPlayback = true;
+        SessionPlaybackSeekSlider.CaptureMouse();
+        SeekSessionPlaybackFromPoint(e.GetPosition(SessionPlaybackSeekSlider));
+        e.Handled = true;
+    }
+
+    private void SessionPlaybackSeekSliderPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isScrubbingSessionPlayback || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        SeekSessionPlaybackFromPoint(e.GetPosition(SessionPlaybackSeekSlider));
+        e.Handled = true;
+    }
+
+    private void SessionPlaybackSeekSliderPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isScrubbingSessionPlayback)
+        {
+            return;
+        }
+
+        SeekSessionPlaybackFromPoint(e.GetPosition(SessionPlaybackSeekSlider));
+        _isScrubbingSessionPlayback = false;
+        if (SessionPlaybackSeekSlider.IsMouseCaptured)
+        {
+            SessionPlaybackSeekSlider.ReleaseMouseCapture();
+        }
+
+        e.Handled = true;
+    }
+
+    private void SessionPlaybackSeekSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingSessionPlaybackPosition || !CanSeekSessionPlayback())
+        {
+            return;
+        }
+
+        SeekSessionPlaybackTo(TimeSpan.FromSeconds(e.NewValue));
+    }
+
     private void SessionPlaybackEnded(object sender, RoutedEventArgs e)
     {
         var path = _sessionPlaybackPath;
-        StopSessionPlayback();
+        _sessionPlaybackPositionTimer.Stop();
+        _isScrubbingSessionPlayback = false;
+        _isSessionPlaybackPlaying = false;
+        _isSessionPlaybackEnded = true;
+        var duration = GetSessionPlaybackDuration();
+        if (duration > TimeSpan.Zero)
+        {
+            SeekSessionPlaybackTo(duration);
+        }
+        else
+        {
+            UpdateSessionPlaybackProgress();
+        }
+
         if (!string.IsNullOrWhiteSpace(path))
         {
             RecordingStatusText.Text = $"Finished {System.IO.Path.GetFileName(path)}.";
@@ -4066,8 +4390,25 @@ public partial class EqualizerWindow : Window
         }
 
         SessionPlayFileButton.IsEnabled = !_isRecordingSession;
-        SessionPlayFileButton.Content = string.IsNullOrWhiteSpace(_sessionPlaybackPath) ? "Play File" : "Stop Play";
+        SessionPlayFileButton.Content = string.IsNullOrWhiteSpace(_sessionPlaybackPath)
+            ? "Play File"
+            : _isSessionPlaybackEnded
+                ? "Play Again"
+                : "Stop Play";
         SessionOpenLocationButton.IsEnabled = !_isRecordingSession;
+        UpdateSessionPlaybackBarControls();
+    }
+
+    private void UpdateSessionPlaybackBarControls()
+    {
+        if (SessionPlaybackBarPlayPauseButton is null)
+        {
+            return;
+        }
+
+        SessionPlaybackBarPlayPauseButton.IsEnabled = !_isRecordingSession
+            && !string.IsNullOrWhiteSpace(_sessionPlaybackPath);
+        SessionPlaybackBarPlayPauseButton.Content = _isSessionPlaybackPlaying ? "Pause" : "Play";
     }
 
     private static string FormatDuration(TimeSpan duration)
@@ -5277,19 +5618,12 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            Directory.CreateDirectory(_audioRecordingFolder);
-            var watcher = new FileSystemWatcher(_audioRecordingFolder)
-            {
-                Filter = "*.*",
-                IncludeSubdirectories = false,
-                NotifyFilter = NotifyFilters.FileName
-                    | NotifyFilters.CreationTime
-            };
-            watcher.Created += AudioRecordingFolderChanged;
-            watcher.Deleted += AudioRecordingFolderChanged;
-            watcher.Renamed += AudioRecordingFolderRenamed;
-            watcher.EnableRaisingEvents = true;
-            _audioRecordingFolderWatcher = watcher;
+            _audioRecordingFolderWatcher = FileBrowserWatcher.Start(
+                _audioRecordingFolder,
+                includeSubdirectories: false,
+                NotifyFilters.FileName | NotifyFilters.CreationTime,
+                IsSupportedAudioRecordingFile,
+                QueueAudioRecordingFilesRefresh);
         }
         catch
         {
@@ -5306,33 +5640,7 @@ public partial class EqualizerWindow : Window
         }
 
         _audioRecordingFolderWatcher = null;
-        try
-        {
-            watcher.EnableRaisingEvents = false;
-            watcher.Created -= AudioRecordingFolderChanged;
-            watcher.Deleted -= AudioRecordingFolderChanged;
-            watcher.Renamed -= AudioRecordingFolderRenamed;
-            watcher.Dispose();
-        }
-        catch
-        {
-        }
-    }
-
-    private void AudioRecordingFolderChanged(object sender, FileSystemEventArgs e)
-    {
-        if (IsSupportedAudioRecordingFile(e.FullPath))
-        {
-            QueueAudioRecordingFilesRefresh();
-        }
-    }
-
-    private void AudioRecordingFolderRenamed(object sender, RenamedEventArgs e)
-    {
-        if (IsSupportedAudioRecordingFile(e.FullPath) || IsSupportedAudioRecordingFile(e.OldFullPath))
-        {
-            QueueAudioRecordingFilesRefresh();
-        }
+        watcher.Dispose();
     }
 
     private void QueueAudioRecordingFilesRefresh()
@@ -5406,20 +5714,12 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            Directory.CreateDirectory(_outputFolder);
-            var watcher = new FileSystemWatcher(_outputFolder)
-            {
-                Filter = "*.*",
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName
-                    | NotifyFilters.DirectoryName
-                    | NotifyFilters.CreationTime
-            };
-            watcher.Created += SessionFolderChanged;
-            watcher.Deleted += SessionFolderChanged;
-            watcher.Renamed += SessionFolderRenamed;
-            watcher.EnableRaisingEvents = true;
-            _sessionFolderWatcher = watcher;
+            _sessionFolderWatcher = FileBrowserWatcher.Start(
+                _outputFolder,
+                includeSubdirectories: true,
+                NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.CreationTime,
+                IsSessionBrowserPath,
+                QueueSessionRecordingsRefresh);
         }
         catch
         {
@@ -5436,33 +5736,7 @@ public partial class EqualizerWindow : Window
         }
 
         _sessionFolderWatcher = null;
-        try
-        {
-            watcher.EnableRaisingEvents = false;
-            watcher.Created -= SessionFolderChanged;
-            watcher.Deleted -= SessionFolderChanged;
-            watcher.Renamed -= SessionFolderRenamed;
-            watcher.Dispose();
-        }
-        catch
-        {
-        }
-    }
-
-    private void SessionFolderChanged(object sender, FileSystemEventArgs e)
-    {
-        if (IsSessionBrowserPath(e.FullPath))
-        {
-            QueueSessionRecordingsRefresh();
-        }
-    }
-
-    private void SessionFolderRenamed(object sender, RenamedEventArgs e)
-    {
-        if (IsSessionBrowserPath(e.FullPath) || IsSessionBrowserPath(e.OldFullPath))
-        {
-            QueueSessionRecordingsRefresh();
-        }
+        watcher.Dispose();
     }
 
     private void QueueSessionRecordingsRefresh()

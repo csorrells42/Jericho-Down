@@ -31,7 +31,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
     private int _stride;
     private double _framesPerSecond = 30d;
     private bool _bottomUp = true;
-    private byte[]? _previousDenoiseFrame;
+    private readonly VideoFrameDenoiser _denoiser = new();
     private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _recordingMediaFoundationScope;
     private MediaFoundationVideoRecorder? _recorder;
     private string? _recordingPath;
@@ -372,7 +372,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             _height = 0;
             _stride = 0;
             _framesPerSecond = 30d;
-            _previousDenoiseFrame = null;
+            _denoiser.Reset();
 
             ReleaseComObject(_nullRendererFilter);
             ReleaseComObject(_sampleGrabberFilter);
@@ -461,11 +461,11 @@ public sealed class DirectShowCameraPreviewService : IDisposable
 
         if (DenoiseEnabled)
         {
-            ApplyTemporalDenoise(bytes);
+            _denoiser.Apply(bytes, DenoiseStrength);
         }
         else
         {
-            _previousDenoiseFrame = null;
+            _denoiser.Reset();
         }
 
         VideoFrameColorProcessor.Apply(bytes, ColorSettings);
@@ -534,34 +534,6 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             d3dManager: null);
         LastStatus = $"DirectShow recorder matched live frame size: {frame.Width}x{frame.Height}.";
         StatusChanged?.Invoke(this, LastStatus);
-    }
-
-    private void ApplyTemporalDenoise(byte[] current)
-    {
-        var previous = _previousDenoiseFrame;
-        if (previous is null || previous.Length != current.Length)
-        {
-            _previousDenoiseFrame = (byte[])current.Clone();
-            return;
-        }
-
-        var strength = Math.Clamp(DenoiseStrength, 0.5d, 8d);
-        var previousWeight = Math.Clamp(strength / 12d, 0.05d, 0.62d);
-        var currentWeight = 1d - previousWeight;
-        for (var i = 0; i < current.Length; i += 4)
-        {
-            current[i] = Blend(current[i], previous[i], currentWeight, previousWeight);
-            current[i + 1] = Blend(current[i + 1], previous[i + 1], currentWeight, previousWeight);
-            current[i + 2] = Blend(current[i + 2], previous[i + 2], currentWeight, previousWeight);
-            current[i + 3] = 255;
-        }
-
-        Buffer.BlockCopy(current, 0, previous, 0, current.Length);
-    }
-
-    private static byte Blend(byte current, byte previous, double currentWeight, double previousWeight)
-    {
-        return (byte)Math.Clamp((int)Math.Round(current * currentWeight + previous * previousWeight), 0, 255);
     }
 
     private static IBaseFilter? CreateSourceFilter(CameraDevice camera)
