@@ -81,9 +81,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _spectrumSkippedFrameCount;
     private int _stereoInputAnalysisEnabled;
     private int _waveformSamplesEnabled;
+    private int _preferWaveInCapture;
     private int _currentDeviceNumber;
     private VoiceProcessorSettings? _currentProcessorSettings;
     private InputChannelMode _currentInputChannelMode = InputChannelMode.MonoSum;
+    private string _captureBackendDescription = "not open";
     private bool _autoRecoverCapture;
     private bool _isStoppingCapture;
     private bool _isDisposing;
@@ -180,8 +182,15 @@ public sealed class MicrophoneSpectrumService : IDisposable
         get
         {
             var capture = _capture;
-            return capture is null ? "not open" : DescribeWaveFormat(capture.WaveFormat);
+            return capture is null ? "not open" : $"{DescribeWaveFormat(capture.WaveFormat)} via {_captureBackendDescription}";
         }
+    }
+
+    public bool IsWasapiCaptureActive => _capture is WasapiCapture;
+
+    public void PreferWaveInCaptureForCurrentDevice()
+    {
+        System.Threading.Volatile.Write(ref _preferWaveInCapture, 1);
     }
 
     public string TargetProcessedOutputFormatStatus
@@ -379,6 +388,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
+        if (_currentDeviceNumber != deviceNumber)
+        {
+            System.Threading.Volatile.Write(ref _preferWaveInCapture, 0);
+        }
+
         _currentDeviceNumber = deviceNumber;
         _currentProcessorSettings = processorSettings;
         _currentInputChannelMode = inputChannelMode;
@@ -398,6 +412,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         _activeSampleRate = capture.WaveFormat.SampleRate;
+        _captureBackendDescription = DescribeCaptureBackend(capture);
         _processedAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate);
         _rawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate);
         _input1Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate);
@@ -850,12 +865,14 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private IWaveIn StartCapture(int deviceNumber)
     {
         Exception? startException = null;
-        if (TryStartWasapiCapture(deviceNumber, out var wasapiCapture, out var wasapiException))
+        Exception? wasapiException = null;
+        if (!ShouldPreferWaveInCapture()
+            && TryStartWasapiCapture(deviceNumber, out var wasapiCapture, out wasapiException))
         {
             return wasapiCapture;
         }
 
-        startException = wasapiException;
+        startException = ShouldPreferWaveInCapture() ? null : wasapiException;
         foreach (var sampleRate in PreferredSampleRates)
         {
             foreach (var channelCount in new[] { 2, 1 })
@@ -1444,6 +1461,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
         var encoding = isFloat ? "float" : "PCM";
         var bitsPerSample = isFloat ? 32 : format.BitsPerSample;
         return $"{format.SampleRate / 1000d:0.#} kHz, {format.Channels} ch, {bitsPerSample}-bit {encoding}";
+    }
+
+    private static string DescribeCaptureBackend(IWaveIn capture)
+    {
+        return capture switch
+        {
+            WasapiCapture => "WASAPI",
+            WaveInEvent => "WaveIn",
+            _ => capture.GetType().Name
+        };
+    }
+
+    private bool ShouldPreferWaveInCapture()
+    {
+        return System.Threading.Volatile.Read(ref _preferWaveInCapture) != 0;
     }
 
     private string DescribeTargetProcessedOutputFormat()
@@ -2107,6 +2139,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             {
                 _capture = null;
                 _voiceProcessor = null;
+                _captureBackendDescription = "not open";
                 System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
                 RestoreRuntimeMode();
             }

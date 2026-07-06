@@ -1,6 +1,10 @@
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
@@ -331,6 +335,247 @@ public sealed class Dx12Camera : IDisposable
         };
     }
 
+    public static FrameworkElement CreateCameraControlEditor(
+        CameraDevice camera,
+        CameraControlItem control,
+        DirectShowCameraControlService controlService,
+        TextBlock? statusText,
+        Func<string, TextBlock> createWrappedToolTip,
+        Func<bool> getUpdatingCameraControls,
+        Action<bool> setUpdatingCameraControls)
+    {
+        var container = new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromArgb(70, 79, 93, 107)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.FromArgb(80, 5, 7, 10)),
+            Padding = new Thickness(8),
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+
+        var layout = new Grid();
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var title = new TextBlock
+        {
+            Text = control.Name,
+            Foreground = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        layout.Children.Add(title);
+
+        var valueText = new TextBlock
+        {
+            Text = FormatCameraControlValue(control.Value),
+            Foreground = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(8, 0, 0, 0),
+            MinWidth = 44,
+            TextAlignment = TextAlignment.Right
+        };
+        Grid.SetColumn(valueText, 1);
+        layout.Children.Add(valueText);
+
+        var slider = new Slider
+        {
+            Minimum = control.Minimum,
+            Maximum = control.Maximum,
+            Value = Math.Clamp(control.Value, control.Minimum, control.Maximum),
+            TickFrequency = control.Step,
+            TickPlacement = TickPlacement.BottomRight,
+            IsSnapToTickEnabled = false,
+            Margin = new Thickness(0, 5, 0, 4),
+            SmallChange = GetCameraControlNudgeStep(control),
+            ToolTip = createWrappedToolTip($"{control.Name}. Default: {control.DefaultValue}. Range: {control.Minimum} to {control.Maximum}. Drag near the tick to snap home.")
+        };
+        slider.Ticks.Add(control.DefaultValue);
+        Grid.SetRow(slider, 1);
+        Grid.SetColumnSpan(slider, 2);
+        layout.Children.Add(slider);
+
+        var bottomPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        var autoCheckBox = new CheckBox
+        {
+            Content = "Auto",
+            Foreground = new SolidColorBrush(Color.FromRgb(184, 199, 217)),
+            IsChecked = control.IsAuto,
+            IsEnabled = control.SupportsAuto,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = createWrappedToolTip("Lets the camera choose this value automatically when the driver supports it.")
+        };
+
+        if (UsesCameraControlNudgeButtons(control))
+        {
+            var decreaseButton = CreateCameraNudgeButton("-", $"Nudge {control.Name} down/left slowly.", createWrappedToolTip);
+            var increaseButton = CreateCameraNudgeButton("+", $"Nudge {control.Name} up/right slowly.", createWrappedToolTip);
+            decreaseButton.Click += (_, _) => NudgeCameraControl(
+                camera,
+                control,
+                slider,
+                valueText,
+                autoCheckBox,
+                direction: -1,
+                controlService,
+                statusText,
+                setUpdatingCameraControls);
+            increaseButton.Click += (_, _) => NudgeCameraControl(
+                camera,
+                control,
+                slider,
+                valueText,
+                autoCheckBox,
+                direction: 1,
+                controlService,
+                statusText,
+                setUpdatingCameraControls);
+            bottomPanel.Children.Add(decreaseButton);
+            bottomPanel.Children.Add(increaseButton);
+        }
+
+        bottomPanel.Children.Add(autoCheckBox);
+
+        var defaultButton = new Button
+        {
+            Content = "Default",
+            Padding = new Thickness(8, 3, 8, 3),
+            ToolTip = createWrappedToolTip($"Returns {control.Name} to its driver default of {control.DefaultValue}.")
+        };
+        bottomPanel.Children.Add(defaultButton);
+
+        Grid.SetRow(bottomPanel, 2);
+        Grid.SetColumnSpan(bottomPanel, 2);
+        layout.Children.Add(bottomPanel);
+
+        slider.ValueChanged += (_, e) =>
+        {
+            if (getUpdatingCameraControls())
+            {
+                return;
+            }
+
+            var rounded = ApplyCameraControlDefaultMagnet(RoundCameraControlToStep(e.NewValue, control), control);
+            valueText.Text = FormatCameraControlValue(rounded);
+            if (SetCameraControl(controlService, statusText, camera, control, rounded, isAuto: false))
+            {
+                control.Value = rounded;
+                control.IsAuto = false;
+                setUpdatingCameraControls(true);
+                autoCheckBox.IsChecked = false;
+                setUpdatingCameraControls(false);
+                if (Math.Abs(slider.Value - rounded) > 0.001d && rounded == control.DefaultValue)
+                {
+                    setUpdatingCameraControls(true);
+                    slider.Value = rounded;
+                    setUpdatingCameraControls(false);
+                }
+            }
+        };
+
+        autoCheckBox.Checked += (_, _) =>
+        {
+            if (!getUpdatingCameraControls()
+                && !SetCameraControl(controlService, statusText, camera, control, control.Value, isAuto: true))
+            {
+                RestoreCameraAutoCheckBox(autoCheckBox, control, setUpdatingCameraControls);
+            }
+        };
+
+        autoCheckBox.Unchecked += (_, _) =>
+        {
+            if (!getUpdatingCameraControls()
+                && !SetCameraControl(controlService, statusText, camera, control, control.Value, isAuto: false))
+            {
+                RestoreCameraAutoCheckBox(autoCheckBox, control, setUpdatingCameraControls);
+            }
+        };
+
+        defaultButton.Click += (_, _) =>
+        {
+            if (SetCameraControl(controlService, statusText, camera, control, control.DefaultValue, isAuto: false))
+            {
+                setUpdatingCameraControls(true);
+                control.Value = control.DefaultValue;
+                control.IsAuto = false;
+                slider.Value = control.DefaultValue;
+                autoCheckBox.IsChecked = false;
+                valueText.Text = FormatCameraControlValue(control.DefaultValue);
+                setUpdatingCameraControls(false);
+            }
+        };
+
+        container.Child = layout;
+        return container;
+    }
+
+    public static void NudgeCameraControl(
+        CameraDevice camera,
+        CameraControlItem control,
+        Slider slider,
+        TextBlock valueText,
+        CheckBox autoCheckBox,
+        int direction,
+        DirectShowCameraControlService controlService,
+        TextBlock? statusText,
+        Action<bool> setUpdatingCameraControls)
+    {
+        var nextValue = Math.Clamp(control.Value + direction * GetCameraControlNudgeStep(control), control.Minimum, control.Maximum);
+        if (nextValue == control.Value)
+        {
+            return;
+        }
+
+        if (!SetCameraControl(controlService, statusText, camera, control, nextValue, isAuto: false))
+        {
+            return;
+        }
+
+        setUpdatingCameraControls(true);
+        slider.Value = nextValue;
+        autoCheckBox.IsChecked = false;
+        valueText.Text = FormatCameraControlValue(nextValue);
+        setUpdatingCameraControls(false);
+    }
+
+    public static bool SetCameraControl(
+        DirectShowCameraControlService controlService,
+        TextBlock? statusText,
+        CameraDevice camera,
+        CameraControlItem control,
+        int value,
+        bool isAuto)
+    {
+        var success = controlService.SetControl(camera, control, value, isAuto);
+        if (!success)
+        {
+            if (statusText is not null)
+            {
+                statusText.Text = FormatCameraControlSetStatus(control, value, isAuto, success: false);
+            }
+
+            return false;
+        }
+
+        control.Value = value;
+        control.IsAuto = isAuto;
+        if (statusText is not null)
+        {
+            statusText.Text = FormatCameraControlSetStatus(control, value, isAuto, success: true);
+        }
+
+        return true;
+    }
+
     public static bool UpdateAdvancedCameraControlsVisibility(
         Panel? advancedControlsPanel,
         CheckBox? advancedControlsCheckBox,
@@ -383,6 +628,15 @@ public sealed class Dx12Camera : IDisposable
             : "Color polish is neutral on the preview and recording path.";
     }
 
+    public static void ApplyVideoColorSettingsToCpuServices(
+        MediaFoundationCameraPreviewService mediaFoundationPreviewService,
+        DirectShowCameraPreviewService directShowPreviewService,
+        VideoFrameColorSettings settings)
+    {
+        mediaFoundationPreviewService.ColorSettings = settings;
+        directShowPreviewService.ColorSettings = settings;
+    }
+
     public static void UpdateVideoColorValueText(
         TextBlock? exposureText,
         TextBlock? contrastText,
@@ -409,6 +663,490 @@ public sealed class Dx12Camera : IDisposable
         {
             warmthText.Text = settings.Warmth.ToString("+0;-0;0");
         }
+    }
+
+    public static VideoDenoiseUpdate UpdateVideoDenoiseSettings(
+        CheckBox? denoiseCheckBox,
+        Slider? denoiseSlider,
+        Panel? denoiseControlsPanel,
+        TextBlock? denoiseValueText,
+        Dx12Camera? activeCamera,
+        MediaFoundationCameraPreviewService mediaFoundationPreviewService,
+        DirectShowCameraPreviewService directShowPreviewService,
+        bool isDirect3D12Ready,
+        bool isCameraEnabled,
+        bool restartPreview,
+        ref bool isSnappingVideoDenoiseSlider,
+        double defaultStrength,
+        double maximumStrength)
+    {
+        if (denoiseCheckBox is null || denoiseSlider is null)
+        {
+            return VideoDenoiseUpdate.NotApplied;
+        }
+
+        var strength = Math.Clamp(denoiseSlider.Value, denoiseSlider.Minimum, maximumStrength);
+        if (!isSnappingVideoDenoiseSlider
+            && Math.Abs(strength - defaultStrength) <= 0.25d
+            && Math.Abs(strength - defaultStrength) > 0.001d)
+        {
+            isSnappingVideoDenoiseSlider = true;
+            denoiseSlider.Value = defaultStrength;
+            isSnappingVideoDenoiseSlider = false;
+            strength = defaultStrength;
+        }
+
+        denoiseSlider.Ticks.Clear();
+        denoiseSlider.Ticks.Add(defaultStrength);
+        denoiseSlider.Ticks.Add(maximumStrength);
+        var enabled = denoiseCheckBox.IsChecked == true;
+        if (denoiseControlsPanel is not null)
+        {
+            denoiseControlsPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        activeCamera?.Denoise(enabled, strength);
+        mediaFoundationPreviewService.DenoiseEnabled = enabled;
+        mediaFoundationPreviewService.DenoiseStrength = strength;
+        mediaFoundationPreviewService.DenoiseHandledByPreviewRenderer = isDirect3D12Ready;
+        directShowPreviewService.DenoiseEnabled = enabled;
+        directShowPreviewService.DenoiseStrength = strength;
+        UpdateVideoDenoiseValueText(denoiseValueText, strength);
+
+        var status = isCameraEnabled
+            ? FormatVideoDenoiseStatus(activeCamera?.IsTextureNative == true, enabled)
+            : null;
+        return new VideoDenoiseUpdate(
+            Applied: true,
+            Enabled: enabled,
+            SliderStrength: strength,
+            EffectiveStrength: strength,
+            ShouldRestartPreview: restartPreview && isCameraEnabled,
+            StatusText: status);
+    }
+
+    public static VideoColorPolishUpdate UpdateVideoColorPolishSettings(
+        CheckBox? colorPolishCheckBox,
+        Slider? exposureSlider,
+        Slider? contrastSlider,
+        Slider? saturationSlider,
+        Slider? warmthSlider,
+        Panel? colorControlsPanel,
+        TextBlock? exposureText,
+        TextBlock? contrastText,
+        TextBlock? saturationText,
+        TextBlock? warmthText,
+        MediaFoundationCameraPreviewService mediaFoundationPreviewService,
+        DirectShowCameraPreviewService directShowPreviewService,
+        Dx12Camera? activeCamera,
+        bool isCameraEnabled)
+    {
+        if (colorPolishCheckBox is null
+            || exposureSlider is null
+            || contrastSlider is null
+            || saturationSlider is null
+            || warmthSlider is null)
+        {
+            return VideoColorPolishUpdate.NotApplied;
+        }
+
+        var enabled = colorPolishCheckBox.IsChecked == true;
+        if (colorControlsPanel is not null)
+        {
+            colorControlsPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        var settings = new VideoFrameColorSettings(
+            enabled,
+            Math.Clamp(exposureSlider.Value, exposureSlider.Minimum, exposureSlider.Maximum),
+            Math.Clamp(contrastSlider.Value, contrastSlider.Minimum, contrastSlider.Maximum),
+            Math.Clamp(saturationSlider.Value, saturationSlider.Minimum, saturationSlider.Maximum),
+            Math.Clamp(warmthSlider.Value, warmthSlider.Minimum, warmthSlider.Maximum));
+        ApplyVideoColorSettingsToCpuServices(
+            mediaFoundationPreviewService,
+            directShowPreviewService,
+            settings);
+        UpdateVideoColorValueText(
+            exposureText,
+            contrastText,
+            saturationText,
+            warmthText,
+            settings);
+
+        var status = isCameraEnabled
+            ? FormatVideoColorPolishStatus(activeCamera?.IsTextureNative == true, settings)
+            : null;
+        return new VideoColorPolishUpdate(
+            Applied: true,
+            Settings: settings,
+            StatusText: status);
+    }
+
+    public static object BuildVideoProcessingMetadata(
+        TextureNativeRecordingResult? textureResult,
+        Dx12Camera? activeCamera,
+        bool denoiseEnabled,
+        double denoiseSliderStrength,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings,
+        bool isDirectShow,
+        bool isDirect3D12Ready)
+    {
+        if (textureResult is not null)
+        {
+            return new
+            {
+                previewPipeline = "Direct3D 12 NV12 shader preview",
+                previewRenderPath = activeCamera?.PreviewPathDescription ?? "DX12 preview path unavailable",
+                previewDenoiseApplied = denoiseEnabled,
+                previewDenoiseSliderStrength = denoiseSliderStrength,
+                previewDenoiseStrength = denoiseStrength,
+                previewColorPolishApplied = false,
+                previewColorPolish = CreateVideoColorMetadata(colorSettings),
+                recordingPipeline = textureResult.RecordingPipeline,
+                recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
+                recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
+                recordingColorPolishApplied = false,
+                recordingMatchesPreviewColor = !colorSettings.HasVisibleAdjustments,
+                note = colorSettings.HasVisibleAdjustments
+                    ? "Color polish is CPU-only in this build; the saved texture-native video is raw color output."
+                    : textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                        ? "Texture-native recording matched the preview denoise setting through the processed bridge."
+                        : denoiseEnabled
+                            ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
+                            : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
+            };
+        }
+
+        return new
+        {
+            previewPipeline = FormatCpuCameraPreviewPipeline(isDirectShow, isDirect3D12Ready),
+            previewDenoiseApplied = denoiseEnabled,
+            previewDenoiseSliderStrength = denoiseSliderStrength,
+            previewDenoiseStrength = denoiseStrength,
+            previewColorPolishApplied = colorSettings.HasVisibleAdjustments,
+            previewColorPolish = CreateVideoColorMetadata(colorSettings),
+            recordingPipeline = isDirectShow ? "DirectShow CPU frames to Media Foundation MP4 writer" : "Media Foundation CPU frame writer",
+            recordingDenoiseApplied = denoiseEnabled,
+            recordingMatchesPreviewDenoise = true,
+            recordingColorPolishApplied = colorSettings.HasVisibleAdjustments,
+            recordingMatchesPreviewColor = true,
+            note = denoiseEnabled && colorSettings.HasVisibleAdjustments
+                ? "Preview denoise and color polish were applied before recording frames were written."
+                : denoiseEnabled
+                    ? "Preview denoise was applied before recording frames were written."
+                    : colorSettings.HasVisibleAdjustments
+                        ? "Color polish was applied before recording frames were written."
+                        : "Preview denoise was off."
+        };
+    }
+
+    public static object CreateVideoColorMetadata(VideoFrameColorSettings settings)
+    {
+        return new
+        {
+            settings.Enabled,
+            settings.Exposure,
+            settings.Contrast,
+            settings.Saturation,
+            settings.Warmth
+        };
+    }
+
+    public static CameraProfile CaptureCameraProfile(
+        string name,
+        CameraDevice? camera,
+        CameraVideoMode mode,
+        bool cameraEnabled,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        bool colorPolishEnabled,
+        VideoFrameColorSettings colorSettings)
+    {
+        return new CameraProfile
+        {
+            Name = name,
+            CameraName = camera?.Name,
+            CameraSource = camera?.Source,
+            CameraDevicePath = camera?.DevicePath,
+            CameraEnabled = cameraEnabled,
+            ModeLabel = mode.Label,
+            ModeWidth = mode.Width,
+            ModeHeight = mode.Height,
+            ModeFramesPerSecond = mode.FramesPerSecond,
+            ModeInputFormat = mode.InputFormat,
+            DenoiseEnabled = denoiseEnabled,
+            DenoiseStrength = denoiseStrength,
+            ColorPolishEnabled = colorPolishEnabled,
+            Exposure = colorSettings.Exposure,
+            Contrast = colorSettings.Contrast,
+            Saturation = colorSettings.Saturation,
+            Warmth = colorSettings.Warmth
+        };
+    }
+
+    public static void SaveCameraProfile(
+        string profileFolder,
+        string name,
+        CameraProfile profile,
+        JsonSerializerOptions jsonOptions)
+    {
+        Directory.CreateDirectory(profileFolder);
+        var json = JsonSerializer.Serialize(profile, jsonOptions);
+        File.WriteAllText(GetCameraProfilePath(profileFolder, name), json);
+    }
+
+    public static CameraProfile? LoadCameraProfile(
+        string profileFolder,
+        string name,
+        JsonSerializerOptions jsonOptions)
+    {
+        var path = GetCameraProfilePath(profileFolder, name);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<CameraProfile>(json, jsonOptions);
+    }
+
+    public static CameraDevice? FindCameraForProfile(IEnumerable<CameraDevice> cameras, CameraProfile profile)
+    {
+        return FindCamera(
+            cameras.ToList(),
+            profile.CameraDevicePath,
+            profile.CameraSource,
+            profile.CameraName);
+    }
+
+    public static bool SelectCameraProfileMode(ComboBox? modeComboBox, string? modeLabel)
+    {
+        if (modeComboBox is null || string.IsNullOrWhiteSpace(modeLabel))
+        {
+            return false;
+        }
+
+        var match = modeComboBox.Items
+            .OfType<CameraVideoMode>()
+            .FirstOrDefault(mode => mode.Label.Equals(modeLabel, StringComparison.OrdinalIgnoreCase))
+            ?? modeComboBox.Items
+                .OfType<CameraVideoMode>()
+                .FirstOrDefault(mode => mode.IsAuto && modeLabel.Equals(CameraVideoMode.Auto.Label, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+        {
+            return false;
+        }
+
+        modeComboBox.SelectedItem = match;
+        return true;
+    }
+
+    public static void LoadCameraProfileList(
+        ObservableCollection<string> profileNames,
+        ComboBox profileComboBox,
+        TextBlock? statusText,
+        string profileFolder,
+        JsonSerializerOptions jsonOptions)
+    {
+        var selectedName = profileComboBox.SelectedItem as string;
+        profileNames.Clear();
+
+        try
+        {
+            Directory.CreateDirectory(profileFolder);
+            foreach (var path in Directory.EnumerateFiles(profileFolder, "*.json").OrderBy(path => path))
+            {
+                var name = ReadCameraProfileName(path, jsonOptions);
+                if (!string.IsNullOrWhiteSpace(name)
+                    && !profileNames.Any(existing => existing.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    profileNames.Add(name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (statusText is not null)
+            {
+                statusText.Text = $"Could not read camera profiles: {ex.Message}";
+            }
+        }
+
+        profileComboBox.SelectedItem = !string.IsNullOrWhiteSpace(selectedName)
+            ? profileNames.FirstOrDefault(candidate => candidate.Equals(selectedName, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+        if (profileComboBox.SelectedItem is null)
+        {
+            profileComboBox.SelectedIndex = profileNames.Count > 0 ? 0 : -1;
+        }
+    }
+
+    public static string GetCameraProfileNameFromEntry(TextBox profileNameTextBox, ComboBox profileComboBox)
+    {
+        var typed = profileNameTextBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(typed))
+        {
+            return typed;
+        }
+
+        return profileComboBox.SelectedItem as string ?? string.Empty;
+    }
+
+    public static bool TryGetCameraProfileNameFromEntry(
+        TextBox profileNameTextBox,
+        ComboBox profileComboBox,
+        TextBlock statusText,
+        string emptyStatus,
+        out string name)
+    {
+        name = GetCameraProfileNameFromEntry(profileNameTextBox, profileComboBox).Trim();
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            return true;
+        }
+
+        statusText.Text = emptyStatus;
+        return false;
+    }
+
+    public static CameraToggleUpdate CreateCameraToggleUpdate(
+        bool isUpdatingCameraUi,
+        ToggleButton cameraEnabledToggle,
+        bool cameraAvailable,
+        bool safeStartCameraRecoveryActive,
+        bool safeStartDx12Disabled)
+    {
+        if (isUpdatingCameraUi)
+        {
+            return CameraToggleUpdate.Ignored;
+        }
+
+        var isCameraEnabled = cameraEnabledToggle.IsChecked == true && cameraAvailable;
+        var nextSafeStartCameraRecoveryActive = isCameraEnabled ? false : safeStartCameraRecoveryActive;
+        var nextSafeStartDx12Disabled = isCameraEnabled ? false : safeStartDx12Disabled;
+        return new CameraToggleUpdate(
+            Applied: true,
+            IsCameraEnabled: isCameraEnabled,
+            SafeStartCameraRecoveryActive: nextSafeStartCameraRecoveryActive,
+            SafeStartDx12Disabled: nextSafeStartDx12Disabled,
+            StatusText: isCameraEnabled
+                ? "Camera toggle received - starting preview"
+                : "Camera toggle received - stopping preview");
+    }
+
+    public static string GetCameraProfilePath(string profileFolder, string name)
+    {
+        return Path.Combine(profileFolder, $"{SanitizeCameraProfileFileName(name)}.json");
+    }
+
+    private static string ReadCameraProfileName(string path, JsonSerializerOptions jsonOptions)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            var profile = JsonSerializer.Deserialize<CameraProfile>(json, jsonOptions);
+            if (!string.IsNullOrWhiteSpace(profile?.Name))
+            {
+                return profile.Name.Trim();
+            }
+        }
+        catch
+        {
+        }
+
+        return Path.GetFileNameWithoutExtension(path);
+    }
+
+    private static string SanitizeCameraProfileFileName(string name)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var sanitized = new string(name
+            .Trim()
+            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+            .ToArray());
+
+        sanitized = sanitized.Trim();
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return "CameraProfile";
+        }
+
+        return sanitized.Length <= 80 ? sanitized : sanitized[..80].Trim();
+    }
+
+    public static CameraProfileApplyResult ApplyCameraProfileToControls(
+        CameraProfile profile,
+        IEnumerable<CameraDevice> cameras,
+        ComboBox cameraComboBox,
+        CheckBox? denoiseCheckBox,
+        Slider? denoiseSlider,
+        CheckBox? colorPolishCheckBox,
+        Slider? exposureSlider,
+        Slider? contrastSlider,
+        Slider? saturationSlider,
+        Slider? warmthSlider,
+        bool cameraAvailable)
+    {
+        var name = string.IsNullOrWhiteSpace(profile.Name) ? "Camera profile" : profile.Name.Trim();
+        var camera = FindCameraForProfile(cameras, profile);
+        if (camera is null)
+        {
+            return new CameraProfileApplyResult(
+                Applied: false,
+                ProfileName: name,
+                PendingModeLabel: null,
+                CameraEnabled: false,
+                StatusText: $"Camera profile loaded, but camera is not available: {profile.CameraName}");
+        }
+
+        cameraComboBox.SelectedItem = camera;
+
+        if (denoiseCheckBox is not null)
+        {
+            denoiseCheckBox.IsChecked = profile.DenoiseEnabled;
+        }
+
+        if (denoiseSlider is not null && double.IsFinite(profile.DenoiseStrength))
+        {
+            denoiseSlider.Value = Math.Clamp(profile.DenoiseStrength, denoiseSlider.Minimum, denoiseSlider.Maximum);
+        }
+
+        if (colorPolishCheckBox is not null)
+        {
+            colorPolishCheckBox.IsChecked = profile.ColorPolishEnabled;
+        }
+
+        if (exposureSlider is not null && double.IsFinite(profile.Exposure))
+        {
+            exposureSlider.Value = Math.Clamp(profile.Exposure, exposureSlider.Minimum, exposureSlider.Maximum);
+        }
+
+        if (contrastSlider is not null && double.IsFinite(profile.Contrast))
+        {
+            contrastSlider.Value = Math.Clamp(profile.Contrast, contrastSlider.Minimum, contrastSlider.Maximum);
+        }
+
+        if (saturationSlider is not null && double.IsFinite(profile.Saturation))
+        {
+            saturationSlider.Value = Math.Clamp(profile.Saturation, saturationSlider.Minimum, saturationSlider.Maximum);
+        }
+
+        if (warmthSlider is not null && double.IsFinite(profile.Warmth))
+        {
+            warmthSlider.Value = Math.Clamp(profile.Warmth, warmthSlider.Minimum, warmthSlider.Maximum);
+        }
+
+        var pendingModeLabel = string.IsNullOrWhiteSpace(profile.ModeLabel)
+            ? CameraVideoMode.Auto.Label
+            : profile.ModeLabel;
+        return new CameraProfileApplyResult(
+            Applied: true,
+            ProfileName: name,
+            PendingModeLabel: pendingModeLabel,
+            CameraEnabled: profile.CameraEnabled && cameraAvailable,
+            StatusText: $"Camera profile loaded: {name}");
     }
 
     public static bool IsKaraokeTabSelected(TabControl? tabControl)
@@ -1376,5 +2114,94 @@ public sealed class Dx12Camera : IDisposable
         public int HostInsertIndex { get; }
 
         public string Name { get; }
+    }
+
+    public readonly record struct VideoDenoiseUpdate(
+        bool Applied,
+        bool Enabled,
+        double SliderStrength,
+        double EffectiveStrength,
+        bool ShouldRestartPreview,
+        string? StatusText)
+    {
+        public static VideoDenoiseUpdate NotApplied { get; } = new(
+            Applied: false,
+            Enabled: false,
+            SliderStrength: 0d,
+            EffectiveStrength: 0d,
+            ShouldRestartPreview: false,
+            StatusText: null);
+    }
+
+    public readonly record struct VideoColorPolishUpdate(
+        bool Applied,
+        VideoFrameColorSettings Settings,
+        string? StatusText)
+    {
+        public static VideoColorPolishUpdate NotApplied { get; } = new(
+            Applied: false,
+            Settings: VideoFrameColorSettings.Off,
+            StatusText: null);
+    }
+
+    public readonly record struct CameraProfileApplyResult(
+        bool Applied,
+        string ProfileName,
+        string? PendingModeLabel,
+        bool CameraEnabled,
+        string StatusText);
+
+    public readonly record struct CameraToggleUpdate(
+        bool Applied,
+        bool IsCameraEnabled,
+        bool SafeStartCameraRecoveryActive,
+        bool SafeStartDx12Disabled,
+        string? StatusText)
+    {
+        public static CameraToggleUpdate Ignored { get; } = new(
+            Applied: false,
+            IsCameraEnabled: false,
+            SafeStartCameraRecoveryActive: false,
+            SafeStartDx12Disabled: false,
+            StatusText: null);
+    }
+
+    public sealed class CameraProfile
+    {
+        public int Version { get; set; } = 1;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string? CameraName { get; set; }
+
+        public string? CameraSource { get; set; }
+
+        public string? CameraDevicePath { get; set; }
+
+        public bool CameraEnabled { get; set; }
+
+        public string ModeLabel { get; set; } = CameraVideoMode.Auto.Label;
+
+        public int? ModeWidth { get; set; }
+
+        public int? ModeHeight { get; set; }
+
+        public double? ModeFramesPerSecond { get; set; }
+
+        public string? ModeInputFormat { get; set; }
+
+        public bool DenoiseEnabled { get; set; }
+
+        public double DenoiseStrength { get; set; } = 2d;
+
+        public bool ColorPolishEnabled { get; set; }
+
+        public double Exposure { get; set; }
+
+        public double Contrast { get; set; }
+
+        public double Saturation { get; set; }
+
+        public double Warmth { get; set; }
     }
 }
