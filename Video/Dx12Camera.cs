@@ -1,4 +1,3 @@
-using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
@@ -17,41 +16,36 @@ public sealed class Dx12Camera : IDisposable
     private readonly CameraVideoMode _mode;
     private readonly PreviewTarget _target;
     private readonly Dispatcher _dispatcher;
-    private readonly bool _preferTextureNative;
-    private readonly MediaFoundationCameraPreviewService _mediaFoundationPreviewService = new();
-    private readonly DirectShowCameraPreviewService _directShowPreviewService = new();
-    private Dx12CameraKind _kind;
-    private string _fallbackDescription = string.Empty;
+    private readonly Dx12CameraKind _kind;
+    private readonly Action? _fallbackStop;
+    private readonly string _fallbackDescription;
     private TextureNativeCameraStream? _stream;
     private Direct3D12PreviewHost? _previewHost;
     private TextureNativeFrameLease? _pendingPreviewFrame;
     private WriteableBitmap? _fallbackPreviewBitmap;
-    private VideoFrameColorSettings _colorSettings = VideoFrameColorSettings.Off;
     private int _previewRenderQueued;
     private long _fallbackFrameNumber;
     private bool _textureFrameLeaseActive;
-    private string? _lastTextureNativeError;
-    private string? _lastRecordingDiagnostics;
     private bool _denoiseEnabled;
     private double _denoiseStrength = 2d;
     private bool _disposed;
 
-    public Dx12Camera(CameraDevice camera, Panel previewWindow, bool preferTextureNative = true)
-        : this(camera, CameraVideoMode.Auto, new PreviewTarget(previewWindow), preferTextureNative)
+    public Dx12Camera(CameraDevice camera, Panel previewWindow)
+        : this(camera, CameraVideoMode.Auto, new PreviewTarget(previewWindow))
     {
     }
 
-    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewWindow, bool preferTextureNative = true)
-        : this(camera, mode, new PreviewTarget(previewWindow), preferTextureNative)
+    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewWindow)
+        : this(camera, mode, new PreviewTarget(previewWindow))
     {
     }
 
-    public Dx12Camera(CameraDevice camera, PreviewTarget target, bool preferTextureNative = true)
-        : this(camera, CameraVideoMode.Auto, target, preferTextureNative)
+    public Dx12Camera(CameraDevice camera, PreviewTarget target)
+        : this(camera, CameraVideoMode.Auto, target)
     {
     }
 
-    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, PreviewTarget target, bool preferTextureNative = true)
+    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, PreviewTarget target)
     {
         if (!target.PreviewWindow.Dispatcher.CheckAccess())
         {
@@ -62,7 +56,8 @@ public sealed class Dx12Camera : IDisposable
         _mode = mode ?? CameraVideoMode.Auto;
         _target = target;
         _dispatcher = target.PreviewWindow.Dispatcher;
-        _preferTextureNative = preferTextureNative;
+        _kind = Dx12CameraKind.TextureNative;
+        _fallbackDescription = string.Empty;
         lock (ActiveLock)
         {
             _active?.Dispose();
@@ -88,6 +83,24 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    private Dx12Camera(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        Dx12CameraKind kind,
+        string fallbackDescription,
+        Action fallbackStop)
+    {
+        _camera = camera;
+        _mode = mode;
+        _target = target;
+        _dispatcher = target.PreviewWindow.Dispatcher;
+        _kind = kind;
+        _fallbackDescription = fallbackDescription;
+        _fallbackStop = fallbackStop;
+        InitializeFallbackPreview();
+    }
+
     ~Dx12Camera()
     {
         Dispose(disposing: false);
@@ -107,35 +120,6 @@ public sealed class Dx12Camera : IDisposable
     public static CameraDevice? GetDefaultCamera()
     {
         return GetCameras().FirstOrDefault();
-    }
-
-    public static bool IsDirectShowCamera(CameraDevice camera)
-    {
-        return string.Equals(camera.Source, "DirectShow", StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static bool CameraModesAvailable => OperatingSystem.IsWindows();
-
-    public static Task<IReadOnlyList<CameraVideoMode>> GetModesAsync(
-        CameraDevice camera,
-        CancellationToken cancellationToken)
-    {
-        if (IsDirectShowCamera(camera))
-        {
-            return Task.FromResult<IReadOnlyList<CameraVideoMode>>([CameraVideoMode.Auto]);
-        }
-
-        return new MediaFoundationCameraModeService().GetModesAsync(camera, cancellationToken);
-    }
-
-    public static IReadOnlyList<CameraControlItem> GetControls(CameraDevice camera)
-    {
-        return new DirectShowCameraControlService().GetControls(camera);
-    }
-
-    public static bool SetControl(CameraDevice camera, CameraControlItem control, int value, bool isAuto)
-    {
-        return new DirectShowCameraControlService().SetControl(camera, control, value, isAuto);
     }
 
     public static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)
@@ -158,6 +142,39 @@ public sealed class Dx12Camera : IDisposable
 
             _active?.Dispose();
             _active = new Dx12Camera(camera, mode, target);
+            return _active;
+        }
+    }
+
+    public static Dx12Camera ClaimFallback(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        string fallbackDescription,
+        Action fallbackStop)
+    {
+        if (!target.PreviewWindow.Dispatcher.CheckAccess())
+        {
+            return target.PreviewWindow.Dispatcher.Invoke(() => ClaimFallback(camera, mode, target, fallbackDescription, fallbackStop));
+        }
+
+        var kind = fallbackDescription.Contains("DirectShow", StringComparison.OrdinalIgnoreCase)
+            ? Dx12CameraKind.DirectShowFallback
+            : Dx12CameraKind.MediaFoundationFallback;
+
+        lock (ActiveLock)
+        {
+            if (_active is not null
+                && !_active._disposed
+                && _active._kind == kind
+                && _active.IsInitializedFor(target.PreviewWindow)
+                && _active.Matches(camera, mode))
+            {
+                return _active;
+            }
+
+            _active?.Dispose();
+            _active = new Dx12Camera(camera, mode, target, kind, fallbackDescription, fallbackStop);
             return _active;
         }
     }
@@ -188,9 +205,7 @@ public sealed class Dx12Camera : IDisposable
         return ReferenceEquals(_target.PreviewWindow, previewWindow);
     }
 
-    public bool IsRecording => _stream?.IsRecording == true
-        || _mediaFoundationPreviewService.IsRecording
-        || _directShowPreviewService.IsRecording;
+    public bool IsRecording => _stream?.IsRecording == true;
 
     public bool IsTextureNative => _kind == Dx12CameraKind.TextureNative;
 
@@ -203,33 +218,17 @@ public sealed class Dx12Camera : IDisposable
         _ => PipelineKind.MediaFoundationFallback
     };
 
-    public int Width => _stream?.Width ?? _mode.Width ?? 0;
+    public int Width => _stream?.Width ?? 0;
 
-    public int Height => _stream?.Height ?? _mode.Height ?? 0;
+    public int Height => _stream?.Height ?? 0;
 
-    public double FramesPerSecond => _stream?.FramesPerSecond ?? _mode.FramesPerSecond ?? 0d;
+    public double FramesPerSecond => _stream?.FramesPerSecond ?? 0d;
 
-    public string DeviceMode => _stream?.DeviceMode ?? _mode.Label;
+    public string DeviceMode => _stream?.DeviceMode ?? "none";
 
-    public string MediaSubtype => _stream?.MediaSubtype ?? _mode.InputFormat ?? (_kind == Dx12CameraKind.DirectShowFallback ? "RGB32" : "CPU frames");
+    public string MediaSubtype => _stream?.MediaSubtype ?? "none";
 
-    public int SamplesWritten => _stream?.SamplesWritten
-        ?? (_kind == Dx12CameraKind.DirectShowFallback
-            ? _directShowPreviewService.RecordingFramesWritten
-            : _mediaFoundationPreviewService.RecordingFramesWritten);
-
-    public int RecordingFramesOffered => _stream?.SamplesWritten
-        ?? (_kind == Dx12CameraKind.DirectShowFallback
-            ? _directShowPreviewService.RecordingFramesOffered
-            : _mediaFoundationPreviewService.RecordingFramesOffered);
-
-    public int RecordingFramesWritten => SamplesWritten;
-
-    public int RecordingFramesSkipped => IsTextureNative
-        ? 0
-        : _kind == Dx12CameraKind.DirectShowFallback
-            ? _directShowPreviewService.RecordingFramesSkipped
-            : _mediaFoundationPreviewService.RecordingFramesSkipped;
+    public int SamplesWritten => _stream?.SamplesWritten ?? 0;
 
     public bool IsReady => _previewHost?.IsReady == true;
 
@@ -238,19 +237,6 @@ public sealed class Dx12Camera : IDisposable
     public string PreviewPathDescription => IsTextureNative
         ? _previewHost?.PreviewPathDescription ?? "DX12 preview path pending"
         : _fallbackDescription;
-
-    public string? LastTextureNativeError => _lastTextureNativeError;
-
-    public string? LastRecordingDiagnostics => _lastRecordingDiagnostics
-        ?? (_kind == Dx12CameraKind.DirectShowFallback
-            ? _directShowPreviewService.LastRecordingDiagnostics
-            : _mediaFoundationPreviewService.LastRecordingDiagnostics);
-
-    public string RecordingPipelineDescription => IsTextureNative
-        ? PreviewPathDescription
-        : _kind == Dx12CameraKind.DirectShowFallback
-            ? "DirectShow CPU frames to Media Foundation MP4 writer"
-            : "Media Foundation CPU frame writer";
 
     public void Denoise(int magnitude)
     {
@@ -266,11 +252,6 @@ public sealed class Dx12Camera : IDisposable
     {
         _denoiseEnabled = enabled;
         _denoiseStrength = Math.Clamp(strength, 0.5d, 5d);
-        _mediaFoundationPreviewService.DenoiseEnabled = enabled;
-        _mediaFoundationPreviewService.DenoiseStrength = _denoiseStrength;
-        _mediaFoundationPreviewService.DenoiseHandledByPreviewRenderer = true;
-        _directShowPreviewService.DenoiseEnabled = enabled;
-        _directShowPreviewService.DenoiseStrength = _denoiseStrength;
     }
 
     public void denoise(int magnitude)
@@ -286,13 +267,6 @@ public sealed class Dx12Camera : IDisposable
     public void UpdateRenderSettings(bool denoiseEnabled, double denoiseStrength)
     {
         Denoise(denoiseEnabled, denoiseStrength);
-    }
-
-    public void SetColorSettings(VideoFrameColorSettings colorSettings)
-    {
-        _colorSettings = colorSettings;
-        _mediaFoundationPreviewService.ColorSettings = colorSettings;
-        _directShowPreviewService.ColorSettings = colorSettings;
     }
 
     public bool WriteMP4(string path)
@@ -358,40 +332,13 @@ public sealed class Dx12Camera : IDisposable
 
     public bool StartRecording(string path, TextureNativeRecordingOptions options)
     {
-        _lastRecordingDiagnostics = null;
-        if (_stream is not null)
-        {
-            return _stream.StartRecording(path, options);
-        }
-
-        if (_kind == Dx12CameraKind.DirectShowFallback)
-        {
-            return _directShowPreviewService.StartRecording(path, _mode);
-        }
-
-        if (_kind == Dx12CameraKind.MediaFoundationFallback)
-        {
-            return _mediaFoundationPreviewService.StartRecording(path, _mode);
-        }
-
-        throw new InvalidOperationException("Camera stream is not initialized.");
+        var stream = _stream ?? throw new InvalidOperationException("DX12 camera stream is not initialized.");
+        return stream.StartRecording(path, options);
     }
 
     public void PauseRecording()
     {
-        if (_stream is not null)
-        {
-            _stream.PauseRecording();
-            return;
-        }
-
-        if (_kind == Dx12CameraKind.DirectShowFallback)
-        {
-            _directShowPreviewService.PauseRecording();
-            return;
-        }
-
-        _mediaFoundationPreviewService.PauseRecording();
+        _stream?.PauseRecording();
     }
 
     public void PauseMP4()
@@ -401,19 +348,7 @@ public sealed class Dx12Camera : IDisposable
 
     public void ResumeRecording()
     {
-        if (_stream is not null)
-        {
-            _stream.ResumeRecording();
-            return;
-        }
-
-        if (_kind == Dx12CameraKind.DirectShowFallback)
-        {
-            _directShowPreviewService.ResumeRecording();
-            return;
-        }
-
-        _mediaFoundationPreviewService.ResumeRecording();
+        _stream?.ResumeRecording();
     }
 
     public void ResumeMP4()
@@ -423,25 +358,7 @@ public sealed class Dx12Camera : IDisposable
 
     public TextureNativeRecordingResult? StopRecording()
     {
-        if (_stream is not null)
-        {
-            return _stream.StopRecording();
-        }
-
-        return _kind switch
-        {
-            Dx12CameraKind.DirectShowFallback => StopFallbackRecording(
-                _directShowPreviewService.StopRecording(),
-                _directShowPreviewService.LastRecordingDiagnostics,
-                _directShowPreviewService.RecordingFramesWritten,
-                "DirectShow CPU frames to Media Foundation MP4 writer"),
-            Dx12CameraKind.MediaFoundationFallback => StopFallbackRecording(
-                _mediaFoundationPreviewService.StopRecording(),
-                _mediaFoundationPreviewService.LastRecordingDiagnostics,
-                _mediaFoundationPreviewService.RecordingFramesWritten,
-                "Media Foundation CPU frame writer"),
-            _ => null
-        };
+        return _stream?.StopRecording();
     }
 
     public TextureNativeRecordingResult? StopMP4()
@@ -559,44 +476,9 @@ public sealed class Dx12Camera : IDisposable
 
     private void Initialize()
     {
-        var failures = new List<string>();
-        if (_preferTextureNative)
-        {
-            try
-            {
-                InitializeTextureNativePreview();
-                return;
-            }
-            catch (Exception ex)
-            {
-                _lastTextureNativeError = ex.Message;
-                failures.Add($"DX12 texture-native preview: {ex.Message}");
-                CleanupTextureNativePreview();
-            }
-        }
-        else
-        {
-            _lastTextureNativeError = "DX12 texture-native preview disabled for safe start.";
-        }
-
-        if (TryInitializeFallbackPreview(failures))
-        {
-            return;
-        }
-
-        var failureText = failures.Count == 0
-            ? "No compatible camera pipeline could be opened."
-            : string.Join(" ", failures);
-        throw new InvalidOperationException(failureText);
-    }
-
-    private void InitializeTextureNativePreview()
-    {
         _target.PreviewImage?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Collapsed);
         _target.Placeholder?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Visible);
         _target.StatusText?.SetCurrentValue(TextBlock.TextProperty, $"DX12 camera starting for {_target.Name}.");
-        _kind = Dx12CameraKind.TextureNative;
-        _fallbackDescription = string.Empty;
 
         var stream = new TextureNativeCameraStream(_camera, _mode, startImmediately: false);
         _stream = stream;
@@ -613,86 +495,8 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
-    private bool TryInitializeFallbackPreview(List<string> failures)
+    private void InitializeFallbackPreview()
     {
-        if (IsDirectShowCamera(_camera))
-        {
-            return TryInitializeDirectShowFallback(
-                _camera,
-                "DirectShow CPU preview",
-                failures);
-        }
-
-        if (TryInitializeMediaFoundationFallback(failures))
-        {
-            return true;
-        }
-
-        var fallback = _camera.FallbackDevice;
-        return fallback is not null
-            && IsDirectShowCamera(fallback)
-            && TryInitializeDirectShowFallback(
-                fallback,
-                "DirectShow CPU fallback preview",
-                failures);
-    }
-
-    private bool TryInitializeMediaFoundationFallback(List<string> failures)
-    {
-        if (!_mediaFoundationPreviewService.IsAvailable)
-        {
-            failures.Add("Media Foundation preview is unavailable.");
-            return false;
-        }
-
-        InitializeFallbackPreviewHost("Media Foundation CPU preview", Dx12CameraKind.MediaFoundationFallback);
-        _mediaFoundationPreviewService.DenoiseEnabled = _denoiseEnabled;
-        _mediaFoundationPreviewService.DenoiseStrength = _denoiseStrength;
-        _mediaFoundationPreviewService.DenoiseHandledByPreviewRenderer = true;
-        _mediaFoundationPreviewService.ColorSettings = _colorSettings;
-        _mediaFoundationPreviewService.FrameAvailable += FallbackFrameAvailable;
-        _mediaFoundationPreviewService.StatusChanged += FallbackStatusChanged;
-        if (_mediaFoundationPreviewService.Start(_camera, _mode))
-        {
-            return true;
-        }
-
-        _mediaFoundationPreviewService.FrameAvailable -= FallbackFrameAvailable;
-        _mediaFoundationPreviewService.StatusChanged -= FallbackStatusChanged;
-        _mediaFoundationPreviewService.Stop();
-        failures.Add(_mediaFoundationPreviewService.LastRecordingDiagnostics ?? "Media Foundation CPU preview failed.");
-        HidePreviewHost();
-        return false;
-    }
-
-    private bool TryInitializeDirectShowFallback(
-        CameraDevice directShowCamera,
-        string description,
-        List<string> failures)
-    {
-        InitializeFallbackPreviewHost(description, Dx12CameraKind.DirectShowFallback);
-        _directShowPreviewService.DenoiseEnabled = _denoiseEnabled;
-        _directShowPreviewService.DenoiseStrength = _denoiseStrength;
-        _directShowPreviewService.ColorSettings = _colorSettings;
-        _directShowPreviewService.FrameAvailable += FallbackFrameAvailable;
-        _directShowPreviewService.StatusChanged += FallbackStatusChanged;
-        if (_directShowPreviewService.Start(directShowCamera, _mode))
-        {
-            return true;
-        }
-
-        _directShowPreviewService.FrameAvailable -= FallbackFrameAvailable;
-        _directShowPreviewService.StatusChanged -= FallbackStatusChanged;
-        _directShowPreviewService.Stop();
-        failures.Add(_directShowPreviewService.LastStatus ?? $"{description} failed.");
-        HidePreviewHost();
-        return false;
-    }
-
-    private void InitializeFallbackPreviewHost(string description, Dx12CameraKind kind)
-    {
-        _kind = kind;
-        _fallbackDescription = description;
         _target.PreviewImage?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Collapsed);
         _target.Placeholder?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Visible);
         _target.StatusText?.SetCurrentValue(TextBlock.TextProperty, $"{_fallbackDescription} starting for {_target.Name}.");
@@ -713,87 +517,6 @@ public sealed class Dx12Camera : IDisposable
         }
 
         return stream.FramesRead > 0;
-    }
-
-    private TextureNativeRecordingResult? StopFallbackRecording(
-        string? path,
-        string? diagnostics,
-        int samplesWritten,
-        string pipeline)
-    {
-        _lastRecordingDiagnostics = diagnostics;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return null;
-        }
-
-        var bytesWritten = 0L;
-        try
-        {
-            if (File.Exists(path))
-            {
-                bytesWritten = new FileInfo(path).Length;
-            }
-        }
-        catch
-        {
-        }
-
-        var width = Width > 0 ? Width : 0;
-        var height = Height > 0 ? Height : 0;
-        var framesPerSecond = FramesPerSecond > 0d ? FramesPerSecond : 0d;
-        return new TextureNativeRecordingResult(
-            true,
-            path,
-            samplesWritten,
-            bytesWritten,
-            DeviceMode,
-            MediaSubtype,
-            width,
-            height,
-            framesPerSecond,
-            diagnostics ?? $"Saved {Path.GetFileName(path)}.",
-            pipeline,
-            _denoiseEnabled,
-            true);
-    }
-
-    private void CleanupTextureNativePreview()
-    {
-        var stream = _stream;
-        _stream = null;
-        if (stream is not null)
-        {
-            stream.FrameAvailable -= StreamFrameAvailable;
-            stream.TextureFrameAvailable -= StreamTextureFrameAvailable;
-            stream.StatusChanged -= StreamStatusChanged;
-        }
-
-        try
-        {
-            stream?.Dispose();
-        }
-        catch
-        {
-        }
-
-        Interlocked.Exchange(ref _pendingPreviewFrame, null)?.Dispose();
-        _textureFrameLeaseActive = false;
-        Volatile.Write(ref _previewRenderQueued, 0);
-        if (_dispatcher.CheckAccess())
-        {
-            HidePreviewHost();
-        }
-        else
-        {
-            try
-            {
-                _dispatcher.Invoke(HidePreviewHost);
-            }
-            catch
-            {
-            }
-        }
     }
 
     private bool Matches(CameraDevice camera, CameraVideoMode mode)
@@ -909,22 +632,6 @@ public sealed class Dx12Camera : IDisposable
         StatusChanged?.Invoke(this, status);
     }
 
-    private void FallbackFrameAvailable(object? sender, CameraFrame frame)
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        var rendererDenoiseEnabled = !frame.HasBgra && _denoiseEnabled;
-        RenderFallbackFrame(frame, _colorSettings, rendererDenoiseEnabled, _denoiseStrength);
-    }
-
-    private void FallbackStatusChanged(object? sender, string status)
-    {
-        StatusChanged?.Invoke(this, status);
-    }
-
     private void Dispose(bool disposing)
     {
         lock (_stateLock)
@@ -954,24 +661,11 @@ public sealed class Dx12Camera : IDisposable
         {
         }
 
-        _mediaFoundationPreviewService.FrameAvailable -= FallbackFrameAvailable;
-        _mediaFoundationPreviewService.StatusChanged -= FallbackStatusChanged;
-        _directShowPreviewService.FrameAvailable -= FallbackFrameAvailable;
-        _directShowPreviewService.StatusChanged -= FallbackStatusChanged;
-
-        if (disposing)
+        if (disposing && _fallbackStop is not null)
         {
             try
             {
-                _mediaFoundationPreviewService.Dispose();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                _directShowPreviewService.Dispose();
+                _fallbackStop();
             }
             catch
             {

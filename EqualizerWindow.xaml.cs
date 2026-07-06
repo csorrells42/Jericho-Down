@@ -77,6 +77,11 @@ public partial class EqualizerWindow : Window
         .ToArray();
     private static readonly double EqualizerHoverHalfPowerRatio = CalculateEqualizerHoverHalfPowerRatio();
     private readonly MicrophoneSpectrumService _spectrumService = new();
+    private readonly MediaFoundationCameraPreviewService _cameraPreviewService = new();
+    private readonly DirectShowCameraPreviewService _directShowPreviewService = new();
+    private readonly MediaFoundationCameraModeService _cameraModeService = new();
+    private readonly DirectShowCameraControlService _cameraControlService = new();
+    private readonly TextureNativePreviewFailureCache _textureNativePreviewFailureCache = new();
     private readonly AppSettingsState _appSettings = AppStateStore.LoadSettings();
     private readonly AppStartupRecovery _startupRecovery = AppStateStore.StartupRecovery;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
@@ -278,14 +283,25 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingCameraUi;
     private bool _isUpdatingCameraControls;
     private bool _isLoadingCameraModes;
+    private bool _isCameraFrameUpdateQueued;
+    private bool _isCameraServiceStopPending;
+    private bool _isDirectShowPreviewActive;
+    private int _cameraServiceStopOperationVersion;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = DenoiseDefaultStrength;
     private double _videoDenoiseSliderStrength = DenoiseDefaultStrength;
     private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
+    private CameraFrame? _pendingCameraFrame;
+    private WriteableBitmap? _cameraPreviewBitmap;
     private Dx12Camera? _dx12Camera;
-    private string? _lastCameraFallbackReason;
-    private TextureNativeRecordingResult? _lastCameraRecordingResult;
+    private TextureNativeFrameInfo? _pendingTextureNativeFrameInfo;
+    private Direct3D12PreviewHost? _direct3D12PreviewHost;
+    private string? _lastTextureNativeCameraError;
+    private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
+    private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private string? _lastPreviewRecordingDiagnostics;
+    private int _textureNativeFrameUpdateQueued;
+    private long _cameraBgraPreviewFrameNumber;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -376,6 +392,10 @@ public partial class EqualizerWindow : Window
         RecordingSignalCanvas.Children.Add(_recordingSignalTrace);
         _spectrumService.SpectrumAvailable += SpectrumAvailable;
         _spectrumService.StreamStatusChanged += SpectrumServiceStreamStatusChanged;
+        _cameraPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
+        _cameraPreviewService.StatusChanged += CameraPreviewStatusChanged;
+        _directShowPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
+        _directShowPreviewService.StatusChanged += CameraPreviewStatusChanged;
         _audioDeviceFormatTimer.Interval = AudioDeviceFormatPollInterval;
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
@@ -802,6 +822,11 @@ public partial class EqualizerWindow : Window
         return false;
     }
 
+    private static bool IsDirectShowCamera(CameraDevice camera)
+    {
+        return string.Equals(camera.Source, "DirectShow", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void ApplyDarkTitleBar()
     {
         try
@@ -1024,7 +1049,12 @@ public partial class EqualizerWindow : Window
         }
 
         StopSessionPlayback();
-        StopCameraStream();
+        _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
+        _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
+        _directShowPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
+        _directShowPreviewService.StatusChanged -= CameraPreviewStatusChanged;
+        _directShowPreviewService.Dispose();
+        StopTextureNativeCameraStream();
         Dx12Camera.CloseActive(collectGarbage: true);
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
@@ -1034,6 +1064,9 @@ public partial class EqualizerWindow : Window
             _waveform3DWindow = null;
         }
 
+        _textureNativeRecordingSession?.Dispose();
+        _textureNativeRecordingSession = null;
+        _cameraPreviewService.Dispose();
         _spectrumService.Dispose();
     }
 
@@ -1576,11 +1609,17 @@ public partial class EqualizerWindow : Window
         }
 
         var videoPath = GetActiveRecordingVideoPath();
-        var videoStarted = TryStartCameraRecording(videoPath);
+        var textureVideoStarted = TryStartTextureNativeRecording(videoPath);
+        var videoStarted = textureVideoStarted
+            || (_isCameraEnabled
+                && videoPath is not null
+                && StartActivePreviewRecording(videoPath));
 
-        RecordingStatusText.Text = videoStarted
+        RecordingStatusText.Text = textureVideoStarted
+            ? $"Recording GPU video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+            : videoStarted
                 ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
-                : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
+            : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
         UpdateRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
     }
@@ -1597,9 +1636,21 @@ public partial class EqualizerWindow : Window
             _recordingPausedDuration += DateTime.UtcNow - _recordingPausedAt;
             _recordingPausedAt = DateTime.MinValue;
             _isRecordingPaused = false;
-            if (_dx12Camera?.IsRecording == true)
+            if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
             {
                 _dx12Camera.ResumeMP4();
+            }
+            else if (_textureNativeRecordingSession is not null)
+            {
+                _textureNativeRecordingSession.Resume();
+            }
+            else if (IsSelectedDirectShowCamera())
+            {
+                _directShowPreviewService.ResumeRecording();
+            }
+            else
+            {
+                _cameraPreviewService.ResumeRecording();
             }
 
             RecordingStatusText.Text = "Recording resumed.";
@@ -1608,9 +1659,21 @@ public partial class EqualizerWindow : Window
         {
             _recordingPausedAt = DateTime.UtcNow;
             _isRecordingPaused = true;
-            if (_dx12Camera?.IsRecording == true)
+            if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
             {
                 _dx12Camera.PauseMP4();
+            }
+            else if (_textureNativeRecordingSession is not null)
+            {
+                _textureNativeRecordingSession.Pause();
+            }
+            else if (IsSelectedDirectShowCamera())
+            {
+                _directShowPreviewService.PauseRecording();
+            }
+            else
+            {
+                _cameraPreviewService.PauseRecording();
             }
 
             RecordingStatusText.Text = "Recording paused.";
@@ -1630,8 +1693,8 @@ public partial class EqualizerWindow : Window
         var sessionFolder = _activeRecordingSessionFolder;
         var setNumber = _activeRecordingSetNumber;
         _lastPreviewRecordingDiagnostics = null;
-        var cameraResult = StopCameraRecording();
-        var videoPath = cameraResult?.Path;
+        var textureResult = StopTextureNativeRecording();
+        var videoPath = textureResult?.Path ?? StopActivePreviewRecording();
         _isRecordingSession = false;
         _isRecordingPaused = false;
         _recordingPausedAt = DateTime.MinValue;
@@ -1641,17 +1704,17 @@ public partial class EqualizerWindow : Window
         RecordingTimerText.Text = "00:00:00";
         if (sessionFolder is not null)
         {
-            WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed, cameraResult);
+            WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed, textureResult);
         }
 
         _lastSessionRecordingPath = videoPath;
 
-        RecordingStatusText.Text = cameraResult is { Success: true }
-            ? cameraResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
-                ? $"Recording stopped at {FormatDuration(elapsed)}. Saved processed video {System.IO.Path.GetFileName(cameraResult.Path)} ({cameraResult.SamplesWritten} frames)."
-                : $"Recording stopped at {FormatDuration(elapsed)}. Saved {System.IO.Path.GetFileName(cameraResult.Path)} ({cameraResult.SamplesWritten} frames)."
-            : cameraResult is not null
-                ? $"Recording stopped at {FormatDuration(elapsed)}. Video recording issue: {cameraResult.Status}"
+        RecordingStatusText.Text = textureResult is { Success: true }
+            ? textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                ? $"Recording stopped at {FormatDuration(elapsed)}. GPU stream saved processed texture bridge video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} frames)."
+                : $"Recording stopped at {FormatDuration(elapsed)}. GPU saved raw texture-native video {System.IO.Path.GetFileName(textureResult.Path)} ({textureResult.SamplesWritten} samples)."
+            : textureResult is not null
+                ? $"Recording stopped at {FormatDuration(elapsed)}. GPU recording issue: {textureResult.Status}"
             : !string.IsNullOrWhiteSpace(videoPath)
             ? $"Recording stopped at {FormatDuration(elapsed)}. Saved {System.IO.Path.GetFileName(videoPath)}."
             : !string.IsNullOrWhiteSpace(_lastPreviewRecordingDiagnostics)
@@ -1666,77 +1729,169 @@ public partial class EqualizerWindow : Window
         UpdateSessionPlaybackTransportControls();
     }
 
+    private bool StartActivePreviewRecording(string videoPath)
+    {
+        var mode = GetSelectedCameraMode();
+        return IsSelectedDirectShowCamera()
+            ? _directShowPreviewService.StartRecording(videoPath, mode)
+            : _cameraPreviewService.StartRecording(videoPath, mode);
+    }
+
+    private string? StopActivePreviewRecording()
+    {
+        if (IsSelectedDirectShowCamera())
+        {
+            var path = _directShowPreviewService.StopRecording();
+            _lastPreviewRecordingDiagnostics = _directShowPreviewService.LastRecordingDiagnostics;
+            return path;
+        }
+
+        var mediaFoundationPath = _cameraPreviewService.StopRecording();
+        _lastPreviewRecordingDiagnostics = _cameraPreviewService.LastRecordingDiagnostics;
+        return mediaFoundationPath;
+    }
+
+    private bool IsSelectedDirectShowCamera()
+    {
+        return _isDirectShowPreviewActive
+            || CameraComboBox.SelectedItem is CameraDevice camera && IsDirectShowCamera(camera);
+    }
+
     private bool ShouldRecordProcessedTextureOutput()
     {
         return _pendingVideoDenoiseEnabled;
     }
 
-    private bool TryStartCameraRecording(string? videoPath)
+    private bool TryStartTextureNativeRecording(string? videoPath)
     {
-        _lastCameraRecordingResult = null;
-        _lastPreviewRecordingDiagnostics = null;
-        if (!_isCameraEnabled || string.IsNullOrWhiteSpace(videoPath))
+        _lastTextureNativeRecordingResult = null;
+        if (_dx12Camera?.IsTextureNative == true
+            && _isCameraEnabled
+            && !string.IsNullOrWhiteSpace(videoPath))
+        {
+            try
+            {
+                return _dx12Camera.WriteMP4(
+                    videoPath,
+                    ShouldRecordProcessedTextureOutput(),
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength);
+            }
+            catch (Exception ex)
+            {
+                RecordingStatusText.Text = $"Shared GPU recording path unavailable: {ex.Message}";
+                return false;
+            }
+        }
+
+        if (!ShouldUseTextureNativeRecording()
+            || !_isCameraEnabled
+            || string.IsNullOrWhiteSpace(videoPath)
+            || CameraComboBox.SelectedItem is not CameraDevice camera)
         {
             return false;
         }
 
-        var camera = _dx12Camera;
-        if (camera is null)
+        if (IsCpuCameraPreviewOwningCamera())
         {
-            StartCameraPreview();
-            camera = _dx12Camera;
-        }
-
-        if (camera is null)
-        {
+            _lastPreviewRecordingDiagnostics = "Recording reused the active preview camera owner instead of opening a second GPU capture path.";
             return false;
         }
 
         try
         {
-            return camera.WriteMP4(
+            _textureNativeRecordingSession = TextureNativeCameraRecorder.StartSession(
+                camera.Name,
+                GetSelectedCameraMode(),
                 videoPath,
-                ShouldRecordProcessedTextureOutput(),
-                _pendingVideoDenoiseEnabled,
-                _pendingVideoDenoiseStrength);
+                new TextureNativeRecordingOptions(
+                    ShouldRecordProcessedTextureOutput(),
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength));
+            return true;
         }
         catch (Exception ex)
         {
-            RecordingStatusText.Text = $"Camera recording path unavailable: {ex.Message}";
+            _textureNativeRecordingSession?.Dispose();
+            _textureNativeRecordingSession = null;
+            RecordingStatusText.Text = $"GPU recording path unavailable, falling back to CPU Media Foundation: {ex.Message}";
             return false;
         }
     }
 
-    private TextureNativeRecordingResult? StopCameraRecording()
+    private bool IsCpuCameraPreviewOwningCamera()
     {
-        var camera = _dx12Camera;
-        if (camera is null || !camera.IsRecording)
+        return _isCameraEnabled
+            && _dx12Camera?.IsTextureNative != true
+            && (_cameraPreviewService.IsRunning || _directShowPreviewService.IsRunning || _isDirectShowPreviewActive);
+    }
+
+    private static bool ShouldUseTextureNativeRecording()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
+        return IsEnabledEnvironmentValue(value);
+    }
+
+    private bool ShouldUseSharedTextureCameraStream()
+    {
+        if (_safeStartDx12Disabled)
+        {
+            return false;
+        }
+
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
+        return string.Equals(value, "force", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEnabledEnvironmentValue(string? value)
+    {
+        return string.Equals(value, "1", StringComparison.Ordinal)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private TextureNativeRecordingResult? StopTextureNativeRecording()
+    {
+        if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
+        {
+            try
+            {
+                _lastTextureNativeRecordingResult = _dx12Camera.StopMP4();
+                return _lastTextureNativeRecordingResult;
+            }
+            catch (Exception ex)
+            {
+                _lastTextureNativeRecordingResult = new TextureNativeRecordingResult(
+                    false,
+                    GetActiveRecordingVideoPath() ?? string.Empty,
+                    0,
+                    0,
+                    _dx12Camera.DeviceMode,
+                    _dx12Camera.MediaSubtype,
+                    _dx12Camera.Width,
+                    _dx12Camera.Height,
+                    _dx12Camera.FramesPerSecond,
+                    ex.Message);
+                return _lastTextureNativeRecordingResult;
+            }
+        }
+
+        var session = _textureNativeRecordingSession;
+        if (session is null)
         {
             return null;
         }
 
+        _textureNativeRecordingSession = null;
         try
         {
-            _lastCameraRecordingResult = camera.StopMP4();
-            _lastPreviewRecordingDiagnostics = camera.LastRecordingDiagnostics;
-            return _lastCameraRecordingResult;
+            _lastTextureNativeRecordingResult = session.Stop();
+            return _lastTextureNativeRecordingResult;
         }
-        catch (Exception ex)
+        finally
         {
-            _lastCameraRecordingResult = new TextureNativeRecordingResult(
-                false,
-                GetActiveRecordingVideoPath() ?? string.Empty,
-                0,
-                0,
-                camera.DeviceMode,
-                camera.MediaSubtype,
-                camera.Width,
-                camera.Height,
-                camera.FramesPerSecond,
-                ex.Message,
-                camera.RecordingPipelineDescription);
-            _lastPreviewRecordingDiagnostics = ex.Message;
-            return _lastCameraRecordingResult;
+            session.Dispose();
         }
     }
 
@@ -1853,9 +2008,28 @@ public partial class EqualizerWindow : Window
 
     private void DisposeActiveCameraForReinitialize()
     {
-        StopCameraStream();
+        StopTextureNativeCameraStream();
+        try
+        {
+            _cameraPreviewService.Stop();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            _directShowPreviewService.Stop();
+        }
+        catch
+        {
+        }
 
         _dx12Camera = null;
+        _isDirectShowPreviewActive = false;
+        _isCameraFrameUpdateQueued = false;
+        _pendingCameraFrame = null;
+        _pendingTextureNativeFrameInfo = null;
         ClearPodcastCameraPreviewSurface();
         ClearKaraokeVideoPreviewBitmap();
         GC.Collect();
@@ -1873,9 +2047,9 @@ public partial class EqualizerWindow : Window
         _isUpdatingCameraUi = true;
         try
         {
-            CameraEnabledToggle.IsEnabled = _cameraAvailable;
-            CameraComboBox.IsEnabled = _cameraAvailable;
-            CameraModeComboBox.IsEnabled = _cameraAvailable && CameraModeComboBox.Items.Count > 0;
+            CameraEnabledToggle.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
+            CameraComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
+            CameraModeComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending && CameraModeComboBox.Items.Count > 0;
 
             if (!_cameraAvailable)
             {
@@ -1898,6 +2072,11 @@ public partial class EqualizerWindow : Window
         finally
         {
             _isUpdatingCameraUi = false;
+        }
+
+        if (_isCameraServiceStopPending)
+        {
+            return;
         }
 
         if (_isCameraEnabled)
@@ -1931,42 +2110,182 @@ public partial class EqualizerWindow : Window
         StopSessionPlayback();
 
         CameraPlaceholder.Visibility = Visibility.Collapsed;
-        CameraPreviewImage.Visibility = Visibility.Collapsed;
+        CameraPreviewImage.Visibility = Visibility.Visible;
+
         var mode = CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
-        _lastCameraFallbackReason = null;
+        if (ShouldUseSharedTextureCameraStream())
+        {
+            if (_textureNativePreviewFailureCache.TryGetFailure(camera, mode, out var cachedTextureFailure))
+            {
+                _lastTextureNativeCameraError = cachedTextureFailure;
+                CameraPreviewStatusText.Text = $"Shared GPU stream skipped for {camera.Name}: {cachedTextureFailure}";
+            }
+            else if (StartTextureNativeCameraStream(camera, mode))
+            {
+                _textureNativePreviewFailureCache.ForgetFailure(camera, mode);
+                return;
+            }
+            else
+            {
+                _textureNativePreviewFailureCache.RememberFailure(
+                    camera,
+                    mode,
+                    _lastTextureNativeCameraError ?? "shared texture preview attempt failed");
+            }
+
+            CameraPreviewStatusText.Text = $"Shared GPU stream unavailable; trying CPU preview for {camera.Name}: {_lastTextureNativeCameraError ?? "unknown error"}";
+        }
+
+        StopTextureNativeCameraStream();
+        _directShowPreviewService.Stop();
+        _isDirectShowPreviewActive = false;
+        HideDirect3D12PreviewHost();
+        CameraPreviewImage.Visibility = Visibility.Visible;
+
+        if (IsDirectShowCamera(camera))
+        {
+            if (TryStartDirectShowPreview(camera, camera, mode, isFallback: false))
+            {
+                return;
+            }
+
+            _isCameraEnabled = false;
+            StopCameraPreview(_directShowPreviewService.LastStatus ?? $"Could not open DirectShow preview for {camera.Name}");
+            UpdateCameraEnabledState();
+            return;
+        }
+
+        if (!_cameraPreviewService.IsAvailable)
+        {
+            if (TryStartDirectShowFallbackPreview(camera, mode))
+            {
+                return;
+            }
+
+            _isCameraEnabled = false;
+            StopCameraPreview("Windows Media Foundation camera preview is unavailable");
+            UpdateCameraEnabledState();
+            return;
+        }
+
+        _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
+        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
+        if (_cameraPreviewService.Start(camera, mode))
+        {
+            _isDirectShowPreviewActive = false;
+            ClaimFallbackCameraOwner(
+                camera,
+                mode,
+                "Media Foundation CPU preview",
+                () => _cameraPreviewService.Stop());
+            CameraPreviewStatusText.Text = FormatCameraStatus("Starting", camera, mode);
+            return;
+        }
+
+        if (_pendingVideoDenoiseEnabled)
+        {
+            _cameraPreviewService.DenoiseEnabled = false;
+            if (_cameraPreviewService.Start(camera, mode))
+            {
+                _isDirectShowPreviewActive = false;
+                ClaimFallbackCameraOwner(
+                    camera,
+                    mode,
+                    "Media Foundation CPU preview with denoise bypassed",
+                    () => _cameraPreviewService.Stop());
+                CameraPreviewStatusText.Text = $"{FormatCameraStatus("Starting", camera, mode)} - denoise bypassed because the camera rejected it";
+                return;
+            }
+        }
+
+        if (TryStartDirectShowFallbackPreview(camera, mode))
+        {
+            return;
+        }
+
+        _isCameraEnabled = false;
+        StopCameraPreview($"Could not open preview for {camera.Name}");
+        UpdateCameraEnabledState();
+    }
+
+    private bool TryStartDirectShowFallbackPreview(CameraDevice primaryCamera, CameraVideoMode mode)
+    {
+        var fallback = primaryCamera.FallbackDevice;
+        return fallback is not null
+            && IsDirectShowCamera(fallback)
+            && TryStartDirectShowPreview(primaryCamera, fallback, mode, isFallback: true);
+    }
+
+    private bool TryStartDirectShowPreview(
+        CameraDevice displayCamera,
+        CameraDevice directShowCamera,
+        CameraVideoMode mode,
+        bool isFallback)
+    {
+        _cameraPreviewService.Stop();
+        _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
+        CameraPreviewStatusText.Text = isFallback
+            ? $"Starting DirectShow fallback for {displayCamera.Name}"
+            : $"Starting DirectShow preview for {directShowCamera.Name}";
+        if (_directShowPreviewService.Start(directShowCamera, mode))
+        {
+            _isDirectShowPreviewActive = true;
+            ClaimFallbackCameraOwner(
+                displayCamera,
+                mode,
+                isFallback ? "DirectShow CPU fallback preview" : "DirectShow CPU preview",
+                () => _directShowPreviewService.Stop());
+            CameraPreviewStatusText.Text = isFallback
+                ? $"{FormatCameraStatus("Starting", displayCamera, mode)} - DirectShow fallback"
+                : FormatCameraStatus("Starting", displayCamera, mode);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
+    {
+        _lastTextureNativeCameraError = null;
+        _cameraPreviewService.Stop();
+        _directShowPreviewService.Stop();
+        _isDirectShowPreviewActive = false;
+        _isCameraFrameUpdateQueued = false;
+        _pendingCameraFrame = null;
+        _cameraPreviewBitmap = null;
         CameraPreviewImage.Source = null;
         CameraPreviewImage.Visibility = Visibility.Collapsed;
         CameraPlaceholder.Visibility = Visibility.Visible;
-        CameraPreviewStatusText.Text = $"{FormatCameraStatus("Camera starting", camera, mode)} - choosing best pipeline";
+        CameraPreviewStatusText.Text = $"{FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames";
 
         try
         {
-            StopCameraStream();
+            HideDirect3D12PreviewHost();
             if (_dx12Camera is null)
             {
-                var dx12Camera = new Dx12Camera(
-                    camera,
-                    mode,
-                    CreateActiveDx12CameraPreviewTarget(),
-                    preferTextureNative: !_safeStartDx12Disabled);
+                var dx12Camera = new Dx12Camera(camera, mode, CreateActiveDx12CameraPreviewTarget());
                 dx12Camera.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
-                dx12Camera.SetColorSettings(_pendingVideoColorSettings);
                 AttachDx12Camera(dx12Camera);
-                _lastCameraFallbackReason = dx12Camera.LastTextureNativeError;
-                CameraPreviewStatusText.Text = $"{FormatCameraStatus("Live", camera, mode)} - {dx12Camera.PreviewPathDescription}";
             }
             else
             {
                 ShutDownBecauseCameraWasNotDead();
-                return;
+                return false;
             }
+
+            _isDirectShowPreviewActive = false;
+            return true;
         }
         catch (Exception ex)
         {
-            _lastCameraFallbackReason = ex.Message;
-            _isCameraEnabled = false;
-            StopCameraPreview($"Could not open preview for {camera.Name}: {ex.Message}");
-            UpdateCameraEnabledState();
+            _lastTextureNativeCameraError = ex.Message;
+            StopTextureNativeCameraStream();
+            CameraPreviewStatusText.Text = $"Shared GPU stream unavailable: {ex.Message}";
+            return false;
         }
     }
 
@@ -1979,7 +2298,8 @@ public partial class EqualizerWindow : Window
 
         DetachDx12Camera();
         _dx12Camera = camera;
-        camera.StatusChanged += CameraStatusChanged;
+        camera.FrameAvailable += TextureNativeCameraFrameAvailable;
+        camera.StatusChanged += TextureNativeCameraStatusChanged;
     }
 
     private void DetachDx12Camera()
@@ -1990,8 +2310,31 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        camera.StatusChanged -= CameraStatusChanged;
+        camera.FrameAvailable -= TextureNativeCameraFrameAvailable;
+        camera.StatusChanged -= TextureNativeCameraStatusChanged;
         _dx12Camera = null;
+    }
+
+    private void ClaimFallbackCameraOwner(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        string fallbackDescription,
+        Action fallbackStop)
+    {
+        if (_dx12Camera is null)
+        {
+            var owner = Dx12Camera.ClaimFallback(
+                camera,
+                mode,
+                CreateActiveDx12CameraPreviewTarget(),
+                fallbackDescription,
+                fallbackStop);
+            AttachDx12Camera(owner);
+        }
+        else
+        {
+            ShutDownBecauseCameraWasNotDead();
+        }
     }
 
     private void ShutDownBecauseCameraWasNotDead()
@@ -2043,6 +2386,7 @@ public partial class EqualizerWindow : Window
 
     private void ClearPodcastCameraPreviewSurface()
     {
+        _cameraPreviewBitmap = null;
         if (CameraPreviewImage is not null)
         {
             CameraPreviewImage.Source = null;
@@ -2062,19 +2406,85 @@ public partial class EqualizerWindow : Window
 
     private void StopCameraPreview(string status)
     {
-        StopCameraStream();
+        StopTextureNativeCameraStream();
+        _isCameraFrameUpdateQueued = false;
+        _isDirectShowPreviewActive = false;
+        _pendingCameraFrame = null;
+        _cameraPreviewBitmap = null;
         CameraPreviewImage.Source = null;
         CameraPreviewImage.Visibility = Visibility.Collapsed;
         CameraPlaceholder.Visibility = Visibility.Visible;
         CameraPreviewStatusText.Text = status;
         ClearKaraokeVideoPreviewBitmap();
+        StopCameraPreviewServicesInBackground(status);
     }
 
-    private void StopCameraStream()
+    private void StopCameraPreviewServicesInBackground(string idleStatus)
+    {
+        if (_isCameraServiceStopPending)
+        {
+            CameraPreviewStatusText.Text = idleStatus;
+            return;
+        }
+
+        var operationVersion = System.Threading.Interlocked.Increment(ref _cameraServiceStopOperationVersion);
+        _isCameraServiceStopPending = true;
+        UpdateCameraEnabledState();
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                _cameraPreviewService.Stop();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                _directShowPreviewService.Stop();
+            }
+            catch
+            {
+            }
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (operationVersion != System.Threading.Volatile.Read(ref _cameraServiceStopOperationVersion))
+                {
+                    return;
+                }
+
+                _isCameraServiceStopPending = false;
+                _isUpdatingCameraUi = true;
+                try
+                {
+                    CameraEnabledToggle.IsEnabled = _cameraAvailable;
+                    CameraComboBox.IsEnabled = _cameraAvailable;
+                    CameraModeComboBox.IsEnabled = _cameraAvailable && CameraModeComboBox.Items.Count > 0;
+                    CameraEnabledToggle.IsChecked = _isCameraEnabled;
+                    CameraEnabledToggle.Content = _isCameraEnabled ? "Camera On" : _cameraAvailable ? "Camera Off" : "No Camera";
+                }
+                finally
+                {
+                    _isUpdatingCameraUi = false;
+                }
+
+                if (!_isCameraEnabled)
+                {
+                    CameraPreviewStatusText.Text = idleStatus;
+                }
+            }, DispatcherPriority.Background);
+        });
+    }
+
+    private void StopTextureNativeCameraStream()
     {
         var camera = _dx12Camera;
         if (camera is null)
         {
+            HideDirect3D12PreviewHost();
             return;
         }
 
@@ -2083,14 +2493,169 @@ public partial class EqualizerWindow : Window
         {
             if (camera.IsRecording)
             {
-                _lastCameraRecordingResult = camera.StopMP4();
-                _lastPreviewRecordingDiagnostics = camera.LastRecordingDiagnostics;
+                _lastTextureNativeRecordingResult = camera.StopMP4();
             }
         }
         finally
         {
             Dx12Camera.CloseActive(collectGarbage: false);
+            _pendingTextureNativeFrameInfo = null;
+            System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
         }
+    }
+
+    private void ShowDirect3D12PreviewHost(IntPtr nativeD3D12Device)
+    {
+        if (CameraPreviewSurfaceGrid is null)
+        {
+            if (nativeD3D12Device != IntPtr.Zero)
+            {
+                System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
+            }
+
+            return;
+        }
+
+        if (_direct3D12PreviewHost is null)
+        {
+            _direct3D12PreviewHost = new Direct3D12PreviewHost(nativeD3D12Device)
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            _direct3D12PreviewHost.StatusChanged += Direct3D12PreviewHostStatusChanged;
+            CameraPreviewSurfaceGrid.Children.Insert(1, _direct3D12PreviewHost);
+        }
+        else if (nativeD3D12Device != IntPtr.Zero)
+        {
+            System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
+        }
+
+        _direct3D12PreviewHost.Visibility = Visibility.Visible;
+    }
+
+    private void HideDirect3D12PreviewHost()
+    {
+        var host = _direct3D12PreviewHost;
+        if (host is null)
+        {
+            return;
+        }
+
+        _direct3D12PreviewHost = null;
+        host.StatusChanged -= Direct3D12PreviewHostStatusChanged;
+        if (CameraPreviewSurfaceGrid is not null)
+        {
+            CameraPreviewSurfaceGrid.Children.Remove(host);
+        }
+
+        host.Dispose();
+    }
+
+    private void Direct3D12PreviewHostStatusChanged(object? sender, string status)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isCameraEnabled && IsPodcastTabSelected())
+            {
+                CameraPreviewStatusText.Text = status;
+            }
+        });
+    }
+
+    private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
+    {
+        _pendingCameraFrame = frame;
+        if (_isCameraFrameUpdateQueued)
+        {
+            return;
+        }
+
+        _isCameraFrameUpdateQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            var latestFrame = _pendingCameraFrame;
+            _pendingCameraFrame = null;
+            _isCameraFrameUpdateQueued = false;
+
+            if (latestFrame is null || !_isCameraEnabled)
+            {
+                return;
+            }
+
+            if (_dx12Camera?.IsFallback == true)
+            {
+                _dx12Camera.RenderFallbackFrame(
+                    latestFrame,
+                    _pendingVideoColorSettings,
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength);
+                return;
+            }
+
+            if (!IsPodcastTabSelected())
+            {
+                return;
+            }
+
+            ClearKaraokeVideoPreviewBitmap();
+            if (_direct3D12PreviewHost?.IsReady == true)
+            {
+                _direct3D12PreviewHost.RenderBgraFrame(
+                    latestFrame,
+                    System.Threading.Interlocked.Increment(ref _cameraBgraPreviewFrameNumber),
+                    _pendingVideoColorSettings,
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength);
+                CameraPreviewImage.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                if (latestFrame.HasBgra)
+                {
+                    UpdateCameraPreviewBitmap(latestFrame);
+                    CameraPreviewImage.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    CameraPreviewImage.Visibility = Visibility.Collapsed;
+                }
+            }
+
+            CameraPlaceholder.Visibility = Visibility.Collapsed;
+
+            if (CameraComboBox.SelectedItem is CameraDevice camera)
+            {
+                var renderer = _direct3D12PreviewHost?.IsReady == true
+                    ? latestFrame.HasNv12 ? "DX12 NV12" : "DX12 BGRA"
+                    : latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
+                var status = $"{FormatCameraStatus("Live", camera, GetSelectedCameraMode())} - {renderer}";
+                CameraPreviewStatusText.Text = status;
+            }
+        });
+    }
+
+    private void UpdateCameraPreviewBitmap(CameraFrame frame)
+    {
+        if (_cameraPreviewBitmap is null
+            || _cameraPreviewBitmap.PixelWidth != frame.Width
+            || _cameraPreviewBitmap.PixelHeight != frame.Height)
+        {
+            _cameraPreviewBitmap = new WriteableBitmap(
+                frame.Width,
+                frame.Height,
+                96,
+                96,
+                PixelFormats.Bgra32,
+                null);
+            CameraPreviewImage.Source = _cameraPreviewBitmap;
+        }
+
+        _cameraPreviewBitmap.WritePixels(
+            new Int32Rect(0, 0, frame.Width, frame.Height),
+            frame.BgraBytes,
+            frame.Stride,
+            0);
     }
 
     private void KaraokeRecordVideoChanged(object sender, RoutedEventArgs e)
@@ -2169,7 +2734,40 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void CameraStatusChanged(object? sender, string status)
+    private void TextureNativeCameraFrameAvailable(object? sender, TextureNativeFrameInfo frame)
+    {
+        System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, frame);
+        if (System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) != 0)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
+    }
+
+    private void ProcessPendingTextureNativeFrame()
+    {
+        var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, null);
+        if (frame is not null && _isCameraEnabled && IsPodcastTabSelected())
+        {
+            CameraPreviewImage.Visibility = Visibility.Collapsed;
+            CameraPlaceholder.Visibility = Visibility.Visible;
+
+            if (CameraComboBox.SelectedItem is CameraDevice camera)
+            {
+                CameraPreviewStatusText.Text = FormatTextureNativeCameraStatus("GPU stream live", camera, frame);
+            }
+        }
+
+        System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+        if (System.Threading.Volatile.Read(ref _pendingTextureNativeFrameInfo) is not null
+            && System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) == 0)
+        {
+            Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
+        }
+    }
+
+    private void TextureNativeCameraStatusChanged(object? sender, string status)
     {
         Dispatcher.BeginInvoke(() =>
         {
@@ -2205,14 +2803,14 @@ public partial class EqualizerWindow : Window
         CameraModeComboBox.SelectedIndex = 0;
         CameraModeComboBox.IsEnabled = false;
 
-        if (CameraComboBox.SelectedItem is not CameraDevice camera || !Dx12Camera.CameraModesAvailable)
+        if (CameraComboBox.SelectedItem is not CameraDevice camera || !_cameraModeService.IsAvailable)
         {
             _isLoadingCameraModes = false;
             UpdateCameraEnabledState();
             return;
         }
 
-        if (Dx12Camera.IsDirectShowCamera(camera))
+        if (IsDirectShowCamera(camera))
         {
             _isLoadingCameraModes = false;
             CameraModeComboBox.IsEnabled = true;
@@ -2226,7 +2824,7 @@ public partial class EqualizerWindow : Window
         try
         {
             CameraPreviewStatusText.Text = $"Loading modes: {camera.Name} - selected mode: {FormatCameraMode(GetSelectedCameraMode())}";
-            var modes = await Dx12Camera.GetModesAsync(camera, cancellationToken);
+            var modes = await _cameraModeService.GetModesAsync(camera, cancellationToken);
             if (cancellationToken.IsCancellationRequested)
             {
                 return;
@@ -2248,6 +2846,19 @@ public partial class EqualizerWindow : Window
                 }
             }
         }
+    }
+
+    private void CameraPreviewStatusChanged(object? sender, string status)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isCameraEnabled)
+            {
+                CameraPreviewStatusText.Text = CameraComboBox.SelectedItem is CameraDevice camera
+                    ? $"{FormatCameraStatus("Preview", camera, GetSelectedCameraMode())} - {status}"
+                    : status;
+            }
+        });
     }
 
     private CameraVideoMode GetSelectedCameraMode()
@@ -2276,6 +2887,18 @@ public partial class EqualizerWindow : Window
         return $"{state}: {camera.Name} at {FormatCameraMode(mode)}";
     }
 
+    private string FormatTextureNativeCameraStatus(string state, CameraDevice camera, TextureNativeFrameInfo frame)
+    {
+        var textureStatus = _dx12Camera?.TextureFrameLeaseActive == true ? "texture lease active" : "waiting for texture lease";
+        var presenterStatus = _dx12Camera?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
+        var previewPathStatus = _dx12Camera?.PreviewPathDescription ?? "DX12 preview path pending";
+        var denoiseStatus = _pendingVideoDenoiseEnabled
+            ? $"DX12 denoise {_pendingVideoDenoiseStrength:0.0}"
+            : "DX12 denoise off";
+        var recordingStatus = ShouldRecordProcessedTextureOutput() ? "recording follows denoise" : "raw recording";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
+    }
+
     private static string FormatCameraMode(CameraVideoMode mode)
     {
         return mode.IsAuto ? "Auto mode" : mode.Label;
@@ -2296,7 +2919,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var controls = Dx12Camera.GetControls(camera);
+        var controls = _cameraControlService.GetControls(camera);
         if (controls.Count == 0)
         {
             CameraControlStatusText.Text = "No standard Windows camera controls were exposed by this source.";
@@ -2564,7 +3187,7 @@ public partial class EqualizerWindow : Window
 
     private bool SetCameraControl(CameraDevice camera, CameraControlItem control, int value, bool isAuto)
     {
-        var success = Dx12Camera.SetControl(camera, control, value, isAuto);
+        var success = _cameraControlService.SetControl(camera, control, value, isAuto);
         if (!success)
         {
             CameraControlStatusText.Text = $"Could not set {control.Name}. The camera may be busy or this control may be locked by its driver.";
@@ -2608,6 +3231,11 @@ public partial class EqualizerWindow : Window
 
         _pendingVideoDenoiseStrength = effectiveStrength;
         _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+        _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
+        _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
+        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
 
         if (VideoDenoiseValueText is not null)
         {
@@ -2659,7 +3287,7 @@ public partial class EqualizerWindow : Window
             Math.Clamp(VideoContrastSlider.Value, VideoContrastSlider.Minimum, VideoContrastSlider.Maximum),
             Math.Clamp(VideoSaturationSlider.Value, VideoSaturationSlider.Minimum, VideoSaturationSlider.Maximum),
             Math.Clamp(VideoWarmthSlider.Value, VideoWarmthSlider.Minimum, VideoWarmthSlider.Maximum));
-        _dx12Camera?.SetColorSettings(_pendingVideoColorSettings);
+        ApplyVideoColorSettingsToCpuServices();
         UpdateVideoColorValueText();
 
         if (!_isCameraEnabled || CameraControlStatusText is null)
@@ -2678,6 +3306,12 @@ public partial class EqualizerWindow : Window
         CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
             ? "Color polish is live on the DX12 preview shader and recording path."
             : "Color polish is neutral on the preview and recording path.";
+    }
+
+    private void ApplyVideoColorSettingsToCpuServices()
+    {
+        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
+        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
     }
 
     private void UpdateVideoColorValueText()
@@ -2875,7 +3509,13 @@ public partial class EqualizerWindow : Window
                 denoiseSliderStrength = _videoDenoiseSliderStrength,
                 denoiseStrength = _pendingVideoDenoiseStrength,
                 video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
-                engine = _dx12Camera?.RecordingPipelineDescription,
+                engine = textureResult is not null
+                    ? _dx12Camera?.IsTextureNative == true
+                        ? "Windows Media Foundation shared texture-native GPU stream"
+                        : "Windows Media Foundation texture-native GPU samples"
+                    : IsSelectedDirectShowCamera()
+                        ? "DirectShow CPU frames with Media Foundation MP4 writer"
+                        : "Windows Media Foundation CPU frames",
                 videoProcessing = BuildVideoProcessingMetadata(textureResult),
                 textureNative = textureResult is null
                     ? null
@@ -2907,21 +3547,19 @@ public partial class EqualizerWindow : Window
         {
             return new
             {
-                previewPipeline = _dx12Camera?.PreviewPathDescription ?? "Camera preview path unavailable",
+                previewPipeline = "Direct3D 12 NV12 shader preview",
                 previewRenderPath = _dx12Camera?.PreviewPathDescription ?? "DX12 preview path unavailable",
                 previewDenoiseApplied = _pendingVideoDenoiseEnabled,
                 previewDenoiseSliderStrength = _videoDenoiseSliderStrength,
                 previewDenoiseStrength = _pendingVideoDenoiseStrength,
-                previewColorPolishApplied = _dx12Camera?.IsFallback == true && _pendingVideoColorSettings.HasVisibleAdjustments,
+                previewColorPolishApplied = false,
                 previewColorPolish = CreateVideoColorMetadata(),
                 recordingPipeline = textureResult.RecordingPipeline,
                 recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
                 recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
-                recordingColorPolishApplied = _dx12Camera?.IsFallback == true && _pendingVideoColorSettings.HasVisibleAdjustments,
-                recordingMatchesPreviewColor = _dx12Camera?.IsFallback == true || !_pendingVideoColorSettings.HasVisibleAdjustments,
-                note = _dx12Camera?.IsFallback == true
-                    ? "Preview and recording were handled by the camera fallback pipeline."
-                    : _pendingVideoColorSettings.HasVisibleAdjustments
+                recordingColorPolishApplied = false,
+                recordingMatchesPreviewColor = !_pendingVideoColorSettings.HasVisibleAdjustments,
+                note = _pendingVideoColorSettings.HasVisibleAdjustments
                     ? "Color polish is CPU-only in this build; the saved texture-native video is raw color output."
                     : textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
                     ? "Texture-native recording matched the preview denoise setting through the processed bridge."
@@ -2931,15 +3569,16 @@ public partial class EqualizerWindow : Window
             };
         }
 
+        var isDirectShow = IsSelectedDirectShowCamera();
         return new
         {
-            previewPipeline = _dx12Camera?.RecordingPipelineDescription ?? "Camera pipeline unavailable",
+            previewPipeline = FormatCpuCameraPreviewPipeline(isDirectShow),
             previewDenoiseApplied = _pendingVideoDenoiseEnabled,
             previewDenoiseSliderStrength = _videoDenoiseSliderStrength,
             previewDenoiseStrength = _pendingVideoDenoiseStrength,
             previewColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
             previewColorPolish = CreateVideoColorMetadata(),
-            recordingPipeline = _dx12Camera?.RecordingPipelineDescription ?? "Camera pipeline unavailable",
+            recordingPipeline = isDirectShow ? "DirectShow CPU frames to Media Foundation MP4 writer" : "Media Foundation CPU frame writer",
             recordingDenoiseApplied = _pendingVideoDenoiseEnabled,
             recordingMatchesPreviewDenoise = true,
             recordingColorPolishApplied = _pendingVideoColorSettings.HasVisibleAdjustments,
@@ -3916,15 +4555,21 @@ public partial class EqualizerWindow : Window
 
     private (int Offered, int Written, int Skipped) GetActiveRecordingCounters()
     {
-        if (_dx12Camera?.IsRecording == true)
+        if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
         {
-            return (
-                _dx12Camera.RecordingFramesOffered,
-                _dx12Camera.RecordingFramesWritten,
-                _dx12Camera.RecordingFramesSkipped);
+            var written = _dx12Camera.SamplesWritten;
+            return (written, written, 0);
         }
 
-        return (0, 0, 0);
+        if (_textureNativeRecordingSession is not null)
+        {
+            var written = _textureNativeRecordingSession.SamplesWritten;
+            return (written, written, 0);
+        }
+
+        return IsSelectedDirectShowCamera()
+            ? (_directShowPreviewService.RecordingFramesOffered, _directShowPreviewService.RecordingFramesWritten, _directShowPreviewService.RecordingFramesSkipped)
+            : (_cameraPreviewService.RecordingFramesOffered, _cameraPreviewService.RecordingFramesWritten, _cameraPreviewService.RecordingFramesSkipped);
     }
 
     private string GetRecordingDiskStatus()
@@ -4010,16 +4655,27 @@ public partial class EqualizerWindow : Window
             return $"{previewPath}; recording {(ShouldRecordProcessedTextureOutput() ? "grain reduction bridge" : "raw texture-native")}{colorStatus}";
         }
 
-        if (_dx12Camera is not null)
+        if (IsSelectedDirectShowCamera())
         {
-            var fallback = string.IsNullOrWhiteSpace(_lastCameraFallbackReason)
-                ? string.Empty
-                : $" after DX12 fallback ({_lastCameraFallbackReason})";
-            var color = _pendingVideoColorSettings.HasVisibleAdjustments ? "; color polish active" : string.Empty;
-            return $"{_dx12Camera.PreviewPathDescription}; recording {_dx12Camera.RecordingPipelineDescription}{color}{fallback}";
+            return _pendingVideoColorSettings.HasVisibleAdjustments
+                ? $"{FormatCpuCameraPreviewPipeline(isDirectShow: true)} + color; Media Foundation MP4 writer"
+                : $"{FormatCpuCameraPreviewPipeline(isDirectShow: true)}; Media Foundation MP4 writer";
         }
 
-        return "camera starting";
+        var fallback = string.IsNullOrWhiteSpace(_lastTextureNativeCameraError)
+            ? string.Empty
+            : $" after DX12 shared stream fallback ({_lastTextureNativeCameraError})";
+        var color = _pendingVideoColorSettings.HasVisibleAdjustments ? " + color" : string.Empty;
+        return $"{FormatCpuCameraPreviewPipeline(isDirectShow: false)}{color}; Media Foundation MP4 writer{fallback}";
+    }
+
+    private string FormatCpuCameraPreviewPipeline(bool isDirectShow)
+    {
+        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation NV12/BGRA CPU frames";
+        var presentationPath = _direct3D12PreviewHost?.IsReady == true
+            ? isDirectShow ? "DX12 BGRA presentation" : "DX12 NV12/BGRA presentation"
+            : "WPF BGRA presentation";
+        return $"{capturePath} -> {presentationPath}";
     }
 
     private TimeSpan GetRecordingElapsed()
