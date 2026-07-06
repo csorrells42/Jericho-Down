@@ -13,6 +13,7 @@ public sealed class Dx12Camera : IDisposable
     private static readonly object ActiveLock = new();
     private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(2);
     private const int PumpWarningFrameReplacementInterval = 50;
+    private static readonly long PumpWarningFrameReplacementWindowTicks = TimeSpan.FromSeconds(2).Ticks;
     private static readonly Dictionary<string, string> TextureNativePreviewFailures = new(StringComparer.OrdinalIgnoreCase);
     private static Dx12Camera? _active;
 
@@ -1024,6 +1025,7 @@ public sealed class Dx12Camera : IDisposable
         private TextureNativeFrameInfo? _pendingFrame;
         private int _frameUpdateQueued;
         private int _framesReplacedSinceWarning;
+        private long _replacementWindowStartTicks;
         private int _warningQueued;
 
         public TextureNativeStatusPump(
@@ -1056,6 +1058,7 @@ public sealed class Dx12Camera : IDisposable
             _pendingFrame = null;
             Volatile.Write(ref _frameUpdateQueued, 0);
             Volatile.Write(ref _framesReplacedSinceWarning, 0);
+            Volatile.Write(ref _replacementWindowStartTicks, 0);
         }
 
         private void ProcessPendingFrame()
@@ -1076,15 +1079,27 @@ public sealed class Dx12Camera : IDisposable
 
         private void TrackFrameReplacement(string pumpName)
         {
+            var nowTicks = DateTime.UtcNow.Ticks;
+            if (Volatile.Read(ref _replacementWindowStartTicks) == 0)
+            {
+                Interlocked.CompareExchange(ref _replacementWindowStartTicks, nowTicks, 0);
+            }
+
             var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
             if (replaced < PumpWarningFrameReplacementInterval)
             {
                 return;
             }
 
-            if (Interlocked.Exchange(ref _framesReplacedSinceWarning, 0) >= PumpWarningFrameReplacementInterval)
+            var startTicks = Volatile.Read(ref _replacementWindowStartTicks);
+            var elapsedTicks = Math.Max(0, nowTicks - startTicks);
+            Interlocked.Exchange(ref _framesReplacedSinceWarning, 0);
+            Volatile.Write(ref _replacementWindowStartTicks, nowTicks);
+
+            if (elapsedTicks <= PumpWarningFrameReplacementWindowTicks)
             {
-                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames before the UI caught up.");
+                var elapsedSeconds = TimeSpan.FromTicks(elapsedTicks).TotalSeconds;
+                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames in {elapsedSeconds:0.0}s before the UI caught up.");
             }
         }
 
@@ -1111,6 +1126,7 @@ public sealed class Dx12Camera : IDisposable
         private CameraFrame? _pendingFrame;
         private bool _frameUpdateQueued;
         private int _framesReplacedSinceWarning;
+        private long _replacementWindowStartTicks;
         private int _warningQueued;
 
         public CpuPreviewFramePump(
@@ -1151,19 +1167,32 @@ public sealed class Dx12Camera : IDisposable
             _frameUpdateQueued = false;
             _pendingFrame = null;
             Volatile.Write(ref _framesReplacedSinceWarning, 0);
+            Volatile.Write(ref _replacementWindowStartTicks, 0);
         }
 
         private void TrackFrameReplacement(string pumpName)
         {
+            var nowTicks = DateTime.UtcNow.Ticks;
+            if (Volatile.Read(ref _replacementWindowStartTicks) == 0)
+            {
+                Interlocked.CompareExchange(ref _replacementWindowStartTicks, nowTicks, 0);
+            }
+
             var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
             if (replaced < PumpWarningFrameReplacementInterval)
             {
                 return;
             }
 
-            if (Interlocked.Exchange(ref _framesReplacedSinceWarning, 0) >= PumpWarningFrameReplacementInterval)
+            var startTicks = Volatile.Read(ref _replacementWindowStartTicks);
+            var elapsedTicks = Math.Max(0, nowTicks - startTicks);
+            Interlocked.Exchange(ref _framesReplacedSinceWarning, 0);
+            Volatile.Write(ref _replacementWindowStartTicks, nowTicks);
+
+            if (elapsedTicks <= PumpWarningFrameReplacementWindowTicks)
             {
-                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames before the UI caught up.");
+                var elapsedSeconds = TimeSpan.FromTicks(elapsedTicks).TotalSeconds;
+                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames in {elapsedSeconds:0.0}s before the UI caught up.");
             }
         }
 
