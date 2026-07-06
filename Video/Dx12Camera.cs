@@ -750,6 +750,31 @@ public sealed class Dx12Camera : IDisposable
         DestroyActive(collectGarbage);
     }
 
+    public static TextureNativeRecordingResult? CloseActiveCamera(
+        Dx12Camera? camera,
+        Action<Dx12Camera>? detach = null,
+        bool collectGarbage = true)
+    {
+        if (camera is null)
+        {
+            return null;
+        }
+
+        detach?.Invoke(camera);
+
+        TextureNativeRecordingResult? result = null;
+        try
+        {
+            result = camera.StopRecordingIfActive();
+        }
+        finally
+        {
+            camera.Close(collectGarbage);
+        }
+
+        return result;
+    }
+
     public bool IsInitializedFor(Panel previewWindow)
     {
         return ReferenceEquals(_target.PreviewWindow, previewWindow);
@@ -909,6 +934,11 @@ public sealed class Dx12Camera : IDisposable
     public TextureNativeRecordingResult? StopRecording()
     {
         return _stream?.StopRecording();
+    }
+
+    public TextureNativeRecordingResult? StopRecordingIfActive()
+    {
+        return IsRecording ? StopRecording() : null;
     }
 
     public TextureNativeRecordingResult? StopMP4()

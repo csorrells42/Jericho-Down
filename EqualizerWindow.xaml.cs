@@ -2400,20 +2400,17 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        DetachDx12Camera();
-        try
+        var recordingResult = Dx12Camera.CloseActiveCamera(
+            camera,
+            _ => DetachDx12Camera(),
+            collectGarbage: false);
+        if (recordingResult is not null)
         {
-            if (camera.IsRecording)
-            {
-                _lastTextureNativeRecordingResult = camera.StopMP4();
-            }
+            _lastTextureNativeRecordingResult = recordingResult;
         }
-        finally
-        {
-            Dx12Camera.CloseActive(collectGarbage: false);
-            _pendingTextureNativeFrameInfo = null;
-            System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
-        }
+
+        _pendingTextureNativeFrameInfo = null;
+        System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
     }
 
     private void ShowDirect3D12PreviewHost(IntPtr nativeD3D12Device)
