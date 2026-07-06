@@ -9,6 +9,7 @@ public sealed class Dx12Camera : IDisposable
 {
     private static readonly object ActiveLock = new();
     private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(2);
+    private static readonly Dictionary<string, string> TextureNativePreviewFailures = new(StringComparer.OrdinalIgnoreCase);
     private static Dx12Camera? _active;
 
     private readonly object _stateLock = new();
@@ -120,6 +121,294 @@ public sealed class Dx12Camera : IDisposable
     public static CameraDevice? GetDefaultCamera()
     {
         return GetCameras().FirstOrDefault();
+    }
+
+    public static CameraDevice? FindCamera(
+        IReadOnlyList<CameraDevice> cameras,
+        string? devicePath,
+        string? source,
+        string? name)
+    {
+        if (!string.IsNullOrWhiteSpace(devicePath))
+        {
+            var pathMatch = cameras.FirstOrDefault(camera =>
+                camera.EnumerateSourceDevices().Any(sourceDevice =>
+                    sourceDevice.DevicePath.Equals(devicePath, StringComparison.OrdinalIgnoreCase)
+                    && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase)));
+            if (pathMatch is not null)
+            {
+                return pathMatch;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(name)
+            ? null
+            : cameras.FirstOrDefault(camera =>
+                camera.EnumerateSourceDevices().Any(sourceDevice =>
+                    sourceDevice.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                    && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase)))
+                ?? cameras.FirstOrDefault(camera =>
+                    camera.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static bool IsDirectShowCamera(CameraDevice camera)
+    {
+        return string.Equals(camera.Source, "DirectShow", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsSelectedDirectShowCamera(bool isDirectShowPreviewActive, CameraDevice? selectedCamera)
+    {
+        return isDirectShowPreviewActive
+            || selectedCamera is not null && IsDirectShowCamera(selectedCamera);
+    }
+
+    public static bool IsCpuCameraPreviewOwningCamera(
+        bool isCameraEnabled,
+        Dx12Camera? activeCamera,
+        bool mediaFoundationPreviewIsRunning,
+        bool directShowPreviewIsRunning,
+        bool isDirectShowPreviewActive)
+    {
+        return isCameraEnabled
+            && activeCamera?.IsTextureNative != true
+            && (mediaFoundationPreviewIsRunning || directShowPreviewIsRunning || isDirectShowPreviewActive);
+    }
+
+    public static string FormatCameraMode(CameraVideoMode mode)
+    {
+        return mode.IsAuto ? "Auto mode" : mode.Label;
+    }
+
+    public static CameraVideoMode ResolveSelectedCameraMode(object? selectedItem)
+    {
+        return selectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
+    }
+
+    public static string FormatCameraDisabledStatus(CameraVideoMode mode)
+    {
+        return $"Camera disabled - selected mode: {FormatCameraMode(mode)}";
+    }
+
+    public static string FormatCameraStatus(string state, CameraDevice camera, CameraVideoMode mode)
+    {
+        return $"{state}: {camera.Name} at {FormatCameraMode(mode)}";
+    }
+
+    public static string FormatDirectShowCameraSelectedStatus(CameraDevice camera)
+    {
+        return $"DirectShow camera selected: {camera.Name} - Auto uses the camera's current output";
+    }
+
+    public static string FormatLoadingCameraModesStatus(CameraDevice camera, CameraVideoMode selectedMode)
+    {
+        return $"Loading modes: {camera.Name} - selected mode: {FormatCameraMode(selectedMode)}";
+    }
+
+    public static string FormatTextureNativeCameraStatus(
+        Dx12Camera? activeCamera,
+        string state,
+        CameraDevice camera,
+        TextureNativeFrameInfo frame,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        bool recordProcessedTextureOutput)
+    {
+        var textureStatus = activeCamera?.TextureFrameLeaseActive == true ? "texture lease active" : "waiting for texture lease";
+        var presenterStatus = activeCamera?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
+        var previewPathStatus = activeCamera?.PreviewPathDescription ?? "DX12 preview path pending";
+        var denoiseStatus = denoiseEnabled
+            ? $"DX12 denoise {denoiseStrength:0.0}"
+            : "DX12 denoise off";
+        var recordingStatus = recordProcessedTextureOutput ? "recording follows denoise" : "raw recording";
+        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
+    }
+
+    public static string FormatCpuCameraPreviewPipeline(bool isDirectShow, bool isDirect3D12Ready)
+    {
+        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation NV12/BGRA CPU frames";
+        var presentationPath = isDirect3D12Ready
+            ? isDirectShow ? "DX12 BGRA presentation" : "DX12 NV12/BGRA presentation"
+            : "WPF BGRA presentation";
+        return $"{capturePath} -> {presentationPath}";
+    }
+
+    public static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled)
+    {
+        return denoiseEnabled;
+    }
+
+    public static string FormatPreviewRecordParity(
+        bool isCameraEnabled,
+        Dx12Camera? activeCamera,
+        bool denoiseEnabled,
+        bool hasVisibleColorAdjustments,
+        out bool isGood)
+    {
+        if (!isCameraEnabled)
+        {
+            isGood = true;
+            return "camera idle";
+        }
+
+        if (activeCamera?.IsTextureNative == true)
+        {
+            if (hasVisibleColorAdjustments)
+            {
+                isGood = false;
+                return "DX12 texture preview color is raw";
+            }
+
+            isGood = true;
+            return ShouldRecordProcessedTextureOutput(denoiseEnabled)
+                ? "recording includes grain reduction"
+                : "preview = raw texture recording";
+        }
+
+        isGood = true;
+        if (denoiseEnabled && hasVisibleColorAdjustments)
+        {
+            return "preview matches recording with denoise + color";
+        }
+
+        if (denoiseEnabled)
+        {
+            return "preview matches recording with denoise";
+        }
+
+        return hasVisibleColorAdjustments
+            ? "preview matches recording with color"
+            : "preview matches recording";
+    }
+
+    public static string FormatActiveVideoPipeline(
+        bool isCameraAvailable,
+        bool isCameraEnabled,
+        Dx12Camera? activeCamera,
+        bool denoiseEnabled,
+        bool hasVisibleColorAdjustments,
+        bool isSelectedDirectShowCamera,
+        bool isDirect3D12Ready,
+        string? lastTextureNativeCameraError)
+    {
+        if (!isCameraAvailable)
+        {
+            return "no camera";
+        }
+
+        if (!isCameraEnabled)
+        {
+            return "camera disabled";
+        }
+
+        if (activeCamera?.IsTextureNative == true)
+        {
+            var previewPath = activeCamera.PreviewPathDescription;
+            var colorStatus = hasVisibleColorAdjustments ? "; texture preview color raw" : string.Empty;
+            return $"{previewPath}; recording {(ShouldRecordProcessedTextureOutput(denoiseEnabled) ? "grain reduction bridge" : "raw texture-native")}{colorStatus}";
+        }
+
+        if (isSelectedDirectShowCamera)
+        {
+            return hasVisibleColorAdjustments
+                ? $"{FormatCpuCameraPreviewPipeline(isDirectShow: true, isDirect3D12Ready)} + color; Media Foundation MP4 writer"
+                : $"{FormatCpuCameraPreviewPipeline(isDirectShow: true, isDirect3D12Ready)}; Media Foundation MP4 writer";
+        }
+
+        var fallback = string.IsNullOrWhiteSpace(lastTextureNativeCameraError)
+            ? string.Empty
+            : $" after DX12 shared stream fallback ({lastTextureNativeCameraError})";
+        var color = hasVisibleColorAdjustments ? " + color" : string.Empty;
+        return $"{FormatCpuCameraPreviewPipeline(isDirectShow: false, isDirect3D12Ready)}{color}; Media Foundation MP4 writer{fallback}";
+    }
+
+    public static int RoundCameraControlToStep(double value, CameraControlItem control)
+    {
+        var step = Math.Max(1, control.Step);
+        var rounded = control.Minimum + (int)Math.Round((value - control.Minimum) / step) * step;
+        return Math.Clamp(rounded, control.Minimum, control.Maximum);
+    }
+
+    public static int ApplyCameraControlDefaultMagnet(int value, CameraControlItem control)
+    {
+        var snapDistance = Math.Max(control.Step * 1.25d, (control.Maximum - control.Minimum) * 0.025d);
+        return Math.Abs(value - control.DefaultValue) <= snapDistance
+            ? control.DefaultValue
+            : value;
+    }
+
+    public static int GetCameraControlNudgeStep(CameraControlItem control)
+    {
+        return Math.Max(1, control.Step);
+    }
+
+    public static bool UsesCameraControlNudgeButtons(CameraControlItem control)
+    {
+        return control.Kind == CameraControlKind.Camera
+            && (control.PropertyId == 0 || control.PropertyId == 1 || control.PropertyId == 2);
+    }
+
+    public static string FormatCameraControlValue(int value)
+    {
+        return value.ToString("0");
+    }
+
+    public static bool ShouldUseTextureNativeRecording()
+    {
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
+        return IsEnabledEnvironmentValue(value);
+    }
+
+    public static bool ShouldUseSharedTextureCameraStream(bool safeStartDx12Disabled)
+    {
+        if (safeStartDx12Disabled)
+        {
+            return false;
+        }
+
+        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
+        return string.Equals(value, "force", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEnabledEnvironmentValue(string? value)
+    {
+        return string.Equals(value, "1", StringComparison.Ordinal)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool TryGetTextureNativePreviewFailure(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        out string reason)
+    {
+        return TextureNativePreviewFailures.TryGetValue(CreateTextureNativePreviewFailureKey(camera, mode), out reason!);
+    }
+
+    public static void RememberTextureNativePreviewFailure(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        string reason)
+    {
+        TextureNativePreviewFailures[CreateTextureNativePreviewFailureKey(camera, mode)] = string.IsNullOrWhiteSpace(reason)
+            ? "previous shared texture preview attempt failed"
+            : reason;
+    }
+
+    public static void ForgetTextureNativePreviewFailure(CameraDevice camera, CameraVideoMode mode)
+    {
+        TextureNativePreviewFailures.Remove(CreateTextureNativePreviewFailureKey(camera, mode));
+    }
+
+    private static string CreateTextureNativePreviewFailureKey(CameraDevice camera, CameraVideoMode mode)
+    {
+        var cameraKey = string.IsNullOrWhiteSpace(camera.DevicePath)
+            ? $"{camera.Source}|{camera.Name}"
+            : $"{camera.Source}|{camera.DevicePath}";
+        var modeKey = mode.IsAuto
+            ? "auto"
+            : $"{mode.Width}x{mode.Height}@{mode.FramesPerSecond:0.###}";
+        return $"{cameraKey}|{modeKey}";
     }
 
     public static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)
