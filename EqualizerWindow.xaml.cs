@@ -2226,26 +2226,19 @@ public partial class EqualizerWindow : Window
 
     private void AttachDx12Camera(Dx12Camera camera)
     {
-        if (ReferenceEquals(_dx12Camera, camera))
-        {
-            return;
-        }
-
-        DetachDx12Camera();
-        _dx12Camera = camera;
-        camera.AttachPreviewHandlers(TextureNativeCameraFrameAvailable, TextureNativeCameraStatusChanged);
+        Dx12Camera.AttachToSlot(
+            ref _dx12Camera,
+            camera,
+            TextureNativeCameraFrameAvailable,
+            TextureNativeCameraStatusChanged);
     }
 
     private void DetachDx12Camera()
     {
-        var camera = _dx12Camera;
-        if (camera is null)
-        {
-            return;
-        }
-
-        camera.DetachPreviewHandlers(TextureNativeCameraFrameAvailable, TextureNativeCameraStatusChanged);
-        _dx12Camera = null;
+        Dx12Camera.DetachFromSlot(
+            ref _dx12Camera,
+            TextureNativeCameraFrameAvailable,
+            TextureNativeCameraStatusChanged);
     }
 
     private void ClaimFallbackCameraOwner(
@@ -2256,7 +2249,7 @@ public partial class EqualizerWindow : Window
     {
         if (_dx12Camera is null)
         {
-            var owner = Dx12Camera.ClaimFallback(
+            var owner = Dx12Camera.OpenFallback(
                 camera,
                 mode,
                 CreateActiveDx12CameraPreviewTarget(),

@@ -729,6 +729,16 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public static Dx12Camera OpenFallback(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        string fallbackDescription,
+        Action fallbackStop)
+    {
+        return ClaimFallback(camera, mode, target, fallbackDescription, fallbackStop);
+    }
+
     public static Dx12Camera OpenTextureNative(
         CameraDevice camera,
         CameraVideoMode mode,
@@ -830,6 +840,37 @@ public sealed class Dx12Camera : IDisposable
     public string PreviewPathDescription => IsTextureNative
         ? _previewHost?.PreviewPathDescription ?? "DX12 preview path pending"
         : _fallbackDescription;
+
+    public static void AttachToSlot(
+        ref Dx12Camera? slot,
+        Dx12Camera camera,
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        if (ReferenceEquals(slot, camera))
+        {
+            return;
+        }
+
+        DetachFromSlot(ref slot, frameAvailable, statusChanged);
+        slot = camera;
+        camera.AttachPreviewHandlers(frameAvailable, statusChanged);
+    }
+
+    public static void DetachFromSlot(
+        ref Dx12Camera? slot,
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        var camera = slot;
+        if (camera is null)
+        {
+            return;
+        }
+
+        camera.DetachPreviewHandlers(frameAvailable, statusChanged);
+        slot = null;
+    }
 
     public void AttachPreviewHandlers(
         EventHandler<TextureNativeFrameInfo> frameAvailable,
