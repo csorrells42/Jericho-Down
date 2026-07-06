@@ -34,6 +34,16 @@ public sealed class Dx12Camera : IDisposable
     private double _denoiseStrength = 2d;
     private bool _disposed;
 
+    public Dx12Camera(Panel previewWindow)
+        : this(RequireDefaultCamera(), CameraVideoMode.Auto, new PreviewTarget(previewWindow))
+    {
+    }
+
+    public Dx12Camera(Panel previewWindow, CameraVideoMode? mode)
+        : this(RequireDefaultCamera(), mode, new PreviewTarget(previewWindow))
+    {
+    }
+
     public Dx12Camera(CameraDevice camera, Panel previewWindow)
         : this(camera, CameraVideoMode.Auto, new PreviewTarget(previewWindow))
     {
@@ -124,6 +134,12 @@ public sealed class Dx12Camera : IDisposable
     public static CameraDevice? GetDefaultCamera()
     {
         return GetCameras().FirstOrDefault();
+    }
+
+    public static CameraDevice RequireDefaultCamera()
+    {
+        return GetDefaultCamera()
+            ?? throw new InvalidOperationException("No camera devices were found.");
     }
 
     public static CameraDevice? FindCamera(
@@ -696,6 +712,45 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public static Dx12Camera StartDefault(Panel previewWindow)
+    {
+        return StartDefault(new PreviewTarget(previewWindow));
+    }
+
+    public static Dx12Camera StartDefault(Panel previewWindow, CameraVideoMode? mode)
+    {
+        return StartDefault(new PreviewTarget(previewWindow), mode);
+    }
+
+    public static Dx12Camera StartDefault(
+        PreviewTarget target,
+        CameraVideoMode? mode = null,
+        bool denoiseEnabled = false,
+        double denoiseStrength = 2d)
+    {
+        return OpenTextureNative(
+            RequireDefaultCamera(),
+            mode ?? CameraVideoMode.Auto,
+            target,
+            denoiseEnabled,
+            denoiseStrength);
+    }
+
+    public static Dx12Camera Start(Panel previewWindow)
+    {
+        return StartDefault(previewWindow);
+    }
+
+    public static Dx12Camera Start(CameraDevice camera, Panel previewWindow)
+    {
+        return OpenTextureNative(
+            camera,
+            CameraVideoMode.Auto,
+            new PreviewTarget(previewWindow),
+            denoiseEnabled: false,
+            denoiseStrength: 2d);
+    }
+
     public static Dx12Camera ClaimFallback(
         CameraDevice camera,
         CameraVideoMode mode,
@@ -807,6 +862,12 @@ public sealed class Dx12Camera : IDisposable
     {
         return ReferenceEquals(_target.PreviewWindow, previewWindow);
     }
+
+    public CameraDevice Camera => _camera;
+
+    public CameraVideoMode Mode => _mode;
+
+    public string Name => _camera.Name;
 
     public bool IsRecording => _stream?.IsRecording == true;
 
@@ -1107,6 +1168,11 @@ public sealed class Dx12Camera : IDisposable
             GC.WaitForPendingFinalizers();
             GC.Collect();
         }
+    }
+
+    public void Stop(bool collectGarbage = true)
+    {
+        Close(collectGarbage);
     }
 
     public void RenderProofFrame(TextureNativeFrameInfo frame)
