@@ -30,6 +30,16 @@ public sealed class Dx12Camera : IDisposable
     private double _denoiseStrength = 2d;
     private bool _disposed;
 
+    public Dx12Camera(CameraDevice camera, Panel previewWindow)
+        : this(camera, CameraVideoMode.Auto, new PreviewTarget(previewWindow))
+    {
+    }
+
+    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewWindow)
+        : this(camera, mode, new PreviewTarget(previewWindow))
+    {
+    }
+
     public Dx12Camera(CameraDevice camera, PreviewTarget target)
         : this(camera, CameraVideoMode.Auto, target)
     {
@@ -99,6 +109,18 @@ public sealed class Dx12Camera : IDisposable
     public event EventHandler<TextureNativeFrameInfo>? FrameAvailable;
     public event EventHandler<TextureNativeFrameLease>? TextureFrameAvailable;
     public event EventHandler<string>? StatusChanged;
+
+    public static IReadOnlyList<CameraDevice> GetCameras()
+    {
+        return CameraDeviceCatalog.MergeDevices(
+            MediaFoundationCameraEnumerator.GetVideoInputDevices(),
+            DirectShowCameraEnumerator.GetVideoInputDevices());
+    }
+
+    public static CameraDevice? GetDefaultCamera()
+    {
+        return GetCameras().FirstOrDefault();
+    }
 
     public static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)
     {
@@ -173,6 +195,11 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public static void CloseActive(bool collectGarbage = true)
+    {
+        DestroyActive(collectGarbage);
+    }
+
     public bool IsInitializedFor(Panel previewWindow)
     {
         return ReferenceEquals(_target.PreviewWindow, previewWindow);
@@ -211,10 +238,82 @@ public sealed class Dx12Camera : IDisposable
         ? _previewHost?.PreviewPathDescription ?? "DX12 preview path pending"
         : _fallbackDescription;
 
+    public void Denoise(int magnitude)
+    {
+        Denoise(magnitude > 0, magnitude);
+    }
+
+    public void Denoise(double strength)
+    {
+        Denoise(strength > 0d, strength);
+    }
+
+    public void Denoise(bool enabled, double strength)
+    {
+        _denoiseEnabled = enabled;
+        _denoiseStrength = Math.Clamp(strength, 0.5d, 5d);
+    }
+
+    public void denoise(int magnitude)
+    {
+        Denoise(magnitude);
+    }
+
+    public void denoise(double strength)
+    {
+        Denoise(strength);
+    }
+
     public void UpdateRenderSettings(bool denoiseEnabled, double denoiseStrength)
     {
-        _denoiseEnabled = denoiseEnabled;
-        _denoiseStrength = denoiseStrength;
+        Denoise(denoiseEnabled, denoiseStrength);
+    }
+
+    public bool WriteMP4(string path)
+    {
+        return WriteMP4(
+            path,
+            processedOutputEnabled: _denoiseEnabled,
+            denoiseEnabled: _denoiseEnabled,
+            denoiseStrength: _denoiseStrength);
+    }
+
+    public bool WriteMP4(
+        string path,
+        bool processedOutputEnabled,
+        bool denoiseEnabled,
+        double denoiseStrength)
+    {
+        return WriteMP4(
+            path,
+            new TextureNativeRecordingOptions(
+                processedOutputEnabled,
+                denoiseEnabled,
+                denoiseStrength));
+    }
+
+    public bool WriteMP4(string path, TextureNativeRecordingOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("An MP4 file path is required.", nameof(path));
+        }
+
+        return StartRecording(path, options);
+    }
+
+    public bool writeMP4(string path)
+    {
+        return WriteMP4(path);
+    }
+
+    public bool writeMP4(
+        string path,
+        bool processedOutputEnabled,
+        bool denoiseEnabled,
+        double denoiseStrength)
+    {
+        return WriteMP4(path, processedOutputEnabled, denoiseEnabled, denoiseStrength);
     }
 
     public bool StartRecording(
@@ -242,14 +341,45 @@ public sealed class Dx12Camera : IDisposable
         _stream?.PauseRecording();
     }
 
+    public void PauseMP4()
+    {
+        PauseRecording();
+    }
+
     public void ResumeRecording()
     {
         _stream?.ResumeRecording();
     }
 
+    public void ResumeMP4()
+    {
+        ResumeRecording();
+    }
+
     public TextureNativeRecordingResult? StopRecording()
     {
         return _stream?.StopRecording();
+    }
+
+    public TextureNativeRecordingResult? StopMP4()
+    {
+        return StopRecording();
+    }
+
+    public TextureNativeRecordingResult? stopMP4()
+    {
+        return StopMP4();
+    }
+
+    public void Close(bool collectGarbage = true)
+    {
+        Dispose();
+        if (collectGarbage)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
     }
 
     public void RenderProofFrame(TextureNativeFrameInfo frame)

@@ -1055,7 +1055,7 @@ public partial class EqualizerWindow : Window
         _directShowPreviewService.StatusChanged -= CameraPreviewStatusChanged;
         _directShowPreviewService.Dispose();
         StopTextureNativeCameraStream();
-        Dx12Camera.DestroyActive(collectGarbage: true);
+        Dx12Camera.CloseActive(collectGarbage: true);
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
         if (_waveform3DWindow is not null)
@@ -1638,7 +1638,7 @@ public partial class EqualizerWindow : Window
             _isRecordingPaused = false;
             if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
             {
-                _dx12Camera.ResumeRecording();
+                _dx12Camera.ResumeMP4();
             }
             else if (_textureNativeRecordingSession is not null)
             {
@@ -1661,7 +1661,7 @@ public partial class EqualizerWindow : Window
             _isRecordingPaused = true;
             if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
             {
-                _dx12Camera.PauseRecording();
+                _dx12Camera.PauseMP4();
             }
             else if (_textureNativeRecordingSession is not null)
             {
@@ -1771,7 +1771,7 @@ public partial class EqualizerWindow : Window
         {
             try
             {
-                return _dx12Camera.StartRecording(
+                return _dx12Camera.WriteMP4(
                     videoPath,
                     ShouldRecordProcessedTextureOutput(),
                     _pendingVideoDenoiseEnabled,
@@ -1857,7 +1857,7 @@ public partial class EqualizerWindow : Window
         {
             try
             {
-                _lastTextureNativeRecordingResult = _dx12Camera.StopRecording();
+                _lastTextureNativeRecordingResult = _dx12Camera.StopMP4();
                 return _lastTextureNativeRecordingResult;
             }
             catch (Exception ex)
@@ -2268,7 +2268,7 @@ public partial class EqualizerWindow : Window
             if (_dx12Camera is null)
             {
                 var dx12Camera = new Dx12Camera(camera, mode, CreateActiveDx12CameraPreviewTarget());
-                dx12Camera.UpdateRenderSettings(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+                dx12Camera.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
                 AttachDx12Camera(dx12Camera);
             }
             else
@@ -2493,12 +2493,12 @@ public partial class EqualizerWindow : Window
         {
             if (camera.IsRecording)
             {
-                _lastTextureNativeRecordingResult = camera.StopRecording();
+                _lastTextureNativeRecordingResult = camera.StopMP4();
             }
         }
         finally
         {
-            Dx12Camera.DestroyActive();
+            Dx12Camera.CloseActive(collectGarbage: false);
             _pendingTextureNativeFrameInfo = null;
             System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
         }
@@ -3230,7 +3230,7 @@ public partial class EqualizerWindow : Window
         }
 
         _pendingVideoDenoiseStrength = effectiveStrength;
-        _dx12Camera?.UpdateRenderSettings(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+        _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
         _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
