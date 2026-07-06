@@ -467,16 +467,6 @@ public sealed class Dx12Camera : IDisposable
         return sanitized.Length <= 80 ? sanitized : sanitized[..80].Trim();
     }
 
-    public static bool IsKaraokeTabSelected(TabControl? tabControl)
-    {
-        return IsTabSelected(tabControl, "Karaoke");
-    }
-
-    public static bool IsPodcastTabSelected(TabControl? tabControl)
-    {
-        return IsTabSelected(tabControl, "Podcast");
-    }
-
     public static string FormatTextureNativeCameraStatus(
         Dx12Camera? activeCamera,
         string state,
@@ -682,12 +672,6 @@ public sealed class Dx12Camera : IDisposable
             ? "auto"
             : $"{mode.Width}x{mode.Height}@{mode.FramesPerSecond:0.###}";
         return $"{cameraKey}|{modeKey}";
-    }
-
-    private static bool IsTabSelected(TabControl? tabControl, string header)
-    {
-        return tabControl?.SelectedItem is TabItem { Header: string selectedHeader }
-            && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
     }
 
     public static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)
@@ -898,104 +882,10 @@ public sealed class Dx12Camera : IDisposable
 
     public bool IsReady => _previewHost?.IsReady == true;
 
-    public static bool IsPreviewRendererReady(Dx12Camera? camera)
-    {
-        return camera?.IsReady == true;
-    }
-
-    public static void ConfigureMediaFoundationPreview(
-        MediaFoundationCameraPreviewService service,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        bool denoiseHandledByPreviewRenderer,
-        VideoFrameColorSettings colorSettings)
-    {
-        service.DenoiseEnabled = denoiseEnabled;
-        service.DenoiseStrength = denoiseStrength;
-        service.DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer;
-        service.ColorSettings = colorSettings;
-    }
-
-    public static void ConfigureDirectShowPreview(
-        DirectShowCameraPreviewService service,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        VideoFrameColorSettings colorSettings)
-    {
-        service.DenoiseEnabled = denoiseEnabled;
-        service.DenoiseStrength = denoiseStrength;
-        service.ColorSettings = colorSettings;
-    }
-
-    public static void ConfigureCpuPreviewServices(
-        MediaFoundationCameraPreviewService mediaFoundationPreview,
-        DirectShowCameraPreviewService directShowPreview,
-        Dx12Camera? camera,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        VideoFrameColorSettings colorSettings)
-    {
-        ConfigureMediaFoundationPreview(
-            mediaFoundationPreview,
-            denoiseEnabled,
-            denoiseStrength,
-            IsPreviewRendererReady(camera),
-            colorSettings);
-        ConfigureDirectShowPreview(
-            directShowPreview,
-            denoiseEnabled,
-            denoiseStrength,
-            colorSettings);
-    }
-
-    public static bool TryStartMediaFoundationPreview(
-        MediaFoundationCameraPreviewService service,
-        CameraDevice camera,
-        CameraVideoMode mode,
-        Dx12Camera? activeCamera,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        VideoFrameColorSettings colorSettings)
-    {
-        ConfigureMediaFoundationPreview(
-            service,
-            denoiseEnabled,
-            denoiseStrength,
-            IsPreviewRendererReady(activeCamera),
-            colorSettings);
-        return service.Start(camera, mode);
-    }
-
-    public static bool TryStartDirectShowPreview(
-        MediaFoundationCameraPreviewService mediaFoundationPreview,
-        DirectShowCameraPreviewService directShowPreview,
-        CameraDevice directShowCamera,
-        CameraVideoMode mode,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        VideoFrameColorSettings colorSettings)
-    {
-        mediaFoundationPreview.Stop();
-        ConfigureDirectShowPreview(
-            directShowPreview,
-            denoiseEnabled,
-            denoiseStrength,
-            colorSettings);
-        return directShowPreview.Start(directShowCamera, mode);
-    }
-
     public static bool TryGetDirectShowFallbackCamera(CameraDevice primaryCamera, out CameraDevice? directShowFallback)
     {
         directShowFallback = primaryCamera.FallbackDevice;
         return directShowFallback is not null && IsDirectShowCamera(directShowFallback);
-    }
-
-    public static void StopPreviewServices(
-        MediaFoundationCameraPreviewService mediaFoundationPreview,
-        DirectShowCameraPreviewService directShowPreview)
-    {
-        TryStopPreviewService(mediaFoundationPreview.Stop);
-        TryStopPreviewService(directShowPreview.Stop);
     }
 
     public static void CollectReleasedCamera()
@@ -1003,17 +893,6 @@ public sealed class Dx12Camera : IDisposable
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
-    }
-
-    private static void TryStopPreviewService(Action stop)
-    {
-        try
-        {
-            stop();
-        }
-        catch
-        {
-        }
     }
 
     // there be dragons here

@@ -1919,8 +1919,8 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (Dx12Camera.IsPodcastTabSelected(MainTabControl)
-            || Dx12Camera.IsKaraokeTabSelected(MainTabControl) && _karaokeRecordVideoEnabled)
+        if (IsPodcastTabSelected()
+            || IsKaraokeTabSelected() && _karaokeRecordVideoEnabled)
         {
             ReinitializeCameraForFocusedPreview();
         }
@@ -1943,7 +1943,7 @@ public partial class EqualizerWindow : Window
     private void DisposeActiveCameraForReinitialize()
     {
         StopTextureNativeCameraStream();
-        Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
+        StopPreviewServices();
 
         _dx12Camera = null;
         _isDirectShowPreviewActive = false;
@@ -1952,6 +1952,76 @@ public partial class EqualizerWindow : Window
         ClearPodcastCameraPreviewSurface();
         ClearKaraokeVideoPreviewBitmap();
         Dx12Camera.CollectReleasedCamera();
+    }
+
+    private bool IsPodcastTabSelected()
+    {
+        return IsMainTabSelected("Podcast");
+    }
+
+    private bool IsKaraokeTabSelected()
+    {
+        return IsMainTabSelected("Karaoke");
+    }
+
+    private bool IsMainTabSelected(string header)
+    {
+        return MainTabControl?.SelectedItem is TabItem { Header: string selectedHeader }
+            && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ConfigureMediaFoundationPreview(bool denoiseEnabled)
+    {
+        _cameraPreviewService.DenoiseEnabled = denoiseEnabled;
+        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _dx12Camera?.IsReady == true;
+        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
+    }
+
+    private void ConfigureDirectShowPreview(bool denoiseEnabled)
+    {
+        _directShowPreviewService.DenoiseEnabled = denoiseEnabled;
+        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
+    }
+
+    private void ConfigureCpuPreviewServices()
+    {
+        ConfigureMediaFoundationPreview(_pendingVideoDenoiseEnabled);
+        ConfigureDirectShowPreview(_pendingVideoDenoiseEnabled);
+    }
+
+    private bool TryStartMediaFoundationPreview(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        bool denoiseEnabled)
+    {
+        ConfigureMediaFoundationPreview(denoiseEnabled);
+        return _cameraPreviewService.Start(camera, mode);
+    }
+
+    private bool TryStartDirectShowPreviewService(CameraDevice directShowCamera, CameraVideoMode mode)
+    {
+        _cameraPreviewService.Stop();
+        ConfigureDirectShowPreview(_pendingVideoDenoiseEnabled);
+        return _directShowPreviewService.Start(directShowCamera, mode);
+    }
+
+    private void StopPreviewServices()
+    {
+        TryStopPreviewService(_cameraPreviewService.Stop);
+        TryStopPreviewService(_directShowPreviewService.Stop);
+    }
+
+    private static void TryStopPreviewService(Action stop)
+    {
+        try
+        {
+            stop();
+        }
+        catch
+        {
+        }
     }
 
     private void UpdateCameraEnabledState()
@@ -2081,14 +2151,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (Dx12Camera.TryStartMediaFoundationPreview(
-            _cameraPreviewService,
-            camera,
-            mode,
-            _dx12Camera,
-            _pendingVideoDenoiseEnabled,
-            _pendingVideoDenoiseStrength,
-            _pendingVideoColorSettings))
+        if (TryStartMediaFoundationPreview(camera, mode, _pendingVideoDenoiseEnabled))
         {
             _isDirectShowPreviewActive = false;
             ClaimFallbackCameraOwner(
@@ -2102,14 +2165,7 @@ public partial class EqualizerWindow : Window
 
         if (_pendingVideoDenoiseEnabled)
         {
-            if (Dx12Camera.TryStartMediaFoundationPreview(
-                _cameraPreviewService,
-                camera,
-                mode,
-                _dx12Camera,
-                false,
-                _pendingVideoDenoiseStrength,
-                _pendingVideoColorSettings))
+            if (TryStartMediaFoundationPreview(camera, mode, denoiseEnabled: false))
             {
                 _isDirectShowPreviewActive = false;
                 ClaimFallbackCameraOwner(
@@ -2148,14 +2204,7 @@ public partial class EqualizerWindow : Window
         CameraPreviewStatusText.Text = isFallback
             ? $"Starting DirectShow fallback for {displayCamera.Name}"
             : $"Starting DirectShow preview for {directShowCamera.Name}";
-        if (Dx12Camera.TryStartDirectShowPreview(
-            _cameraPreviewService,
-            _directShowPreviewService,
-            directShowCamera,
-            mode,
-            _pendingVideoDenoiseEnabled,
-            _pendingVideoDenoiseStrength,
-            _pendingVideoColorSettings))
+        if (TryStartDirectShowPreviewService(directShowCamera, mode))
         {
             _isDirectShowPreviewActive = true;
             ClaimFallbackCameraOwner(
@@ -2175,7 +2224,7 @@ public partial class EqualizerWindow : Window
     private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
     {
         _lastTextureNativeCameraError = null;
-        Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
+        StopPreviewServices();
         _isDirectShowPreviewActive = false;
         _cpuPreviewFramePump.Reset();
         _cameraPreviewBitmap = null;
@@ -2248,7 +2297,7 @@ public partial class EqualizerWindow : Window
 
     private Dx12Camera.PreviewTarget CreateActiveDx12CameraPreviewTarget()
     {
-        if (Dx12Camera.IsKaraokeTabSelected(MainTabControl) && _karaokeRecordVideoEnabled && KaraokeVideoPreviewSurfaceGrid is not null)
+        if (IsKaraokeTabSelected() && _karaokeRecordVideoEnabled && KaraokeVideoPreviewSurfaceGrid is not null)
         {
             _cameraPreviewBitmap = null;
             ClearPreviewSurface(
@@ -2311,7 +2360,7 @@ public partial class EqualizerWindow : Window
 
         _ = Task.Run(() =>
         {
-            Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
+            StopPreviewServices();
 
             Dispatcher.BeginInvoke(() =>
             {
@@ -2386,7 +2435,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (!Dx12Camera.IsPodcastTabSelected(MainTabControl))
+        if (!IsPodcastTabSelected())
         {
             return;
         }
@@ -2444,7 +2493,7 @@ public partial class EqualizerWindow : Window
 
         _karaokeRecordVideoEnabled = KaraokeRecordVideoCheckBox.IsChecked == true;
         UpdateKaraokeVideoPreviewState();
-        if (_isCameraEnabled && (Dx12Camera.IsKaraokeTabSelected(MainTabControl) || _dx12Camera is not null))
+        if (_isCameraEnabled && (IsKaraokeTabSelected() || _dx12Camera is not null))
         {
             ReinitializeCameraForFocusedPreview();
         }
@@ -2535,7 +2584,7 @@ public partial class EqualizerWindow : Window
 
     private void ProcessPendingTextureNativeFrame(TextureNativeFrameInfo frame)
     {
-        if (frame is not null && _isCameraEnabled && Dx12Camera.IsPodcastTabSelected(MainTabControl))
+        if (frame is not null && _isCameraEnabled && IsPodcastTabSelected())
         {
             CameraPreviewImage.Visibility = Visibility.Collapsed;
             CameraPlaceholder.Visibility = Visibility.Visible;
@@ -2560,12 +2609,12 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled && _dx12Camera is not null)
             {
-                if (Dx12Camera.IsPodcastTabSelected(MainTabControl))
+                if (IsPodcastTabSelected())
                 {
                     CameraPreviewStatusText.Text = status;
                 }
 
-                if (Dx12Camera.IsKaraokeTabSelected(MainTabControl) && _karaokeRecordVideoEnabled && KaraokeVideoPreviewStatusText is not null)
+                if (IsKaraokeTabSelected() && _karaokeRecordVideoEnabled && KaraokeVideoPreviewStatusText is not null)
                 {
                     KaraokeVideoPreviewStatusText.Text = status;
                 }
@@ -2979,13 +3028,7 @@ public partial class EqualizerWindow : Window
 
         _pendingVideoDenoiseStrength = strength;
         _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
-        Dx12Camera.ConfigureCpuPreviewServices(
-            _cameraPreviewService,
-            _directShowPreviewService,
-            _dx12Camera,
-            _pendingVideoDenoiseEnabled,
-            _pendingVideoDenoiseStrength,
-            _pendingVideoColorSettings);
+        ConfigureCpuPreviewServices();
 
         UpdateVideoDenoiseValueText(strength);
 
@@ -3049,13 +3092,7 @@ public partial class EqualizerWindow : Window
 
     private void ApplyVideoColorSettingsToCpuServices()
     {
-        Dx12Camera.ConfigureCpuPreviewServices(
-            _cameraPreviewService,
-            _directShowPreviewService,
-            _dx12Camera,
-            _pendingVideoDenoiseEnabled,
-            _pendingVideoDenoiseStrength,
-            _pendingVideoColorSettings);
+        ConfigureCpuPreviewServices();
     }
 
     private void UpdateVideoColorValueText()
@@ -3237,7 +3274,7 @@ public partial class EqualizerWindow : Window
                     _pendingVideoDenoiseStrength,
                     _pendingVideoColorSettings,
                     Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
-                    Dx12Camera.IsPreviewRendererReady(_dx12Camera)),
+                    _dx12Camera?.IsReady == true),
                 textureNative = textureResult is null
                     ? null
                     : new
@@ -4204,7 +4241,7 @@ public partial class EqualizerWindow : Window
             _pendingVideoDenoiseEnabled,
             _pendingVideoColorSettings.HasVisibleAdjustments,
             Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
-            Dx12Camera.IsPreviewRendererReady(_dx12Camera),
+            _dx12Camera?.IsReady == true,
             _lastTextureNativeCameraError);
         var pumpWarningActive = !string.IsNullOrWhiteSpace(_cameraPumpWarningText)
             && DateTime.UtcNow <= _cameraPumpWarningExpiresUtc;
