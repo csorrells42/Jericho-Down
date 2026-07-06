@@ -2735,28 +2735,12 @@ public partial class EqualizerWindow : Window
 
     private void LoadCameraControls()
     {
-        if (CameraControlPanel is null || CameraControlStatusText is null)
-        {
-            return;
-        }
-
-        CameraControlPanel.Children.Clear();
-
-        if (CameraComboBox.SelectedItem is not CameraDevice camera)
-        {
-            CameraControlStatusText.Text = Dx12Camera.FormatChooseCameraControlsStatus();
-            return;
-        }
-
-        var controls = _cameraControlService.GetControls(camera);
-        if (controls.Count == 0)
-        {
-            CameraControlStatusText.Text = Dx12Camera.FormatNoCameraControlsStatus();
-            return;
-        }
-
-        CameraControlStatusText.Text = Dx12Camera.FormatCameraControlsLoadedStatus(camera, controls.Count);
-        RenderCameraControls(camera, controls);
+        Dx12Camera.LoadCameraControls(
+            CameraControlPanel,
+            CameraControlStatusText,
+            CameraComboBox.SelectedItem,
+            _cameraControlService,
+            RenderCameraControls);
     }
 
     private void ResetCameraControlPanel(string status)
@@ -2778,18 +2762,17 @@ public partial class EqualizerWindow : Window
 
     private void RenderCameraControls(CameraDevice camera, IReadOnlyList<CameraControlItem> controls)
     {
-        _isUpdatingCameraControls = true;
-        try
+        if (CameraControlPanel is null)
         {
-            foreach (var control in controls)
-            {
-                CameraControlPanel.Children.Add(CreateCameraControlEditor(camera, control));
-            }
+            return;
         }
-        finally
-        {
-            _isUpdatingCameraControls = false;
-        }
+
+        Dx12Camera.RenderCameraControls(
+            CameraControlPanel,
+            camera,
+            controls,
+            CreateCameraControlEditor,
+            isUpdating => _isUpdatingCameraControls = isUpdating);
     }
 
     private FrameworkElement CreateCameraControlEditor(CameraDevice camera, CameraControlItem control)
@@ -2956,25 +2939,15 @@ public partial class EqualizerWindow : Window
 
     private void RestoreCameraAutoCheckBox(CheckBox autoCheckBox, CameraControlItem control)
     {
-        _isUpdatingCameraControls = true;
-        autoCheckBox.IsChecked = control.IsAuto;
-        _isUpdatingCameraControls = false;
+        Dx12Camera.RestoreCameraAutoCheckBox(
+            autoCheckBox,
+            control,
+            isUpdating => _isUpdatingCameraControls = isUpdating);
     }
 
     private RepeatButton CreateCameraNudgeButton(string content, string toolTip)
     {
-        return new RepeatButton
-        {
-            Content = content,
-            Width = 34,
-            Padding = new Thickness(0, 3, 0, 3),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Delay = 450,
-            Interval = 180,
-            Margin = new Thickness(0, 0, 6, 0),
-            ToolTip = CreateWrappedToolTip(toolTip)
-        };
+        return Dx12Camera.CreateCameraNudgeButton(content, toolTip, CreateWrappedToolTip);
     }
 
     private void NudgeCameraControl(

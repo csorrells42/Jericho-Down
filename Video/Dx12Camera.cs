@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
@@ -247,6 +248,87 @@ public sealed class Dx12Camera : IDisposable
         return success
             ? $"{control.Name}: {(isAuto ? "Auto" : FormatCameraControlValue(value))}"
             : $"Could not set {control.Name}. The camera may be busy or this control may be locked by its driver.";
+    }
+
+    public static void LoadCameraControls(
+        Panel? controlPanel,
+        TextBlock? statusText,
+        object? selectedCamera,
+        DirectShowCameraControlService controlService,
+        Action<CameraDevice, IReadOnlyList<CameraControlItem>> renderControls)
+    {
+        if (controlPanel is null || statusText is null)
+        {
+            return;
+        }
+
+        controlPanel.Children.Clear();
+
+        if (selectedCamera is not CameraDevice camera)
+        {
+            statusText.Text = FormatChooseCameraControlsStatus();
+            return;
+        }
+
+        var controls = controlService.GetControls(camera);
+        if (controls.Count == 0)
+        {
+            statusText.Text = FormatNoCameraControlsStatus();
+            return;
+        }
+
+        statusText.Text = FormatCameraControlsLoadedStatus(camera, controls.Count);
+        renderControls(camera, controls);
+    }
+
+    public static void RenderCameraControls(
+        Panel controlPanel,
+        CameraDevice camera,
+        IReadOnlyList<CameraControlItem> controls,
+        Func<CameraDevice, CameraControlItem, FrameworkElement> createEditor,
+        Action<bool> setUpdatingCameraControls)
+    {
+        setUpdatingCameraControls(true);
+        try
+        {
+            foreach (var control in controls)
+            {
+                controlPanel.Children.Add(createEditor(camera, control));
+            }
+        }
+        finally
+        {
+            setUpdatingCameraControls(false);
+        }
+    }
+
+    public static void RestoreCameraAutoCheckBox(
+        CheckBox autoCheckBox,
+        CameraControlItem control,
+        Action<bool> setUpdatingCameraControls)
+    {
+        setUpdatingCameraControls(true);
+        autoCheckBox.IsChecked = control.IsAuto;
+        setUpdatingCameraControls(false);
+    }
+
+    public static RepeatButton CreateCameraNudgeButton(
+        string content,
+        string toolTip,
+        Func<string, TextBlock> createWrappedToolTip)
+    {
+        return new RepeatButton
+        {
+            Content = content,
+            Width = 34,
+            Padding = new Thickness(0, 3, 0, 3),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Delay = 450,
+            Interval = 180,
+            Margin = new Thickness(0, 0, 6, 0),
+            ToolTip = createWrappedToolTip(toolTip)
+        };
     }
 
     public static bool UpdateAdvancedCameraControlsVisibility(
