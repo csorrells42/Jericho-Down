@@ -1014,6 +1014,53 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public sealed class TextureNativeStatusPump
+    {
+        private readonly Dispatcher _dispatcher;
+        private readonly Action<TextureNativeFrameInfo> _processFrame;
+        private TextureNativeFrameInfo? _pendingFrame;
+        private int _frameUpdateQueued;
+
+        public TextureNativeStatusPump(Dispatcher dispatcher, Action<TextureNativeFrameInfo> processFrame)
+        {
+            _dispatcher = dispatcher;
+            _processFrame = processFrame;
+        }
+
+        public void FrameAvailable(TextureNativeFrameInfo frame)
+        {
+            Interlocked.Exchange(ref _pendingFrame, frame);
+            if (Interlocked.Exchange(ref _frameUpdateQueued, 1) != 0)
+            {
+                return;
+            }
+
+            _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
+        }
+
+        public void Reset()
+        {
+            _pendingFrame = null;
+            Volatile.Write(ref _frameUpdateQueued, 0);
+        }
+
+        private void ProcessPendingFrame()
+        {
+            var frame = Interlocked.Exchange(ref _pendingFrame, null);
+            if (frame is not null)
+            {
+                _processFrame(frame);
+            }
+
+            Volatile.Write(ref _frameUpdateQueued, 0);
+            if (Volatile.Read(ref _pendingFrame) is not null
+                && Interlocked.Exchange(ref _frameUpdateQueued, 1) == 0)
+            {
+                _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
+            }
+        }
+    }
+
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
     public string PreviewPathDescription => IsTextureNative

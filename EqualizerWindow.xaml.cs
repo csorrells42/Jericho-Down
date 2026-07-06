@@ -293,12 +293,11 @@ public partial class EqualizerWindow : Window
     private CameraFrame? _pendingCameraFrame;
     private WriteableBitmap? _cameraPreviewBitmap;
     private Dx12Camera? _dx12Camera;
-    private TextureNativeFrameInfo? _pendingTextureNativeFrameInfo;
+    private readonly Dx12Camera.TextureNativeStatusPump _textureNativeStatusPump;
     private string? _lastTextureNativeCameraError;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private string? _lastPreviewRecordingDiagnostics;
-    private int _textureNativeFrameUpdateQueued;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -341,6 +340,7 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
+        _textureNativeStatusPump = new Dx12Camera.TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame);
         ApplyPersistedWindowPlacement();
         _safeStartCameraRecoveryActive = _startupRecovery.PreviousRunDidNotCloseCleanly;
         _safeStartDx12Disabled = _startupRecovery.PreviousRunDidNotCloseCleanly;
@@ -1946,7 +1946,7 @@ public partial class EqualizerWindow : Window
         _isDirectShowPreviewActive = false;
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
-        _pendingTextureNativeFrameInfo = null;
+        _textureNativeStatusPump.Reset();
         ClearPodcastCameraPreviewSurface();
         ClearKaraokeVideoPreviewBitmap();
         Dx12Camera.CollectReleasedCamera();
@@ -2361,8 +2361,7 @@ public partial class EqualizerWindow : Window
             _lastTextureNativeRecordingResult = recordingResult;
         }
 
-        _pendingTextureNativeFrameInfo = null;
-        System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
+        _textureNativeStatusPump.Reset();
     }
 
     private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
@@ -2540,18 +2539,11 @@ public partial class EqualizerWindow : Window
 
     private void TextureNativeCameraFrameAvailable(object? sender, TextureNativeFrameInfo frame)
     {
-        System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, frame);
-        if (System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) != 0)
-        {
-            return;
-        }
-
-        Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
+        _textureNativeStatusPump.FrameAvailable(frame);
     }
 
-    private void ProcessPendingTextureNativeFrame()
+    private void ProcessPendingTextureNativeFrame(TextureNativeFrameInfo frame)
     {
-        var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, null);
         if (frame is not null && _isCameraEnabled && Dx12Camera.IsPodcastTabSelected(MainTabControl))
         {
             CameraPreviewImage.Visibility = Visibility.Collapsed;
@@ -2568,13 +2560,6 @@ public partial class EqualizerWindow : Window
                     _pendingVideoDenoiseStrength,
                     Dx12Camera.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled));
             }
-        }
-
-        System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
-        if (System.Threading.Volatile.Read(ref _pendingTextureNativeFrameInfo) is not null
-            && System.Threading.Interlocked.Exchange(ref _textureNativeFrameUpdateQueued, 1) == 0)
-        {
-            Dispatcher.BeginInvoke((Action)ProcessPendingTextureNativeFrame, DispatcherPriority.Background);
         }
     }
 
