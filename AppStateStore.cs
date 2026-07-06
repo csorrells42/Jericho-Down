@@ -225,6 +225,12 @@ internal sealed class AppSettingsState
 
     public string? KaraokeBrowserFolder { get; set; }
 
+    public string? KaraokeRecordingFolder { get; set; }
+
+    public string? LastKaraokeRecordingPath { get; set; }
+
+    public bool KaraokeRecordVideoEnabled { get; set; }
+
     public string? KaraokeLyrics { get; set; }
 
     public double? KaraokeKeySemitones { get; set; }

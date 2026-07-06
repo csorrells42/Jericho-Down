@@ -214,8 +214,26 @@ internal static class Nv12FrameConverter
             return null;
         }
 
-        var nv12 = new byte[sourceLength];
-        System.Runtime.InteropServices.Marshal.Copy(source, nv12, 0, sourceLength);
+        var nv12 = new byte[requiredLength];
+        System.Runtime.InteropServices.Marshal.Copy(source, nv12, 0, requiredLength);
+        return ConvertToBgra(nv12, pitch, width, height, out bgraStride);
+    }
+
+    public static byte[]? ConvertToBgra(byte[] nv12, int nv12Stride, int width, int height, out int bgraStride)
+    {
+        bgraStride = width * 4;
+        if (width <= 0 || height <= 0 || nv12Stride < width)
+        {
+            return null;
+        }
+
+        var pitch = nv12Stride;
+        var requiredLength = pitch * height + pitch * ((height + 1) / 2);
+        if (nv12.Length < requiredLength)
+        {
+            return null;
+        }
+
         var bgra = new byte[bgraStride * height];
         var uvOffset = pitch * height;
         for (var y = 0; y < height; y++)

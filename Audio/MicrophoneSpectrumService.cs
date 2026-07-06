@@ -17,16 +17,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int CaptureBufferMilliseconds = 8;
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
     private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(25).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
-    private const int WasapiProcessedOutputLatencyMilliseconds = 50;
-    private const int WaveOutProcessedOutputLatencyMilliseconds = 90;
+    private const int WasapiProcessedOutputLatencyMilliseconds = 18;
+    private const int WaveOutProcessedOutputLatencyMilliseconds = 45;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
     private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(55);
-    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(55);
-    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(140);
+    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(18);
+    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(18);
+    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(64);
     private const double ProcessedOutputRecoveryRampMilliseconds = 6d;
     private const int MaximumCaptureRecoveryAttempts = 3;
     [ThreadStatic]
@@ -985,33 +985,14 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _processedOutputSampleRate = _activeSampleRate;
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
         var preferWasapiEndpoint = CanUseWasapiProcessedOutput();
-        var preferWaveOutForHardwareEndpoint = ShouldPreferWaveOutForHardwareEndpoint();
-        if (preferWaveOutForHardwareEndpoint && TryStartWaveOutProcessedOutput(floatProvider, out var hardwareFloatWaveOut))
-        {
-            _processedOutputProvider = floatProvider;
-            _processedOutput = hardwareFloatWaveOut;
-            _processedOutputBackendDescription = "speaker-safe WaveOut";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
         var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
-        if (preferWaveOutForHardwareEndpoint && TryStartWaveOutProcessedOutput(pcmProvider, out var hardwarePcmWaveOut))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutput = hardwarePcmWaveOut;
-            _processedOutputBackendDescription = "speaker-safe WaveOut PCM";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
         if (preferWasapiEndpoint
             && TryStartWasapiProcessedOutput(floatProvider, out var endpointFloatOutput, out var endpointFloatPlaybackProvider))
         {
             _processedOutputProvider = floatProvider;
             _processedOutputPlaybackProvider = endpointFloatPlaybackProvider;
             _processedOutput = endpointFloatOutput;
-            _processedOutputBackendDescription = "WASAPI endpoint";
+            _processedOutputBackendDescription = "low-latency WASAPI endpoint";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1022,7 +1003,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             _processedOutputProvider = pcmProvider;
             _processedOutputPlaybackProvider = endpointPcmPlaybackProvider;
             _processedOutput = endpointPcmOutput;
-            _processedOutputBackendDescription = "WASAPI endpoint PCM";
+            _processedOutputBackendDescription = "low-latency WASAPI endpoint PCM";
             ArmProcessedOutputRecoveryRamp();
             return;
         }
@@ -1079,29 +1060,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private bool CanUseWaveOutProcessedOutputFallback()
     {
         return string.IsNullOrWhiteSpace(_processedOutputEndpointId) || _processedOutputDeviceNumber >= 0;
-    }
-
-    private bool ShouldPreferWaveOutForHardwareEndpoint()
-    {
-        return !string.IsNullOrWhiteSpace(_processedOutputEndpointId)
-            && _processedOutputDeviceNumber >= 0
-            && !IsLikelyVirtualOutputDevice(_processedOutputDeviceName);
-    }
-
-    private static bool IsLikelyVirtualOutputDevice(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return false;
-        }
-
-        return name.Contains("virtual", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("cable", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("vb-audio", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("voicemeeter", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("broadcast", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("obs", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("ndi", StringComparison.OrdinalIgnoreCase);
     }
 
     private static BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)

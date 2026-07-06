@@ -30,6 +30,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public bool IsAvailable => OperatingSystem.IsWindows();
 
+    public bool IsRunning => _reader is not null && _cancellation is not null;
+
     public bool DenoiseEnabled { get; set; }
 
     public double DenoiseStrength { get; set; } = 2d;

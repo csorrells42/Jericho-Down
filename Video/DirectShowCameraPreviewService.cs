@@ -44,6 +44,17 @@ public sealed class DirectShowCameraPreviewService : IDisposable
     public event EventHandler<CameraFrame>? FrameAvailable;
     public event EventHandler<string>? StatusChanged;
 
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _mediaControl is not null;
+            }
+        }
+    }
+
     public bool DenoiseEnabled { get; set; }
 
     public double DenoiseStrength { get; set; } = 2d;

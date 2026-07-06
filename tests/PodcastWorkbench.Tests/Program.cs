@@ -1,4 +1,6 @@
+using System.Collections;
 using System.ComponentModel;
+using System.Reflection;
 using PodcastWorkbench;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
@@ -21,7 +23,14 @@ var tests = new (string Name, Action Test)[]
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
-    ("Camera mode auto display text is stable", CameraModeAutoDisplayText)
+    ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
+    ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
+    ("Enhanced karaoke LRC parses syllable timings", EnhancedKaraokeLrcParsesSyllableTimings),
+    ("Timed karaoke syllable selection waits for first timestamp", TimedKaraokeSyllableSelectionWaitsForFirstTimestamp),
+    ("WhisperX word JSON builds enhanced syllable LRC", WhisperXWordJsonBuildsEnhancedSyllableLrc),
+    ("WhisperX character JSON drives syllable timings", WhisperXCharacterJsonDrivesSyllableTimings),
+    ("WhisperX segment fallback estimates word timings", WhisperXSegmentFallbackEstimatesWordTimings),
+    ("Demucs vocal output accepts MP3 fallback", DemucsVocalOutputAcceptsMp3Fallback)
 };
 
 var failed = 0;
@@ -292,10 +301,287 @@ static void AudioDeviceFormatDisplayText()
     Assert(format.ToString() == "48 kHz, 2 ch, 24-bit", "audio format display text changed unexpectedly");
 }
 
+static void ProcessedMonitorUsesLowLatencyBuffering()
+{
+    var wasapiLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WasapiProcessedOutputLatencyMilliseconds");
+    var waveOutLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WaveOutProcessedOutputLatencyMilliseconds");
+    var initialBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "InitialLiveOutputBufferedDuration");
+    var targetBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "TargetLiveOutputBufferedDuration");
+    var maximumBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "MaximumLiveOutputBufferedDuration");
+
+    Assert(wasapiLatency <= 20, "WASAPI live monitor latency should stay singing-friendly");
+    Assert(waveOutLatency <= 50, "WaveOut fallback latency should stay below the old speaker-safe path");
+    Assert(initialBuffer <= TimeSpan.FromMilliseconds(20), "initial live monitor buffer should stay low");
+    Assert(targetBuffer <= TimeSpan.FromMilliseconds(20), "target live monitor buffer should stay low");
+    Assert(maximumBuffer <= TimeSpan.FromMilliseconds(70), "maximum live monitor buffer should trim latency buildup");
+}
+
 static void CameraModeAutoDisplayText()
 {
     Assert(CameraVideoMode.Auto.IsAuto, "auto mode should be marked as auto");
     Assert(CameraVideoMode.Auto.ToString() == "Auto", "auto mode display text changed unexpectedly");
+}
+
+static void EnhancedKaraokeLrcParsesSyllableTimings()
+{
+    const string lrc = "[00:01.00] <00:01.20>beau<00:01.50>ti<00:01.70>ful <00:02.10>song";
+    var lines = ParseKaraokeLines(lrc);
+
+    Assert(lines.Count == 1, "one enhanced karaoke line should be parsed");
+    Assert(GetProperty<string>(lines[0], "Text") == "beautiful song", "inline timestamps should not leak into display text");
+
+    var tokens = GetProperty<IEnumerable>(lines[0], "Tokens").Cast<object>().ToList();
+    Assert(tokens.Count == 5, "enhanced line should preserve per-syllable tokens and the word space");
+    Assert(GetProperty<string>(tokens[0], "Text") == "beau", "first syllable text changed");
+    Assert(GetProperty<string>(tokens[1], "Text") == "ti", "second syllable text changed");
+    Assert(GetProperty<string>(tokens[2], "Text") == "ful", "third syllable text changed");
+    Assert(GetProperty<string>(tokens[3], "Text") == " ", "word spacing should remain a non-singing token");
+    Assert(GetProperty<string>(tokens[4], "Text") == "song", "next word text changed");
+    Assert(GetProperty<bool>(tokens[0], "IsSingable"), "syllable tokens should be singable");
+    Assert(!GetProperty<bool>(tokens[3], "IsSingable"), "spacing should not be singable");
+    Assert(GetProperty<TimeSpan?>(tokens[0], "Start") == TimeSpan.FromMilliseconds(1_200), "first syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[1], "Start") == TimeSpan.FromMilliseconds(1_500), "second syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[2], "Start") == TimeSpan.FromMilliseconds(1_700), "third syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[4], "Start") == TimeSpan.FromMilliseconds(2_100), "next word timestamp changed");
+}
+
+static void TimedKaraokeSyllableSelectionWaitsForFirstTimestamp()
+{
+    const string lrc = "[00:01.00] <00:01.20>beau<00:01.50>ti<00:01.70>ful <00:02.10>song";
+    var line = CreateKaraokeLineItem(ParseKaraokeLines(lrc)[0], TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
+
+    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_100)) == -1, "ball should wait for the first syllable timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_200)) == 0, "first syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_520)) == 1, "second syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_720)) == 2, "third syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(2_120)) == 4, "next word should activate at its timestamp");
+}
+
+static void WhisperXWordJsonBuildsEnhancedSyllableLrc()
+{
+    const string json = """
+        {
+          "segments": [
+            {
+              "start": 1.0,
+              "end": 2.6,
+              "text": "Beautiful song",
+              "words": [
+                { "word": "Beautiful", "start": 1.0, "end": 2.0 },
+                { "word": "song", "start": 2.1, "end": 2.6 }
+              ]
+            }
+          ]
+        }
+        """;
+
+    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var syllableCount);
+
+    Assert(syllableCount == 4, "Beautiful song should generate four singable syllable tokens");
+    Assert(lrc.Contains("[re:Demucs vocals + WhisperX word alignment]", StringComparison.Ordinal), "LRC should identify the pro alignment source");
+    Assert(lrc.Contains("<00:01.00>Beau", StringComparison.Ordinal), "first syllable should keep WhisperX word start timing");
+    Assert(lrc.Contains(">ti", StringComparison.Ordinal), "middle syllable should be represented separately");
+    Assert(lrc.Contains(">ful", StringComparison.Ordinal), "final syllable should be represented separately");
+    Assert(lrc.Contains("<00:02.10>song", StringComparison.Ordinal), "next word should keep its own WhisperX start timing");
+
+    var parsedLine = ParseKaraokeLines(lrc).Single(line => GetProperty<string>(line, "Text") == "Beautiful song");
+    var tokens = GetProperty<IEnumerable>(parsedLine, "Tokens").Cast<object>().ToList();
+    Assert(tokens.Count(token => GetProperty<bool>(token, "IsSingable")) == 4, "generated LRC should parse back into four singable display tokens");
+}
+
+static void WhisperXCharacterJsonDrivesSyllableTimings()
+{
+    const string json = """
+        {
+          "segments": [
+            {
+              "start": 1.0,
+              "end": 2.6,
+              "text": "Beautiful song",
+              "words": [
+                { "word": "Beautiful", "start": 1.0, "end": 2.0 },
+                { "word": "song", "start": 2.1, "end": 2.6 }
+              ],
+              "chars": [
+                { "char": "B", "start": 1.0, "end": 1.1 },
+                { "char": "e", "start": 1.1, "end": 1.2 },
+                { "char": "a", "start": 1.2, "end": 1.3 },
+                { "char": "u", "start": 1.3, "end": 1.4 },
+                { "char": "t", "start": 1.4, "end": 1.5 },
+                { "char": "i", "start": 1.5, "end": 1.6 },
+                { "char": "f", "start": 1.6, "end": 1.7 },
+                { "char": "u", "start": 1.7, "end": 1.8 },
+                { "char": "l", "start": 1.8, "end": 1.9 },
+                { "char": " ", "start": 2.0, "end": 2.1 },
+                { "char": "s", "start": 2.1, "end": 2.2 },
+                { "char": "o", "start": 2.2, "end": 2.3 },
+                { "char": "n", "start": 2.3, "end": 2.4 },
+                { "char": "g", "start": 2.4, "end": 2.5 }
+              ]
+            }
+          ]
+        }
+        """;
+
+    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var syllableCount);
+
+    Assert(syllableCount == 4, "character-aligned Beautiful song should still produce four singable syllables");
+    Assert(lrc.Contains("<00:01.00>Beau", StringComparison.Ordinal), "first syllable should use first character alignment");
+    Assert(lrc.Contains("<00:01.40>ti", StringComparison.Ordinal), "second syllable should use character-derived timing");
+    Assert(lrc.Contains("<00:01.60>ful", StringComparison.Ordinal), "third syllable should use character-derived timing");
+}
+
+static void WhisperXSegmentFallbackEstimatesWordTimings()
+{
+    const string json = """
+        {
+          "segments": [
+            { "start": 1.0, "end": 3.0, "text": "hello bright world" }
+          ]
+        }
+        """;
+
+    var words = ReadWhisperXWordsFromJson(json);
+
+    Assert(words.Count == 3, "segment-only WhisperX output should split into estimated words");
+    Assert(GetProperty<string>(words[0], "Text") == "hello", "first estimated word changed");
+    Assert(GetProperty<string>(words[1], "Text") == "bright", "second estimated word changed");
+    Assert(GetProperty<string>(words[2], "Text") == "world", "third estimated word changed");
+    Assert(GetProperty<TimeSpan>(words[0], "Start") == TimeSpan.FromSeconds(1), "segment fallback should keep segment start");
+    Assert(GetProperty<TimeSpan>(words[0], "End") <= GetProperty<TimeSpan>(words[1], "Start"), "estimated words should be monotonic");
+    Assert(GetProperty<TimeSpan>(words[1], "End") <= GetProperty<TimeSpan>(words[2], "Start"), "estimated words should stay ordered");
+    Assert(GetProperty<TimeSpan>(words[2], "End") == TimeSpan.FromSeconds(3), "segment fallback should keep segment end");
+}
+
+static void DemucsVocalOutputAcceptsMp3Fallback()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var nested = Path.Combine(folder, "htdemucs", "song");
+        Directory.CreateDirectory(nested);
+        var mp3Path = Path.Combine(nested, "vocals.mp3");
+        File.WriteAllBytes(mp3Path, [1, 2, 3]);
+
+        var detectedPath = (string?)InvokeEqualizerWindowPrivateStatic("FindDemucsVocalOutput", folder);
+
+        Assert(string.Equals(detectedPath, mp3Path, StringComparison.OrdinalIgnoreCase), "Demucs MP3 fallback vocals should be detected");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static List<object> ParseKaraokeLines(string text)
+{
+    var parsed = InvokeEqualizerWindowPrivateStatic("ParseKaraokeTimedLyrics", text);
+    return ((IEnumerable)parsed).Cast<object>().ToList();
+}
+
+static List<object> ReadWhisperXWordsFromJson(string json)
+{
+    return ((IEnumerable)ReadWhisperXWordsObjectFromJson(json)).Cast<object>().ToList();
+}
+
+static object ReadWhisperXWordsObjectFromJson(string json)
+{
+    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    var path = Path.Combine(folder, "whisperx.json");
+    try
+    {
+        File.WriteAllText(path, json);
+        return InvokeEqualizerWindowPrivateStatic("ReadWhisperXWords", path);
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static string BuildEnhancedKaraokeLrcFromJson(string json, out int syllableCount)
+{
+    var words = ReadWhisperXWordsObjectFromJson(json);
+    var lines = InvokeEqualizerWindowPrivateStatic("GroupKaraokeWordsIntoLines", words);
+    var args = new object?[] { lines, 0 };
+    var lrc = (string)InvokeEqualizerWindowPrivateStaticWithArgs("BuildEnhancedKaraokeLrc", args);
+    syllableCount = (int)args[1]!;
+    return lrc;
+}
+
+static object CreateKaraokeLineItem(object timedLine, TimeSpan start, TimeSpan end)
+{
+    var lineType = typeof(EqualizerWindow).GetNestedType("KaraokeLyricLineItem", BindingFlags.NonPublic);
+    if (lineType is null)
+    {
+        throw new InvalidOperationException("karaoke lyric line type was not found");
+    }
+
+    return Activator.CreateInstance(
+        lineType,
+        GetProperty<string>(timedLine, "Text"),
+        start,
+        end,
+        GetProperty<object>(timedLine, "Tokens"))!;
+}
+
+static int GetActiveKaraokeTokenIndex(object line, TimeSpan position)
+{
+    return (int)InvokeEqualizerWindowPrivateStatic("GetActiveKaraokeTokenIndex", line, position);
+}
+
+static object InvokeEqualizerWindowPrivateStatic(string methodName, params object?[] args)
+{
+    return InvokeEqualizerWindowPrivateStaticWithArgs(methodName, args);
+}
+
+static object InvokeEqualizerWindowPrivateStaticWithArgs(string methodName, object?[] args)
+{
+    var method = typeof(EqualizerWindow).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
+    if (method is null)
+    {
+        throw new InvalidOperationException($"EqualizerWindow.{methodName} was not found");
+    }
+
+    return method.Invoke(null, args) ?? throw new InvalidOperationException($"EqualizerWindow.{methodName} returned null");
+}
+
+static T GetProperty<T>(object target, string name)
+{
+    var property = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+    if (property is null)
+    {
+        throw new InvalidOperationException($"{target.GetType().Name}.{name} was not found");
+    }
+
+    return (T)property.GetValue(target)!;
+}
+
+static T GetPrivateStaticValue<T>(Type type, string name)
+{
+    var field = type.GetField(name, BindingFlags.Static | BindingFlags.NonPublic);
+    if (field is null)
+    {
+        throw new InvalidOperationException($"{type.Name}.{name} was not found");
+    }
+
+    return field.IsLiteral
+        ? (T)field.GetRawConstantValue()!
+        : (T)field.GetValue(null)!;
 }
 
 static void Assert(bool condition, string message)
