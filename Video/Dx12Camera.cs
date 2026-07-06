@@ -1014,6 +1014,7 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    // there be dragons here
     public sealed class TextureNativeStatusPump
     {
         private readonly Dispatcher _dispatcher;
@@ -1102,6 +1103,7 @@ public sealed class Dx12Camera : IDisposable
             _pendingFrame = null;
         }
     }
+    // dragons all gone home
 
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
