@@ -1061,6 +1061,48 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public sealed class CpuPreviewFramePump
+    {
+        private readonly Dispatcher _dispatcher;
+        private readonly Action<CameraFrame> _processFrame;
+        private CameraFrame? _pendingFrame;
+        private bool _frameUpdateQueued;
+
+        public CpuPreviewFramePump(Dispatcher dispatcher, Action<CameraFrame> processFrame)
+        {
+            _dispatcher = dispatcher;
+            _processFrame = processFrame;
+        }
+
+        public void FrameAvailable(CameraFrame frame)
+        {
+            _pendingFrame = frame;
+            if (_frameUpdateQueued)
+            {
+                return;
+            }
+
+            _frameUpdateQueued = true;
+            _dispatcher.BeginInvoke(() =>
+            {
+                var latestFrame = _pendingFrame;
+                _pendingFrame = null;
+                _frameUpdateQueued = false;
+
+                if (latestFrame is not null)
+                {
+                    _processFrame(latestFrame);
+                }
+            });
+        }
+
+        public void Reset()
+        {
+            _frameUpdateQueued = false;
+            _pendingFrame = null;
+        }
+    }
+
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
     public string PreviewPathDescription => IsTextureNative

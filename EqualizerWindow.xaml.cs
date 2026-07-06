@@ -282,7 +282,6 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingCameraUi;
     private bool _isUpdatingCameraControls;
     private bool _isLoadingCameraModes;
-    private bool _isCameraFrameUpdateQueued;
     private bool _isCameraServiceStopPending;
     private bool _isDirectShowPreviewActive;
     private int _cameraServiceStopOperationVersion;
@@ -290,7 +289,7 @@ public partial class EqualizerWindow : Window
     private double _pendingVideoDenoiseStrength = DenoiseDefaultStrength;
     private double _videoDenoiseSliderStrength = DenoiseDefaultStrength;
     private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
-    private CameraFrame? _pendingCameraFrame;
+    private readonly Dx12Camera.CpuPreviewFramePump _cpuPreviewFramePump;
     private WriteableBitmap? _cameraPreviewBitmap;
     private Dx12Camera? _dx12Camera;
     private readonly Dx12Camera.TextureNativeStatusPump _textureNativeStatusPump;
@@ -340,6 +339,7 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
+        _cpuPreviewFramePump = new Dx12Camera.CpuPreviewFramePump(Dispatcher, ProcessPendingCameraPreviewFrame);
         _textureNativeStatusPump = new Dx12Camera.TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame);
         ApplyPersistedWindowPlacement();
         _safeStartCameraRecoveryActive = _startupRecovery.PreviousRunDidNotCloseCleanly;
@@ -1944,8 +1944,7 @@ public partial class EqualizerWindow : Window
 
         _dx12Camera = null;
         _isDirectShowPreviewActive = false;
-        _isCameraFrameUpdateQueued = false;
-        _pendingCameraFrame = null;
+        _cpuPreviewFramePump.Reset();
         _textureNativeStatusPump.Reset();
         ClearPodcastCameraPreviewSurface();
         ClearKaraokeVideoPreviewBitmap();
@@ -2175,8 +2174,7 @@ public partial class EqualizerWindow : Window
         _lastTextureNativeCameraError = null;
         Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
         _isDirectShowPreviewActive = false;
-        _isCameraFrameUpdateQueued = false;
-        _pendingCameraFrame = null;
+        _cpuPreviewFramePump.Reset();
         _cameraPreviewBitmap = null;
         ClearPreviewSurface(
             CameraPreviewImage,
@@ -2288,9 +2286,8 @@ public partial class EqualizerWindow : Window
     private void StopCameraPreview(string status)
     {
         StopTextureNativeCameraStream();
-        _isCameraFrameUpdateQueued = false;
         _isDirectShowPreviewActive = false;
-        _pendingCameraFrame = null;
+        _cpuPreviewFramePump.Reset();
         _cameraPreviewBitmap = null;
         ClearPreviewSurface(CameraPreviewImage, CameraPlaceholder, CameraPreviewStatusText, status);
         ClearKaraokeVideoPreviewBitmap();
@@ -2366,59 +2363,50 @@ public partial class EqualizerWindow : Window
 
     private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
     {
-        _pendingCameraFrame = frame;
-        if (_isCameraFrameUpdateQueued)
+        _cpuPreviewFramePump.FrameAvailable(frame);
+    }
+
+    private void ProcessPendingCameraPreviewFrame(CameraFrame latestFrame)
+    {
+        if (!_isCameraEnabled)
         {
             return;
         }
 
-        _isCameraFrameUpdateQueued = true;
-        Dispatcher.BeginInvoke(() =>
+        if (_dx12Camera?.IsFallback == true)
         {
-            var latestFrame = _pendingCameraFrame;
-            _pendingCameraFrame = null;
-            _isCameraFrameUpdateQueued = false;
+            _dx12Camera.RenderFallbackFrame(
+                latestFrame,
+                _pendingVideoColorSettings,
+                _pendingVideoDenoiseEnabled,
+                _pendingVideoDenoiseStrength);
+            return;
+        }
 
-            if (latestFrame is null || !_isCameraEnabled)
-            {
-                return;
-            }
+        if (!Dx12Camera.IsPodcastTabSelected(MainTabControl))
+        {
+            return;
+        }
 
-            if (_dx12Camera?.IsFallback == true)
-            {
-                _dx12Camera.RenderFallbackFrame(
-                    latestFrame,
-                    _pendingVideoColorSettings,
-                    _pendingVideoDenoiseEnabled,
-                    _pendingVideoDenoiseStrength);
-                return;
-            }
+        ClearKaraokeVideoPreviewBitmap();
+        if (latestFrame.HasBgra)
+        {
+            UpdateCameraPreviewBitmap(latestFrame);
+            CameraPreviewImage.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            CameraPreviewImage.Visibility = Visibility.Collapsed;
+        }
 
-            if (!Dx12Camera.IsPodcastTabSelected(MainTabControl))
-            {
-                return;
-            }
+        CameraPlaceholder.Visibility = Visibility.Collapsed;
 
-            ClearKaraokeVideoPreviewBitmap();
-            if (latestFrame.HasBgra)
-            {
-                UpdateCameraPreviewBitmap(latestFrame);
-                CameraPreviewImage.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                CameraPreviewImage.Visibility = Visibility.Collapsed;
-            }
-
-            CameraPlaceholder.Visibility = Visibility.Collapsed;
-
-            if (CameraComboBox.SelectedItem is CameraDevice camera)
-            {
-                var renderer = latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
-                var status = $"{Dx12Camera.FormatCameraStatus("Live", camera, Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {renderer}";
-                CameraPreviewStatusText.Text = status;
-            }
-        });
+        if (CameraComboBox.SelectedItem is CameraDevice camera)
+        {
+            var renderer = latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
+            var status = $"{Dx12Camera.FormatCameraStatus("Live", camera, Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {renderer}";
+            CameraPreviewStatusText.Text = status;
+        }
     }
 
     private void UpdateCameraPreviewBitmap(CameraFrame frame)
