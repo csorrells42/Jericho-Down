@@ -294,13 +294,11 @@ public partial class EqualizerWindow : Window
     private WriteableBitmap? _cameraPreviewBitmap;
     private Dx12Camera? _dx12Camera;
     private TextureNativeFrameInfo? _pendingTextureNativeFrameInfo;
-    private Direct3D12PreviewHost? _direct3D12PreviewHost;
     private string? _lastTextureNativeCameraError;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
     private string? _lastPreviewRecordingDiagnostics;
     private int _textureNativeFrameUpdateQueued;
-    private long _cameraBgraPreviewFrameNumber;
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
@@ -2069,7 +2067,6 @@ public partial class EqualizerWindow : Window
         StopTextureNativeCameraStream();
         _directShowPreviewService.Stop();
         _isDirectShowPreviewActive = false;
-        HideDirect3D12PreviewHost();
         CameraPreviewImage.Visibility = Visibility.Visible;
 
         if (Dx12Camera.IsDirectShowCamera(camera))
@@ -2100,7 +2097,7 @@ public partial class EqualizerWindow : Window
 
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = Dx12Camera.IsPreviewRendererReady(_dx12Camera);
         _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
         if (_cameraPreviewService.Start(camera, mode))
         {
@@ -2195,7 +2192,6 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            HideDirect3D12PreviewHost();
             if (!Dx12Camera.TryOpenTextureNativeIntoSlot(
                 ref _dx12Camera,
                 camera,
@@ -2372,7 +2368,6 @@ public partial class EqualizerWindow : Window
         var camera = _dx12Camera;
         if (camera is null)
         {
-            HideDirect3D12PreviewHost();
             return;
         }
 
@@ -2388,65 +2383,6 @@ public partial class EqualizerWindow : Window
 
         _pendingTextureNativeFrameInfo = null;
         System.Threading.Volatile.Write(ref _textureNativeFrameUpdateQueued, 0);
-    }
-
-    private void ShowDirect3D12PreviewHost(IntPtr nativeD3D12Device)
-    {
-        if (CameraPreviewSurfaceGrid is null)
-        {
-            if (nativeD3D12Device != IntPtr.Zero)
-            {
-                System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
-            }
-
-            return;
-        }
-
-        if (_direct3D12PreviewHost is null)
-        {
-            _direct3D12PreviewHost = new Direct3D12PreviewHost(nativeD3D12Device)
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
-            };
-            _direct3D12PreviewHost.StatusChanged += Direct3D12PreviewHostStatusChanged;
-            CameraPreviewSurfaceGrid.Children.Insert(1, _direct3D12PreviewHost);
-        }
-        else if (nativeD3D12Device != IntPtr.Zero)
-        {
-            System.Runtime.InteropServices.Marshal.Release(nativeD3D12Device);
-        }
-
-        _direct3D12PreviewHost.Visibility = Visibility.Visible;
-    }
-
-    private void HideDirect3D12PreviewHost()
-    {
-        var host = _direct3D12PreviewHost;
-        if (host is null)
-        {
-            return;
-        }
-
-        _direct3D12PreviewHost = null;
-        host.StatusChanged -= Direct3D12PreviewHostStatusChanged;
-        if (CameraPreviewSurfaceGrid is not null)
-        {
-            CameraPreviewSurfaceGrid.Children.Remove(host);
-        }
-
-        host.Dispose();
-    }
-
-    private void Direct3D12PreviewHostStatusChanged(object? sender, string status)
-    {
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (_isCameraEnabled && Dx12Camera.IsPodcastTabSelected(MainTabControl))
-            {
-                CameraPreviewStatusText.Text = status;
-            }
-        });
     }
 
     private void CameraPreviewFrameAvailable(object? sender, CameraFrame frame)
@@ -2485,36 +2421,21 @@ public partial class EqualizerWindow : Window
             }
 
             ClearKaraokeVideoPreviewBitmap();
-            if (_direct3D12PreviewHost?.IsReady == true)
+            if (latestFrame.HasBgra)
             {
-                _direct3D12PreviewHost.RenderBgraFrame(
-                    latestFrame,
-                    System.Threading.Interlocked.Increment(ref _cameraBgraPreviewFrameNumber),
-                    _pendingVideoColorSettings,
-                    _pendingVideoDenoiseEnabled,
-                    _pendingVideoDenoiseStrength);
-                CameraPreviewImage.Visibility = Visibility.Collapsed;
+                UpdateCameraPreviewBitmap(latestFrame);
+                CameraPreviewImage.Visibility = Visibility.Visible;
             }
             else
             {
-                if (latestFrame.HasBgra)
-                {
-                    UpdateCameraPreviewBitmap(latestFrame);
-                    CameraPreviewImage.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    CameraPreviewImage.Visibility = Visibility.Collapsed;
-                }
+                CameraPreviewImage.Visibility = Visibility.Collapsed;
             }
 
             CameraPlaceholder.Visibility = Visibility.Collapsed;
 
             if (CameraComboBox.SelectedItem is CameraDevice camera)
             {
-                var renderer = _direct3D12PreviewHost?.IsReady == true
-                    ? latestFrame.HasNv12 ? "DX12 NV12" : "DX12 BGRA"
-                    : latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
+                var renderer = latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
                 var status = $"{Dx12Camera.FormatCameraStatus("Live", camera, Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {renderer}";
                 CameraPreviewStatusText.Text = status;
             }
@@ -3104,7 +3025,7 @@ public partial class EqualizerWindow : Window
         _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
         _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _direct3D12PreviewHost?.IsReady == true;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = Dx12Camera.IsPreviewRendererReady(_dx12Camera);
         _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
 
@@ -3353,7 +3274,7 @@ public partial class EqualizerWindow : Window
                     _pendingVideoDenoiseStrength,
                     _pendingVideoColorSettings,
                     Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
-                    _direct3D12PreviewHost?.IsReady == true),
+                    Dx12Camera.IsPreviewRendererReady(_dx12Camera)),
                 textureNative = textureResult is null
                     ? null
                     : new
@@ -4320,7 +4241,7 @@ public partial class EqualizerWindow : Window
             _pendingVideoDenoiseEnabled,
             _pendingVideoColorSettings.HasVisibleAdjustments,
             Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
-            _direct3D12PreviewHost?.IsReady == true,
+            Dx12Camera.IsPreviewRendererReady(_dx12Camera),
             _lastTextureNativeCameraError);
         VideoPipelineText.Text = $"Pipeline: {pipeline}";
         var parity = Dx12Camera.FormatPreviewRecordParity(

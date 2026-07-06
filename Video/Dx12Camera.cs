@@ -835,6 +835,11 @@ public sealed class Dx12Camera : IDisposable
 
     public bool IsReady => _previewHost?.IsReady == true;
 
+    public static bool IsPreviewRendererReady(Dx12Camera? camera)
+    {
+        return camera?.IsReady == true;
+    }
+
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
     public string PreviewPathDescription => IsTextureNative
