@@ -12,6 +12,7 @@ public sealed class Dx12Camera : IDisposable
 {
     private static readonly object ActiveLock = new();
     private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(2);
+    private const int PumpWarningFrameReplacementInterval = 50;
     private static readonly Dictionary<string, string> TextureNativePreviewFailures = new(StringComparer.OrdinalIgnoreCase);
     private static Dx12Camera? _active;
 
@@ -1019,26 +1020,27 @@ public sealed class Dx12Camera : IDisposable
     {
         private readonly Dispatcher _dispatcher;
         private readonly Action<TextureNativeFrameInfo> _processFrame;
+        private readonly Action<string>? _warningSink;
         private TextureNativeFrameInfo? _pendingFrame;
         private int _frameUpdateQueued;
-        private long _framesReceived;
-        private long _dispatcherPosts;
-        private long _uiCallbacks;
-        private long _framesReplaced;
-        private long _resets;
+        private int _framesReplacedSinceWarning;
+        private int _warningQueued;
 
-        public TextureNativeStatusPump(Dispatcher dispatcher, Action<TextureNativeFrameInfo> processFrame)
+        public TextureNativeStatusPump(
+            Dispatcher dispatcher,
+            Action<TextureNativeFrameInfo> processFrame,
+            Action<string>? warningSink = null)
         {
             _dispatcher = dispatcher;
             _processFrame = processFrame;
+            _warningSink = warningSink;
         }
 
         public void FrameAvailable(TextureNativeFrameInfo frame)
         {
-            Interlocked.Increment(ref _framesReceived);
             if (Interlocked.Exchange(ref _pendingFrame, frame) is not null)
             {
-                Interlocked.Increment(ref _framesReplaced);
+                TrackFrameReplacement("DX12 status");
             }
 
             if (Interlocked.Exchange(ref _frameUpdateQueued, 1) != 0)
@@ -1046,7 +1048,6 @@ public sealed class Dx12Camera : IDisposable
                 return;
             }
 
-            Interlocked.Increment(ref _dispatcherPosts);
             _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
         }
 
@@ -1054,22 +1055,11 @@ public sealed class Dx12Camera : IDisposable
         {
             _pendingFrame = null;
             Volatile.Write(ref _frameUpdateQueued, 0);
-            Interlocked.Increment(ref _resets);
-        }
-
-        public PumpDiagnostics GetDiagnostics()
-        {
-            return new PumpDiagnostics(
-                Interlocked.Read(ref _framesReceived),
-                Interlocked.Read(ref _dispatcherPosts),
-                Interlocked.Read(ref _uiCallbacks),
-                Interlocked.Read(ref _framesReplaced),
-                Interlocked.Read(ref _resets));
+            Volatile.Write(ref _framesReplacedSinceWarning, 0);
         }
 
         private void ProcessPendingFrame()
         {
-            Interlocked.Increment(ref _uiCallbacks);
             var frame = Interlocked.Exchange(ref _pendingFrame, null);
             if (frame is not null)
             {
@@ -1080,9 +1070,36 @@ public sealed class Dx12Camera : IDisposable
             if (Volatile.Read(ref _pendingFrame) is not null
                 && Interlocked.Exchange(ref _frameUpdateQueued, 1) == 0)
             {
-                Interlocked.Increment(ref _dispatcherPosts);
                 _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
             }
+        }
+
+        private void TrackFrameReplacement(string pumpName)
+        {
+            var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
+            if (replaced < PumpWarningFrameReplacementInterval)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _framesReplacedSinceWarning, 0) >= PumpWarningFrameReplacementInterval)
+            {
+                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames before the UI caught up.");
+            }
+        }
+
+        private void QueueWarning(string warning)
+        {
+            if (_warningSink is null || Interlocked.Exchange(ref _warningQueued, 1) != 0)
+            {
+                return;
+            }
+
+            _dispatcher.BeginInvoke(() =>
+            {
+                Volatile.Write(ref _warningQueued, 0);
+                _warningSink(warning);
+            }, DispatcherPriority.Background);
         }
     }
 
@@ -1090,35 +1107,34 @@ public sealed class Dx12Camera : IDisposable
     {
         private readonly Dispatcher _dispatcher;
         private readonly Action<CameraFrame> _processFrame;
+        private readonly Action<string>? _warningSink;
         private CameraFrame? _pendingFrame;
         private bool _frameUpdateQueued;
-        private long _framesReceived;
-        private long _dispatcherPosts;
-        private long _uiCallbacks;
-        private long _framesReplaced;
-        private long _resets;
+        private int _framesReplacedSinceWarning;
+        private int _warningQueued;
 
-        public CpuPreviewFramePump(Dispatcher dispatcher, Action<CameraFrame> processFrame)
+        public CpuPreviewFramePump(
+            Dispatcher dispatcher,
+            Action<CameraFrame> processFrame,
+            Action<string>? warningSink = null)
         {
             _dispatcher = dispatcher;
             _processFrame = processFrame;
+            _warningSink = warningSink;
         }
 
         public void FrameAvailable(CameraFrame frame)
         {
-            Interlocked.Increment(ref _framesReceived);
             _pendingFrame = frame;
             if (_frameUpdateQueued)
             {
-                Interlocked.Increment(ref _framesReplaced);
+                TrackFrameReplacement("CPU preview");
                 return;
             }
 
             _frameUpdateQueued = true;
-            Interlocked.Increment(ref _dispatcherPosts);
             _dispatcher.BeginInvoke(() =>
             {
-                Interlocked.Increment(ref _uiCallbacks);
                 var latestFrame = _pendingFrame;
                 _pendingFrame = null;
                 _frameUpdateQueued = false;
@@ -1134,36 +1150,36 @@ public sealed class Dx12Camera : IDisposable
         {
             _frameUpdateQueued = false;
             _pendingFrame = null;
-            Interlocked.Increment(ref _resets);
+            Volatile.Write(ref _framesReplacedSinceWarning, 0);
         }
 
-        public PumpDiagnostics GetDiagnostics()
+        private void TrackFrameReplacement(string pumpName)
         {
-            return new PumpDiagnostics(
-                Interlocked.Read(ref _framesReceived),
-                Interlocked.Read(ref _dispatcherPosts),
-                Interlocked.Read(ref _uiCallbacks),
-                Interlocked.Read(ref _framesReplaced),
-                Interlocked.Read(ref _resets));
+            var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
+            if (replaced < PumpWarningFrameReplacementInterval)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _framesReplacedSinceWarning, 0) >= PumpWarningFrameReplacementInterval)
+            {
+                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames before the UI caught up.");
+            }
         }
-    }
 
-    public readonly record struct PumpDiagnostics(
-        long FramesReceived,
-        long DispatcherPosts,
-        long UiCallbacks,
-        long FramesReplaced,
-        long Resets);
+        private void QueueWarning(string warning)
+        {
+            if (_warningSink is null || Interlocked.Exchange(ref _warningQueued, 1) != 0)
+            {
+                return;
+            }
 
-    public static string FormatPumpDiagnostics(PumpDiagnostics cpu, PumpDiagnostics textureNative)
-    {
-        return $"Pumps: {FormatPumpDiagnostics("CPU", cpu)} | {FormatPumpDiagnostics("DX", textureNative)}";
-    }
-
-    private static string FormatPumpDiagnostics(string name, PumpDiagnostics diagnostics)
-    {
-        var queued = Math.Max(0, diagnostics.DispatcherPosts - diagnostics.UiCallbacks);
-        return $"{name} rx {diagnostics.FramesReceived} ui {diagnostics.UiCallbacks} repl {diagnostics.FramesReplaced} q {queued}";
+            _dispatcher.BeginInvoke(() =>
+            {
+                Volatile.Write(ref _warningQueued, 0);
+                _warningSink(warning);
+            }, DispatcherPriority.Background);
+        }
     }
     // dragons all gone home
 

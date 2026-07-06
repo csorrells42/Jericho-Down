@@ -51,6 +51,7 @@ public partial class EqualizerWindow : Window
     private const double DenoiseMaximumStrength = 5d;
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
@@ -300,6 +301,8 @@ public partial class EqualizerWindow : Window
     private CancellationTokenSource? _cameraModeLoadCancellation;
     private SpectrumFrame? _pendingSpectrumFrame;
     private int _spectrumFrameUpdateQueued;
+    private string? _cameraPumpWarningText;
+    private DateTime _cameraPumpWarningExpiresUtc = DateTime.MinValue;
     private Waveform3DWindow? _waveform3DWindow;
     private EqualizerBand? _hoveredEqualizerBand;
     private bool _showWaveform;
@@ -339,8 +342,8 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
-        _cpuPreviewFramePump = new Dx12Camera.CpuPreviewFramePump(Dispatcher, ProcessPendingCameraPreviewFrame);
-        _textureNativeStatusPump = new Dx12Camera.TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame);
+        _cpuPreviewFramePump = new Dx12Camera.CpuPreviewFramePump(Dispatcher, ProcessPendingCameraPreviewFrame, CameraPumpWarningRaised);
+        _textureNativeStatusPump = new Dx12Camera.TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame, CameraPumpWarningRaised);
         ApplyPersistedWindowPlacement();
         _safeStartCameraRecoveryActive = _startupRecovery.PreviousRunDidNotCloseCleanly;
         _safeStartDx12Disabled = _startupRecovery.PreviousRunDidNotCloseCleanly;
@@ -4203,8 +4206,20 @@ public partial class EqualizerWindow : Window
             Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
             Dx12Camera.IsPreviewRendererReady(_dx12Camera),
             _lastTextureNativeCameraError);
-        VideoPipelineText.Text =
-            $"Pipeline: {pipeline}{Environment.NewLine}{Dx12Camera.FormatPumpDiagnostics(_cpuPreviewFramePump.GetDiagnostics(), _textureNativeStatusPump.GetDiagnostics())}";
+        var pumpWarningActive = !string.IsNullOrWhiteSpace(_cameraPumpWarningText)
+            && DateTime.UtcNow <= _cameraPumpWarningExpiresUtc;
+        var pipelineText = pumpWarningActive
+            ? $"Pipeline: {pipeline}{Environment.NewLine}{_cameraPumpWarningText}"
+            : $"Pipeline: {pipeline}";
+        if (!pumpWarningActive)
+        {
+            _cameraPumpWarningText = null;
+        }
+
+        if (!string.Equals(VideoPipelineText.Text, pipelineText, StringComparison.Ordinal))
+        {
+            VideoPipelineText.Text = pipelineText;
+        }
         var parity = Dx12Camera.FormatPreviewRecordParity(
             _isCameraEnabled,
             _dx12Camera,
@@ -4229,6 +4244,16 @@ public partial class EqualizerWindow : Window
         RecordingHealthText.Foreground = skipped > 0 || encoderDelay > 3
             ? _meterWarnBrush
             : _meterGoodBrush;
+    }
+
+    private void CameraPumpWarningRaised(string warning)
+    {
+        _cameraPumpWarningText = warning;
+        _cameraPumpWarningExpiresUtc = DateTime.UtcNow + CameraPumpWarningDisplayDuration;
+        if (CameraPreviewStatusText is not null && _isCameraEnabled)
+        {
+            CameraPreviewStatusText.Text = warning;
+        }
     }
 
     private (int Offered, int Written, int Skipped) GetActiveRecordingCounters()
