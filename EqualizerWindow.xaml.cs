@@ -4203,7 +4203,8 @@ public partial class EqualizerWindow : Window
             Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
             Dx12Camera.IsPreviewRendererReady(_dx12Camera),
             _lastTextureNativeCameraError);
-        VideoPipelineText.Text = $"Pipeline: {pipeline}";
+        VideoPipelineText.Text =
+            $"Pipeline: {pipeline}{Environment.NewLine}{Dx12Camera.FormatPumpDiagnostics(_cpuPreviewFramePump.GetDiagnostics(), _textureNativeStatusPump.GetDiagnostics())}";
         var parity = Dx12Camera.FormatPreviewRecordParity(
             _isCameraEnabled,
             _dx12Camera,
