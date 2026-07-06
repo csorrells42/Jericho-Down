@@ -857,6 +857,46 @@ public sealed class Dx12Camera : IDisposable
         camera.AttachPreviewHandlers(frameAvailable, statusChanged);
     }
 
+    public static bool TryOpenTextureNativeIntoSlot(
+        ref Dx12Camera? slot,
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        if (slot is not null)
+        {
+            return false;
+        }
+
+        var dx12Camera = OpenTextureNative(camera, mode, target, denoiseEnabled, denoiseStrength);
+        AttachToSlot(ref slot, dx12Camera, frameAvailable, statusChanged);
+        return true;
+    }
+
+    public static bool TryOpenFallbackIntoSlot(
+        ref Dx12Camera? slot,
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        string fallbackDescription,
+        Action fallbackStop,
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        if (slot is not null)
+        {
+            return false;
+        }
+
+        var owner = OpenFallback(camera, mode, target, fallbackDescription, fallbackStop);
+        AttachToSlot(ref slot, owner, frameAvailable, statusChanged);
+        return true;
+    }
+
     public static void DetachFromSlot(
         ref Dx12Camera? slot,
         EventHandler<TextureNativeFrameInfo> frameAvailable,
@@ -870,6 +910,33 @@ public sealed class Dx12Camera : IDisposable
 
         camera.DetachPreviewHandlers(frameAvailable, statusChanged);
         slot = null;
+    }
+
+    public static TextureNativeRecordingResult? CloseSlot(
+        ref Dx12Camera? slot,
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged,
+        bool collectGarbage = true)
+    {
+        var camera = slot;
+        if (camera is null)
+        {
+            return null;
+        }
+
+        DetachFromSlot(ref slot, frameAvailable, statusChanged);
+
+        TextureNativeRecordingResult? result = null;
+        try
+        {
+            result = camera.StopRecordingIfActive();
+        }
+        finally
+        {
+            camera.Close(collectGarbage);
+        }
+
+        return result;
     }
 
     public void AttachPreviewHandlers(

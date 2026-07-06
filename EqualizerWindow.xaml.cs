@@ -2196,17 +2196,15 @@ public partial class EqualizerWindow : Window
         try
         {
             HideDirect3D12PreviewHost();
-            if (_dx12Camera is null)
-            {
-                var dx12Camera = Dx12Camera.OpenTextureNative(
-                    camera,
-                    mode,
-                    CreateActiveDx12CameraPreviewTarget(),
-                    _pendingVideoDenoiseEnabled,
-                    _pendingVideoDenoiseStrength);
-                AttachDx12Camera(dx12Camera);
-            }
-            else
+            if (!Dx12Camera.TryOpenTextureNativeIntoSlot(
+                ref _dx12Camera,
+                camera,
+                mode,
+                CreateActiveDx12CameraPreviewTarget(),
+                _pendingVideoDenoiseEnabled,
+                _pendingVideoDenoiseStrength,
+                TextureNativeCameraFrameAvailable,
+                TextureNativeCameraStatusChanged))
             {
                 ShutDownBecauseCameraWasNotDead();
                 return false;
@@ -2224,43 +2222,26 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void AttachDx12Camera(Dx12Camera camera)
-    {
-        Dx12Camera.AttachToSlot(
-            ref _dx12Camera,
-            camera,
-            TextureNativeCameraFrameAvailable,
-            TextureNativeCameraStatusChanged);
-    }
-
-    private void DetachDx12Camera()
-    {
-        Dx12Camera.DetachFromSlot(
-            ref _dx12Camera,
-            TextureNativeCameraFrameAvailable,
-            TextureNativeCameraStatusChanged);
-    }
-
     private void ClaimFallbackCameraOwner(
         CameraDevice camera,
         CameraVideoMode mode,
         string fallbackDescription,
         Action fallbackStop)
     {
-        if (_dx12Camera is null)
+        if (Dx12Camera.TryOpenFallbackIntoSlot(
+            ref _dx12Camera,
+            camera,
+            mode,
+            CreateActiveDx12CameraPreviewTarget(),
+            fallbackDescription,
+            fallbackStop,
+            TextureNativeCameraFrameAvailable,
+            TextureNativeCameraStatusChanged))
         {
-            var owner = Dx12Camera.OpenFallback(
-                camera,
-                mode,
-                CreateActiveDx12CameraPreviewTarget(),
-                fallbackDescription,
-                fallbackStop);
-            AttachDx12Camera(owner);
+            return;
         }
-        else
-        {
-            ShutDownBecauseCameraWasNotDead();
-        }
+
+        ShutDownBecauseCameraWasNotDead();
     }
 
     private void ShutDownBecauseCameraWasNotDead()
@@ -2395,9 +2376,10 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var recordingResult = Dx12Camera.CloseActiveCamera(
-            camera,
-            _ => DetachDx12Camera(),
+        var recordingResult = Dx12Camera.CloseSlot(
+            ref _dx12Camera,
+            TextureNativeCameraFrameAvailable,
+            TextureNativeCameraStatusChanged,
             collectGarbage: false);
         if (recordingResult is not null)
         {
