@@ -2198,8 +2198,12 @@ public partial class EqualizerWindow : Window
             HideDirect3D12PreviewHost();
             if (_dx12Camera is null)
             {
-                var dx12Camera = new Dx12Camera(camera, mode, CreateActiveDx12CameraPreviewTarget());
-                dx12Camera.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+                var dx12Camera = Dx12Camera.OpenTextureNative(
+                    camera,
+                    mode,
+                    CreateActiveDx12CameraPreviewTarget(),
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength);
                 AttachDx12Camera(dx12Camera);
             }
             else
@@ -2229,8 +2233,7 @@ public partial class EqualizerWindow : Window
 
         DetachDx12Camera();
         _dx12Camera = camera;
-        camera.FrameAvailable += TextureNativeCameraFrameAvailable;
-        camera.StatusChanged += TextureNativeCameraStatusChanged;
+        camera.AttachPreviewHandlers(TextureNativeCameraFrameAvailable, TextureNativeCameraStatusChanged);
     }
 
     private void DetachDx12Camera()
@@ -2241,8 +2244,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        camera.FrameAvailable -= TextureNativeCameraFrameAvailable;
-        camera.StatusChanged -= TextureNativeCameraStatusChanged;
+        camera.DetachPreviewHandlers(TextureNativeCameraFrameAvailable, TextureNativeCameraStatusChanged);
         _dx12Camera = null;
     }
 

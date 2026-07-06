@@ -729,6 +729,24 @@ public sealed class Dx12Camera : IDisposable
         }
     }
 
+    public static Dx12Camera OpenTextureNative(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        bool denoiseEnabled,
+        double denoiseStrength)
+    {
+        if (!target.PreviewWindow.Dispatcher.CheckAccess())
+        {
+            return target.PreviewWindow.Dispatcher.Invoke(
+                () => OpenTextureNative(camera, mode, target, denoiseEnabled, denoiseStrength));
+        }
+
+        var dx12Camera = new Dx12Camera(camera, mode, target);
+        dx12Camera.Denoise(denoiseEnabled, denoiseStrength);
+        return dx12Camera;
+    }
+
     public static void DestroyActive(bool collectGarbage = false)
     {
         lock (ActiveLock)
@@ -812,6 +830,22 @@ public sealed class Dx12Camera : IDisposable
     public string PreviewPathDescription => IsTextureNative
         ? _previewHost?.PreviewPathDescription ?? "DX12 preview path pending"
         : _fallbackDescription;
+
+    public void AttachPreviewHandlers(
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        FrameAvailable += frameAvailable;
+        StatusChanged += statusChanged;
+    }
+
+    public void DetachPreviewHandlers(
+        EventHandler<TextureNativeFrameInfo> frameAvailable,
+        EventHandler<string> statusChanged)
+    {
+        FrameAvailable -= frameAvailable;
+        StatusChanged -= statusChanged;
+    }
 
     public void Denoise(int magnitude)
     {
