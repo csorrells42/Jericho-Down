@@ -204,6 +204,259 @@ public sealed class Dx12Camera : IDisposable
         return $"Loading modes: {camera.Name} - selected mode: {FormatCameraMode(selectedMode)}";
     }
 
+    public static string FormatCameraIdleStatus(bool cameraAvailable, CameraVideoMode mode)
+    {
+        return cameraAvailable
+            ? FormatCameraDisabledStatus(mode)
+            : "No camera source found";
+    }
+
+    public static string FormatCameraPreviewStatus(string status, CameraDevice? camera, CameraVideoMode mode)
+    {
+        return camera is null
+            ? status
+            : $"{FormatCameraStatus("Preview", camera, mode)} - {status}";
+    }
+
+    public static void ResetCameraControlPanel(Panel? controlPanel, TextBlock? statusText, string status)
+    {
+        controlPanel?.Children.Clear();
+        if (statusText is not null)
+        {
+            statusText.Text = status;
+        }
+    }
+
+    public static string FormatChooseCameraControlsStatus()
+    {
+        return "Choose a camera to load controls.";
+    }
+
+    public static string FormatNoCameraControlsStatus()
+    {
+        return "No standard Windows camera controls were exposed by this source.";
+    }
+
+    public static string FormatCameraControlsLoadedStatus(CameraDevice camera, int controlCount)
+    {
+        return $"{controlCount} Windows camera controls exposed by {camera.Name}.";
+    }
+
+    public static string FormatCameraControlSetStatus(CameraControlItem control, int value, bool isAuto, bool success)
+    {
+        return success
+            ? $"{control.Name}: {(isAuto ? "Auto" : FormatCameraControlValue(value))}"
+            : $"Could not set {control.Name}. The camera may be busy or this control may be locked by its driver.";
+    }
+
+    public static bool UpdateAdvancedCameraControlsVisibility(
+        Panel? advancedControlsPanel,
+        CheckBox? advancedControlsCheckBox,
+        Panel? cameraControlPanel,
+        bool loadWhenOpened)
+    {
+        if (advancedControlsPanel is null || advancedControlsCheckBox is null)
+        {
+            return false;
+        }
+
+        var isVisible = advancedControlsCheckBox.IsChecked == true;
+        advancedControlsPanel.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        return isVisible && loadWhenOpened && cameraControlPanel is not null && cameraControlPanel.Children.Count == 0;
+    }
+
+    public static void UpdateVideoDenoiseValueText(TextBlock? valueText, double strength)
+    {
+        if (valueText is not null)
+        {
+            valueText.Text = $"{strength:0.0}";
+        }
+    }
+
+    public static string FormatVideoDenoiseStatus(bool isTextureNative, bool denoiseEnabled)
+    {
+        if (isTextureNative)
+        {
+            return denoiseEnabled
+                ? "DX12 video grain reduction is live on the preview and will be included in texture-native recordings."
+                : "DX12 video grain reduction is off on the preview.";
+        }
+
+        return denoiseEnabled
+            ? "Video grain reduction is live on the preview and CPU recording path."
+            : "Video grain reduction is off on the preview and CPU recording path.";
+    }
+
+    public static string FormatVideoColorPolishStatus(bool isTextureNative, VideoFrameColorSettings settings)
+    {
+        if (isTextureNative)
+        {
+            return settings.HasVisibleAdjustments
+                ? "Color polish is armed for CPU fallback/recording. The current DX12 texture preview remains raw."
+                : "Color polish is neutral.";
+        }
+
+        return settings.HasVisibleAdjustments
+            ? "Color polish is live on the DX12 preview shader and recording path."
+            : "Color polish is neutral on the preview and recording path.";
+    }
+
+    public static void UpdateVideoColorValueText(
+        TextBlock? exposureText,
+        TextBlock? contrastText,
+        TextBlock? saturationText,
+        TextBlock? warmthText,
+        VideoFrameColorSettings settings)
+    {
+        if (exposureText is not null)
+        {
+            exposureText.Text = settings.Exposure.ToString("+0;-0;0");
+        }
+
+        if (contrastText is not null)
+        {
+            contrastText.Text = settings.Contrast.ToString("+0;-0;0");
+        }
+
+        if (saturationText is not null)
+        {
+            saturationText.Text = settings.Saturation.ToString("+0;-0;0");
+        }
+
+        if (warmthText is not null)
+        {
+            warmthText.Text = settings.Warmth.ToString("+0;-0;0");
+        }
+    }
+
+    public static bool IsKaraokeTabSelected(TabControl? tabControl)
+    {
+        return IsTabSelected(tabControl, "Karaoke");
+    }
+
+    public static bool IsPodcastTabSelected(TabControl? tabControl)
+    {
+        return IsTabSelected(tabControl, "Podcast");
+    }
+
+    public static PreviewTarget CreateActivePreviewTarget(
+        TabControl? tabControl,
+        bool karaokeRecordVideoEnabled,
+        Panel podcastPreviewWindow,
+        UIElement? podcastPreviewImage,
+        UIElement? podcastPlaceholder,
+        TextBlock? podcastStatusText,
+        Panel? karaokePreviewWindow,
+        UIElement? karaokePreviewImage,
+        UIElement? karaokePlaceholder,
+        TextBlock? karaokeStatusText,
+        Action clearPodcastFrameCache,
+        Action clearKaraokePreview)
+    {
+        if (IsKaraokeTabSelected(tabControl) && karaokeRecordVideoEnabled && karaokePreviewWindow is not null)
+        {
+            clearPodcastFrameCache();
+            ClearPreviewSurface(
+                podcastPreviewImage,
+                podcastPlaceholder,
+                podcastStatusText,
+                "Camera preview is owned by Karaoke.");
+
+            return new PreviewTarget(
+                karaokePreviewWindow,
+                karaokePreviewImage,
+                karaokePlaceholder,
+                karaokeStatusText,
+                0,
+                "Karaoke");
+        }
+
+        clearKaraokePreview();
+        return new PreviewTarget(
+            podcastPreviewWindow,
+            podcastPreviewImage,
+            podcastPlaceholder,
+            podcastStatusText,
+            1,
+            "Podcast");
+    }
+
+    public static void ClearPreviewSurface(
+        UIElement? previewImage,
+        UIElement? placeholder,
+        TextBlock? statusText = null,
+        string? status = null)
+    {
+        if (previewImage is Image image)
+        {
+            image.Source = null;
+        }
+
+        if (previewImage is not null)
+        {
+            previewImage.Visibility = Visibility.Collapsed;
+        }
+
+        if (placeholder is not null)
+        {
+            placeholder.Visibility = Visibility.Visible;
+        }
+
+        if (statusText is not null && status is not null)
+        {
+            statusText.Text = status;
+        }
+    }
+
+    public static void ShowPreviewSurface(UIElement? previewImage, UIElement? placeholder)
+    {
+        if (placeholder is not null)
+        {
+            placeholder.Visibility = Visibility.Collapsed;
+        }
+
+        if (previewImage is not null)
+        {
+            previewImage.Visibility = Visibility.Visible;
+        }
+    }
+
+    public static void UpdateKaraokeVideoPreviewState(
+        bool recordVideoEnabled,
+        bool cameraEnabled,
+        Image? previewImage,
+        TextBlock? placeholder,
+        TextBlock? statusText)
+    {
+        if (previewImage is null || placeholder is null)
+        {
+            return;
+        }
+
+        if (!recordVideoEnabled)
+        {
+            ClearPreviewSurface(previewImage, placeholder, statusText, "Karaoke camera preview is off.");
+            placeholder.Text = "Video preview off";
+            return;
+        }
+
+        if (!cameraEnabled)
+        {
+            ClearPreviewSurface(previewImage, placeholder, statusText, "Turn on the camera to start Karaoke video preview.");
+            placeholder.Text = "Turn camera on for preview";
+            return;
+        }
+
+        placeholder.Visibility = previewImage.Source is null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        placeholder.Text = "Starting Karaoke camera";
+        if (statusText is not null)
+        {
+            statusText.Text = "Karaoke camera preview is starting.";
+        }
+    }
+
     public static string FormatTextureNativeCameraStatus(
         Dx12Camera? activeCamera,
         string state,
@@ -409,6 +662,12 @@ public sealed class Dx12Camera : IDisposable
             ? "auto"
             : $"{mode.Width}x{mode.Height}@{mode.FramesPerSecond:0.###}";
         return $"{cameraKey}|{modeKey}";
+    }
+
+    private static bool IsTabSelected(TabControl? tabControl, string header)
+    {
+        return tabControl?.SelectedItem is TabItem { Header: string selectedHeader }
+            && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
     }
 
     public static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)

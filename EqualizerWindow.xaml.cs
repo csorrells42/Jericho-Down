@@ -1918,7 +1918,8 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (IsPodcastTabSelected() || IsKaraokeTabSelected() && _karaokeRecordVideoEnabled)
+        if (Dx12Camera.IsPodcastTabSelected(MainTabControl)
+            || Dx12Camera.IsKaraokeTabSelected(MainTabControl) && _karaokeRecordVideoEnabled)
         {
             ReinitializeCameraForFocusedPreview();
         }
@@ -1991,9 +1992,7 @@ public partial class EqualizerWindow : Window
                 CameraPreviewStatusText.Text = "No camera source found";
                 CameraModeComboBox.ItemsSource = new[] { CameraVideoMode.Auto };
                 CameraModeComboBox.SelectedIndex = 0;
-                CameraPreviewImage.Source = null;
-                CameraPreviewImage.Visibility = Visibility.Collapsed;
-                CameraPlaceholder.Visibility = Visibility.Visible;
+                Dx12Camera.ClearPreviewSurface(CameraPreviewImage, CameraPlaceholder);
                 UpdateKaraokeVideoPreviewState();
                 return;
             }
@@ -2041,8 +2040,7 @@ public partial class EqualizerWindow : Window
 
         StopSessionPlayback();
 
-        CameraPlaceholder.Visibility = Visibility.Collapsed;
-        CameraPreviewImage.Visibility = Visibility.Visible;
+        Dx12Camera.ShowPreviewSurface(CameraPreviewImage, CameraPlaceholder);
 
         var mode = CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
         if (Dx12Camera.ShouldUseSharedTextureCameraStream(_safeStartDx12Disabled))
@@ -2189,10 +2187,11 @@ public partial class EqualizerWindow : Window
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
         _cameraPreviewBitmap = null;
-        CameraPreviewImage.Source = null;
-        CameraPreviewImage.Visibility = Visibility.Collapsed;
-        CameraPlaceholder.Visibility = Visibility.Visible;
-        CameraPreviewStatusText.Text = $"{Dx12Camera.FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames";
+        Dx12Camera.ClearPreviewSurface(
+            CameraPreviewImage,
+            CameraPlaceholder,
+            CameraPreviewStatusText,
+            $"{Dx12Camera.FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames");
 
         try
         {
@@ -2282,58 +2281,29 @@ public partial class EqualizerWindow : Window
 
     private Dx12Camera.PreviewTarget CreateActiveDx12CameraPreviewTarget()
     {
-        if (IsKaraokeTabSelected() && _karaokeRecordVideoEnabled && KaraokeVideoPreviewSurfaceGrid is not null)
-        {
-            ClearPodcastCameraPreviewSurface();
-            return new Dx12Camera.PreviewTarget(
-                KaraokeVideoPreviewSurfaceGrid,
-                KaraokeVideoPreviewImage,
-                KaraokeVideoPreviewPlaceholder,
-                KaraokeVideoPreviewStatusText,
-                0,
-                "Karaoke");
-        }
-
-        ClearKaraokeVideoPreviewBitmap();
-        return new Dx12Camera.PreviewTarget(
+        return Dx12Camera.CreateActivePreviewTarget(
+            MainTabControl,
+            _karaokeRecordVideoEnabled,
             CameraPreviewSurfaceGrid,
             CameraPreviewImage,
             CameraPlaceholder,
             CameraPreviewStatusText,
-            1,
-            "Podcast");
-    }
-
-    private bool IsKaraokeTabSelected()
-    {
-        return MainTabControl?.SelectedItem is TabItem { Header: string header }
-            && header.Equals("Karaoke", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private bool IsPodcastTabSelected()
-    {
-        return MainTabControl?.SelectedItem is TabItem { Header: string header }
-            && header.Equals("Podcast", StringComparison.OrdinalIgnoreCase);
+            KaraokeVideoPreviewSurfaceGrid,
+            KaraokeVideoPreviewImage,
+            KaraokeVideoPreviewPlaceholder,
+            KaraokeVideoPreviewStatusText,
+            () => _cameraPreviewBitmap = null,
+            ClearKaraokeVideoPreviewBitmap);
     }
 
     private void ClearPodcastCameraPreviewSurface()
     {
         _cameraPreviewBitmap = null;
-        if (CameraPreviewImage is not null)
-        {
-            CameraPreviewImage.Source = null;
-            CameraPreviewImage.Visibility = Visibility.Collapsed;
-        }
-
-        if (CameraPlaceholder is not null)
-        {
-            CameraPlaceholder.Visibility = Visibility.Visible;
-        }
-
-        if (CameraPreviewStatusText is not null)
-        {
-            CameraPreviewStatusText.Text = "Camera preview is owned by Karaoke.";
-        }
+        Dx12Camera.ClearPreviewSurface(
+            CameraPreviewImage,
+            CameraPlaceholder,
+            CameraPreviewStatusText,
+            "Camera preview is owned by Karaoke.");
     }
 
     private void StopCameraPreview(string status)
@@ -2343,10 +2313,7 @@ public partial class EqualizerWindow : Window
         _isDirectShowPreviewActive = false;
         _pendingCameraFrame = null;
         _cameraPreviewBitmap = null;
-        CameraPreviewImage.Source = null;
-        CameraPreviewImage.Visibility = Visibility.Collapsed;
-        CameraPlaceholder.Visibility = Visibility.Visible;
-        CameraPreviewStatusText.Text = status;
+        Dx12Camera.ClearPreviewSurface(CameraPreviewImage, CameraPlaceholder, CameraPreviewStatusText, status);
         ClearKaraokeVideoPreviewBitmap();
         StopCameraPreviewServicesInBackground(status);
     }
@@ -2488,7 +2455,7 @@ public partial class EqualizerWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if (_isCameraEnabled && IsPodcastTabSelected())
+            if (_isCameraEnabled && Dx12Camera.IsPodcastTabSelected(MainTabControl))
             {
                 CameraPreviewStatusText.Text = status;
             }
@@ -2525,7 +2492,7 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
-            if (!IsPodcastTabSelected())
+            if (!Dx12Camera.IsPodcastTabSelected(MainTabControl))
             {
                 return;
             }
@@ -2599,7 +2566,7 @@ public partial class EqualizerWindow : Window
 
         _karaokeRecordVideoEnabled = KaraokeRecordVideoCheckBox.IsChecked == true;
         UpdateKaraokeVideoPreviewState();
-        if (_isCameraEnabled && (IsKaraokeTabSelected() || _dx12Camera is not null))
+        if (_isCameraEnabled && (Dx12Camera.IsKaraokeTabSelected(MainTabControl) || _dx12Camera is not null))
         {
             ReinitializeCameraForFocusedPreview();
         }
@@ -2609,61 +2576,17 @@ public partial class EqualizerWindow : Window
 
     private void UpdateKaraokeVideoPreviewState()
     {
-        if (KaraokeVideoPreviewImage is null || KaraokeVideoPreviewPlaceholder is null)
-        {
-            return;
-        }
-
-        if (!_karaokeRecordVideoEnabled)
-        {
-            KaraokeVideoPreviewImage.Source = null;
-            KaraokeVideoPreviewImage.Visibility = Visibility.Collapsed;
-            KaraokeVideoPreviewPlaceholder.Visibility = Visibility.Visible;
-            KaraokeVideoPreviewPlaceholder.Text = "Video preview off";
-            if (KaraokeVideoPreviewStatusText is not null)
-            {
-                KaraokeVideoPreviewStatusText.Text = "Karaoke camera preview is off.";
-            }
-
-            return;
-        }
-
-        if (!_isCameraEnabled)
-        {
-            KaraokeVideoPreviewImage.Visibility = Visibility.Collapsed;
-            KaraokeVideoPreviewPlaceholder.Visibility = Visibility.Visible;
-            KaraokeVideoPreviewPlaceholder.Text = "Turn camera on for preview";
-            ClearKaraokeVideoPreviewBitmap();
-            if (KaraokeVideoPreviewStatusText is not null)
-            {
-                KaraokeVideoPreviewStatusText.Text = "Turn on the camera to start Karaoke video preview.";
-            }
-
-            return;
-        }
-
-        KaraokeVideoPreviewPlaceholder.Visibility = KaraokeVideoPreviewImage.Source is null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        KaraokeVideoPreviewPlaceholder.Text = "Starting Karaoke camera";
-        if (KaraokeVideoPreviewStatusText is not null)
-        {
-            KaraokeVideoPreviewStatusText.Text = "Karaoke camera preview is starting.";
-        }
+        Dx12Camera.UpdateKaraokeVideoPreviewState(
+            _karaokeRecordVideoEnabled,
+            _isCameraEnabled,
+            KaraokeVideoPreviewImage,
+            KaraokeVideoPreviewPlaceholder,
+            KaraokeVideoPreviewStatusText);
     }
 
     private void ClearKaraokeVideoPreviewBitmap()
     {
-        if (KaraokeVideoPreviewImage is not null)
-        {
-            KaraokeVideoPreviewImage.Source = null;
-            KaraokeVideoPreviewImage.Visibility = Visibility.Collapsed;
-        }
-
-        if (KaraokeVideoPreviewPlaceholder is not null)
-        {
-            KaraokeVideoPreviewPlaceholder.Visibility = Visibility.Visible;
-        }
+        Dx12Camera.ClearPreviewSurface(KaraokeVideoPreviewImage, KaraokeVideoPreviewPlaceholder);
     }
 
     private void TextureNativeCameraFrameAvailable(object? sender, TextureNativeFrameInfo frame)
@@ -2680,7 +2603,7 @@ public partial class EqualizerWindow : Window
     private void ProcessPendingTextureNativeFrame()
     {
         var frame = System.Threading.Interlocked.Exchange(ref _pendingTextureNativeFrameInfo, null);
-        if (frame is not null && _isCameraEnabled && IsPodcastTabSelected())
+        if (frame is not null && _isCameraEnabled && Dx12Camera.IsPodcastTabSelected(MainTabControl))
         {
             CameraPreviewImage.Visibility = Visibility.Collapsed;
             CameraPlaceholder.Visibility = Visibility.Visible;
@@ -2712,12 +2635,12 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled && _dx12Camera is not null)
             {
-                if (IsPodcastTabSelected())
+                if (Dx12Camera.IsPodcastTabSelected(MainTabControl))
                 {
                     CameraPreviewStatusText.Text = status;
                 }
 
-                if (IsKaraokeTabSelected() && _karaokeRecordVideoEnabled && KaraokeVideoPreviewStatusText is not null)
+                if (Dx12Camera.IsKaraokeTabSelected(MainTabControl) && _karaokeRecordVideoEnabled && KaraokeVideoPreviewStatusText is not null)
                 {
                     KaraokeVideoPreviewStatusText.Text = status;
                 }
@@ -2795,22 +2718,19 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled)
             {
-                CameraPreviewStatusText.Text = CameraComboBox.SelectedItem is CameraDevice camera
-                    ? $"{Dx12Camera.FormatCameraStatus("Preview", camera, Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {status}"
-                    : status;
+                CameraPreviewStatusText.Text = Dx12Camera.FormatCameraPreviewStatus(
+                    status,
+                    CameraComboBox.SelectedItem as CameraDevice,
+                    Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
             }
         });
     }
 
     private void UpdateCameraIdleStatus()
     {
-        if (!_cameraAvailable)
-        {
-            CameraPreviewStatusText.Text = "No camera source found";
-            return;
-        }
-
-        CameraPreviewStatusText.Text = Dx12Camera.FormatCameraDisabledStatus(Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
+        CameraPreviewStatusText.Text = Dx12Camera.FormatCameraIdleStatus(
+            _cameraAvailable,
+            Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
     }
 
     private void LoadCameraControls()
@@ -2824,44 +2744,33 @@ public partial class EqualizerWindow : Window
 
         if (CameraComboBox.SelectedItem is not CameraDevice camera)
         {
-            CameraControlStatusText.Text = "Choose a camera to load controls.";
+            CameraControlStatusText.Text = Dx12Camera.FormatChooseCameraControlsStatus();
             return;
         }
 
         var controls = _cameraControlService.GetControls(camera);
         if (controls.Count == 0)
         {
-            CameraControlStatusText.Text = "No standard Windows camera controls were exposed by this source.";
+            CameraControlStatusText.Text = Dx12Camera.FormatNoCameraControlsStatus();
             return;
         }
 
-        CameraControlStatusText.Text = $"{controls.Count} Windows camera controls exposed by {camera.Name}.";
+        CameraControlStatusText.Text = Dx12Camera.FormatCameraControlsLoadedStatus(camera, controls.Count);
         RenderCameraControls(camera, controls);
     }
 
     private void ResetCameraControlPanel(string status)
     {
-        if (CameraControlPanel is not null)
-        {
-            CameraControlPanel.Children.Clear();
-        }
-
-        if (CameraControlStatusText is not null)
-        {
-            CameraControlStatusText.Text = status;
-        }
+        Dx12Camera.ResetCameraControlPanel(CameraControlPanel, CameraControlStatusText, status);
     }
 
     private void UpdateAdvancedCameraControlsVisibility(bool loadWhenOpened)
     {
-        if (AdvancedCameraControlsPanel is null || AdvancedCameraControlsCheckBox is null)
-        {
-            return;
-        }
-
-        var isVisible = AdvancedCameraControlsCheckBox.IsChecked == true;
-        AdvancedCameraControlsPanel.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
-        if (isVisible && loadWhenOpened && CameraControlPanel is not null && CameraControlPanel.Children.Count == 0)
+        if (Dx12Camera.UpdateAdvancedCameraControlsVisibility(
+            AdvancedCameraControlsPanel,
+            AdvancedCameraControlsCheckBox,
+            CameraControlPanel,
+            loadWhenOpened))
         {
             LoadCameraControls();
         }
@@ -3099,13 +3008,13 @@ public partial class EqualizerWindow : Window
         var success = _cameraControlService.SetControl(camera, control, value, isAuto);
         if (!success)
         {
-            CameraControlStatusText.Text = $"Could not set {control.Name}. The camera may be busy or this control may be locked by its driver.";
+            CameraControlStatusText.Text = Dx12Camera.FormatCameraControlSetStatus(control, value, isAuto, success: false);
             return false;
         }
 
         control.Value = value;
         control.IsAuto = isAuto;
-        CameraControlStatusText.Text = $"{control.Name}: {(isAuto ? "Auto" : Dx12Camera.FormatCameraControlValue(value))}";
+        CameraControlStatusText.Text = Dx12Camera.FormatCameraControlSetStatus(control, value, isAuto, success: true);
         return true;
     }
 
@@ -3146,10 +3055,7 @@ public partial class EqualizerWindow : Window
         _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
         _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
 
-        if (VideoDenoiseValueText is not null)
-        {
-            VideoDenoiseValueText.Text = $"{effectiveStrength:0.0}";
-        }
+        Dx12Camera.UpdateVideoDenoiseValueText(VideoDenoiseValueText, effectiveStrength);
 
         if (restartPreview && _isCameraEnabled)
         {
@@ -3159,17 +3065,9 @@ public partial class EqualizerWindow : Window
 
         if (_isCameraEnabled)
         {
-            if (_dx12Camera?.IsTextureNative == true)
-            {
-                CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                    ? "DX12 video grain reduction is live on the preview and will be included in texture-native recordings."
-                    : "DX12 video grain reduction is off on the preview.";
-                return;
-            }
-
-            CameraControlStatusText.Text = _pendingVideoDenoiseEnabled
-                ? "Video grain reduction is live on the preview and CPU recording path."
-                : "Video grain reduction is off on the preview and CPU recording path.";
+            CameraControlStatusText.Text = Dx12Camera.FormatVideoDenoiseStatus(
+                _dx12Camera?.IsTextureNative == true,
+                _pendingVideoDenoiseEnabled);
         }
     }
 
@@ -3204,17 +3102,9 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (_dx12Camera?.IsTextureNative == true)
-        {
-            CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
-                ? "Color polish is armed for CPU fallback/recording. The current DX12 texture preview remains raw."
-                : "Color polish is neutral.";
-            return;
-        }
-
-        CameraControlStatusText.Text = _pendingVideoColorSettings.HasVisibleAdjustments
-            ? "Color polish is live on the DX12 preview shader and recording path."
-            : "Color polish is neutral on the preview and recording path.";
+        CameraControlStatusText.Text = Dx12Camera.FormatVideoColorPolishStatus(
+            _dx12Camera?.IsTextureNative == true,
+            _pendingVideoColorSettings);
     }
 
     private void ApplyVideoColorSettingsToCpuServices()
@@ -3225,25 +3115,12 @@ public partial class EqualizerWindow : Window
 
     private void UpdateVideoColorValueText()
     {
-        if (VideoExposureValueText is not null)
-        {
-            VideoExposureValueText.Text = _pendingVideoColorSettings.Exposure.ToString("+0;-0;0");
-        }
-
-        if (VideoContrastValueText is not null)
-        {
-            VideoContrastValueText.Text = _pendingVideoColorSettings.Contrast.ToString("+0;-0;0");
-        }
-
-        if (VideoSaturationValueText is not null)
-        {
-            VideoSaturationValueText.Text = _pendingVideoColorSettings.Saturation.ToString("+0;-0;0");
-        }
-
-        if (VideoWarmthValueText is not null)
-        {
-            VideoWarmthValueText.Text = _pendingVideoColorSettings.Warmth.ToString("+0;-0;0");
-        }
+        Dx12Camera.UpdateVideoColorValueText(
+            VideoExposureValueText,
+            VideoContrastValueText,
+            VideoSaturationValueText,
+            VideoWarmthValueText,
+            _pendingVideoColorSettings);
     }
 
     private void UpdateOutputFolderText()
