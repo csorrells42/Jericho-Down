@@ -1940,21 +1940,7 @@ public partial class EqualizerWindow : Window
     private void DisposeActiveCameraForReinitialize()
     {
         StopTextureNativeCameraStream();
-        try
-        {
-            _cameraPreviewService.Stop();
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            _directShowPreviewService.Stop();
-        }
-        catch
-        {
-        }
+        Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
 
         _dx12Camera = null;
         _isDirectShowPreviewActive = false;
@@ -1963,9 +1949,7 @@ public partial class EqualizerWindow : Window
         _pendingTextureNativeFrameInfo = null;
         ClearPodcastCameraPreviewSurface();
         ClearKaraokeVideoPreviewBitmap();
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
+        Dx12Camera.CollectReleasedCamera();
     }
 
     private void UpdateCameraEnabledState()
@@ -2095,11 +2079,14 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
-        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _cameraPreviewService.DenoiseHandledByPreviewRenderer = Dx12Camera.IsPreviewRendererReady(_dx12Camera);
-        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
-        if (_cameraPreviewService.Start(camera, mode))
+        if (Dx12Camera.TryStartMediaFoundationPreview(
+            _cameraPreviewService,
+            camera,
+            mode,
+            _dx12Camera,
+            _pendingVideoDenoiseEnabled,
+            _pendingVideoDenoiseStrength,
+            _pendingVideoColorSettings))
         {
             _isDirectShowPreviewActive = false;
             ClaimFallbackCameraOwner(
@@ -2113,8 +2100,14 @@ public partial class EqualizerWindow : Window
 
         if (_pendingVideoDenoiseEnabled)
         {
-            _cameraPreviewService.DenoiseEnabled = false;
-            if (_cameraPreviewService.Start(camera, mode))
+            if (Dx12Camera.TryStartMediaFoundationPreview(
+                _cameraPreviewService,
+                camera,
+                mode,
+                _dx12Camera,
+                false,
+                _pendingVideoDenoiseStrength,
+                _pendingVideoColorSettings))
             {
                 _isDirectShowPreviewActive = false;
                 ClaimFallbackCameraOwner(
@@ -2139,9 +2132,8 @@ public partial class EqualizerWindow : Window
 
     private bool TryStartDirectShowFallbackPreview(CameraDevice primaryCamera, CameraVideoMode mode)
     {
-        var fallback = primaryCamera.FallbackDevice;
-        return fallback is not null
-            && Dx12Camera.IsDirectShowCamera(fallback)
+        return Dx12Camera.TryGetDirectShowFallbackCamera(primaryCamera, out var fallback)
+            && fallback is not null
             && TryStartDirectShowPreview(primaryCamera, fallback, mode, isFallback: true);
     }
 
@@ -2151,14 +2143,17 @@ public partial class EqualizerWindow : Window
         CameraVideoMode mode,
         bool isFallback)
     {
-        _cameraPreviewService.Stop();
-        _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
-        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
         CameraPreviewStatusText.Text = isFallback
             ? $"Starting DirectShow fallback for {displayCamera.Name}"
             : $"Starting DirectShow preview for {directShowCamera.Name}";
-        if (_directShowPreviewService.Start(directShowCamera, mode))
+        if (Dx12Camera.TryStartDirectShowPreview(
+            _cameraPreviewService,
+            _directShowPreviewService,
+            directShowCamera,
+            mode,
+            _pendingVideoDenoiseEnabled,
+            _pendingVideoDenoiseStrength,
+            _pendingVideoColorSettings))
         {
             _isDirectShowPreviewActive = true;
             ClaimFallbackCameraOwner(
@@ -2178,8 +2173,7 @@ public partial class EqualizerWindow : Window
     private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
     {
         _lastTextureNativeCameraError = null;
-        _cameraPreviewService.Stop();
-        _directShowPreviewService.Stop();
+        Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
         _isDirectShowPreviewActive = false;
         _isCameraFrameUpdateQueued = false;
         _pendingCameraFrame = null;
@@ -2317,21 +2311,7 @@ public partial class EqualizerWindow : Window
 
         _ = Task.Run(() =>
         {
-            try
-            {
-                _cameraPreviewService.Stop();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                _directShowPreviewService.Stop();
-            }
-            catch
-            {
-            }
+            Dx12Camera.StopPreviewServices(_cameraPreviewService, _directShowPreviewService);
 
             Dispatcher.BeginInvoke(() =>
             {
@@ -3023,11 +3003,13 @@ public partial class EqualizerWindow : Window
 
         _pendingVideoDenoiseStrength = strength;
         _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
-        _cameraPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
-        _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _cameraPreviewService.DenoiseHandledByPreviewRenderer = Dx12Camera.IsPreviewRendererReady(_dx12Camera);
-        _directShowPreviewService.DenoiseEnabled = _pendingVideoDenoiseEnabled;
-        _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
+        Dx12Camera.ConfigureCpuPreviewServices(
+            _cameraPreviewService,
+            _directShowPreviewService,
+            _dx12Camera,
+            _pendingVideoDenoiseEnabled,
+            _pendingVideoDenoiseStrength,
+            _pendingVideoColorSettings);
 
         UpdateVideoDenoiseValueText(strength);
 
@@ -3091,8 +3073,13 @@ public partial class EqualizerWindow : Window
 
     private void ApplyVideoColorSettingsToCpuServices()
     {
-        _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
-        _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
+        Dx12Camera.ConfigureCpuPreviewServices(
+            _cameraPreviewService,
+            _directShowPreviewService,
+            _dx12Camera,
+            _pendingVideoDenoiseEnabled,
+            _pendingVideoDenoiseStrength,
+            _pendingVideoColorSettings);
     }
 
     private void UpdateVideoColorValueText()

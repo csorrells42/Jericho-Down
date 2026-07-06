@@ -901,6 +901,119 @@ public sealed class Dx12Camera : IDisposable
         return camera?.IsReady == true;
     }
 
+    public static void ConfigureMediaFoundationPreview(
+        MediaFoundationCameraPreviewService service,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        bool denoiseHandledByPreviewRenderer,
+        VideoFrameColorSettings colorSettings)
+    {
+        service.DenoiseEnabled = denoiseEnabled;
+        service.DenoiseStrength = denoiseStrength;
+        service.DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer;
+        service.ColorSettings = colorSettings;
+    }
+
+    public static void ConfigureDirectShowPreview(
+        DirectShowCameraPreviewService service,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings)
+    {
+        service.DenoiseEnabled = denoiseEnabled;
+        service.DenoiseStrength = denoiseStrength;
+        service.ColorSettings = colorSettings;
+    }
+
+    public static void ConfigureCpuPreviewServices(
+        MediaFoundationCameraPreviewService mediaFoundationPreview,
+        DirectShowCameraPreviewService directShowPreview,
+        Dx12Camera? camera,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings)
+    {
+        ConfigureMediaFoundationPreview(
+            mediaFoundationPreview,
+            denoiseEnabled,
+            denoiseStrength,
+            IsPreviewRendererReady(camera),
+            colorSettings);
+        ConfigureDirectShowPreview(
+            directShowPreview,
+            denoiseEnabled,
+            denoiseStrength,
+            colorSettings);
+    }
+
+    public static bool TryStartMediaFoundationPreview(
+        MediaFoundationCameraPreviewService service,
+        CameraDevice camera,
+        CameraVideoMode mode,
+        Dx12Camera? activeCamera,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings)
+    {
+        ConfigureMediaFoundationPreview(
+            service,
+            denoiseEnabled,
+            denoiseStrength,
+            IsPreviewRendererReady(activeCamera),
+            colorSettings);
+        return service.Start(camera, mode);
+    }
+
+    public static bool TryStartDirectShowPreview(
+        MediaFoundationCameraPreviewService mediaFoundationPreview,
+        DirectShowCameraPreviewService directShowPreview,
+        CameraDevice directShowCamera,
+        CameraVideoMode mode,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings)
+    {
+        mediaFoundationPreview.Stop();
+        ConfigureDirectShowPreview(
+            directShowPreview,
+            denoiseEnabled,
+            denoiseStrength,
+            colorSettings);
+        return directShowPreview.Start(directShowCamera, mode);
+    }
+
+    public static bool TryGetDirectShowFallbackCamera(CameraDevice primaryCamera, out CameraDevice? directShowFallback)
+    {
+        directShowFallback = primaryCamera.FallbackDevice;
+        return directShowFallback is not null && IsDirectShowCamera(directShowFallback);
+    }
+
+    public static void StopPreviewServices(
+        MediaFoundationCameraPreviewService mediaFoundationPreview,
+        DirectShowCameraPreviewService directShowPreview)
+    {
+        TryStopPreviewService(mediaFoundationPreview.Stop);
+        TryStopPreviewService(directShowPreview.Stop);
+    }
+
+    public static void CollectReleasedCamera()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+
+    private static void TryStopPreviewService(Action stop)
+    {
+        try
+        {
+            stop();
+        }
+        catch
+        {
+        }
+    }
+
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
     public string PreviewPathDescription => IsTextureNative
