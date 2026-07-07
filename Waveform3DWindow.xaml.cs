@@ -7,8 +7,8 @@ namespace PodcastWorkbench;
 
 public partial class Waveform3DWindow : Window
 {
-    private const int HistoryDepth = 72;
-    private const int PointCount = 176;
+    private const int HistoryDepth = 48;
+    private const int PointCount = 112;
     private const double XWidth = 8.6d;
     private const double ZDepth = 5.8d;
     private const double FloorY = -1.42d;
@@ -21,6 +21,13 @@ public partial class Waveform3DWindow : Window
     private readonly MeshGeometry3D _waveLineMesh = new();
     private readonly MeshGeometry3D _waveGlowMesh = new();
     private readonly MeshGeometry3D _reflectionMesh = new();
+    private readonly Dictionary<int, Int32Collection> _surfaceTriangleIndices = [];
+    private readonly Dictionary<int, Int32Collection> _ribbonTriangleIndices = [];
+    private SpectrumFrame? _pendingFrame;
+    private int _hasPendingFrame;
+    private DateTime _lastStatusUpdateUtc = DateTime.MinValue;
+    private bool _lastStatusWasWaveform = true;
+    private int _lastStatusPeakPercent = -1;
 
     public Waveform3DWindow()
     {
@@ -32,13 +39,31 @@ public partial class Waveform3DWindow : Window
         SceneModel.Children.Add(CreateWaveModel(_waveGlowMesh, CreateNeonMaterial(0.34d, 0.58d)));
         SceneModel.Children.Add(CreateWaveModel(_waveLineMesh, CreateNeonMaterial(0.98d, 0.42d)));
         UpdateOrbitCamera();
+        CompositionTarget.Rendering += CompositionTargetRendering;
+        Closed += (_, _) => CompositionTarget.Rendering -= CompositionTargetRendering;
     }
 
     public void AcceptFrame(SpectrumFrame frame)
     {
-        if (!Dispatcher.CheckAccess())
+        Interlocked.Exchange(ref _pendingFrame, frame);
+        Interlocked.Exchange(ref _hasPendingFrame, 1);
+    }
+
+    private void CompositionTargetRendering(object? sender, EventArgs e)
+    {
+        if (!WaveformViewport.IsVisible)
         {
-            Dispatcher.BeginInvoke(() => AcceptFrame(frame));
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _hasPendingFrame, 0) == 0)
+        {
+            return;
+        }
+
+        var frame = Interlocked.Exchange(ref _pendingFrame, null);
+        if (frame is null)
+        {
             return;
         }
 
@@ -56,9 +81,26 @@ public partial class Waveform3DWindow : Window
             _history.RemoveAt(0);
         }
 
-        ModeText.Text = isWaveform ? "Processed waveform" : "Processed spectrum";
-        PeakText.Text = $"Peak {frame.PeakLevel:P0}";
+        UpdateStatusText(isWaveform, frame.PeakLevel);
         RenderMesh();
+    }
+
+    private void UpdateStatusText(bool isWaveform, double peakLevel)
+    {
+        var now = DateTime.UtcNow;
+        var peakPercent = (int)Math.Round(Math.Clamp(peakLevel, 0d, 1d) * 100d);
+        if (isWaveform == _lastStatusWasWaveform
+            && peakPercent == _lastStatusPeakPercent
+            && now - _lastStatusUpdateUtc < TimeSpan.FromMilliseconds(200))
+        {
+            return;
+        }
+
+        _lastStatusWasWaveform = isWaveform;
+        _lastStatusPeakPercent = peakPercent;
+        _lastStatusUpdateUtc = now;
+        ModeText.Text = isWaveform ? "Processed waveform" : "Processed spectrum";
+        PeakText.Text = $"Peak {peakPercent}%";
     }
 
     private void CameraControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -105,9 +147,10 @@ public partial class Waveform3DWindow : Window
 
     private void PopulateSurfaceMesh(MeshGeometry3D mesh, int meshRows, int visibleRows, double yScale)
     {
-        var positions = new Point3DCollection(meshRows * PointCount);
-        var triangleIndices = new Int32Collection((meshRows - 1) * (PointCount - 1) * 6);
-        var textureCoordinates = new PointCollection(meshRows * PointCount);
+        var pointTotal = meshRows * PointCount;
+        var positions = EnsurePoint3DCollection(mesh, pointTotal);
+        var textureCoordinates = EnsureTextureCoordinateCollection(mesh, pointTotal);
+        var writeIndex = 0;
 
         for (var row = 0; row < meshRows; row++)
         {
@@ -127,40 +170,23 @@ public partial class Waveform3DWindow : Window
                 var loudness = GetLoudness(sourceRow[point]);
                 var y = sourceRow[point] * yScale * historyScale + edgeLift - 0.02d;
                 var textureX = GetTexturePosition(perspectiveAge, loudness);
-                positions.Add(new Point3D(x, y, z));
-                textureCoordinates.Add(new Point(textureX, loudness));
-            }
-        }
-
-        for (var row = 0; row < meshRows - 1; row++)
-        {
-            var rowOffset = row * PointCount;
-            var nextRowOffset = (row + 1) * PointCount;
-            for (var point = 0; point < PointCount - 1; point++)
-            {
-                var a = rowOffset + point;
-                var b = rowOffset + point + 1;
-                var c = nextRowOffset + point;
-                var d = nextRowOffset + point + 1;
-                triangleIndices.Add(a);
-                triangleIndices.Add(c);
-                triangleIndices.Add(b);
-                triangleIndices.Add(b);
-                triangleIndices.Add(c);
-                triangleIndices.Add(d);
+                positions[writeIndex] = new Point3D(x, y, z);
+                textureCoordinates[writeIndex] = new Point(textureX, loudness);
+                writeIndex++;
             }
         }
 
         mesh.Positions = positions;
         mesh.TextureCoordinates = textureCoordinates;
-        mesh.TriangleIndices = triangleIndices;
+        mesh.TriangleIndices = GetSurfaceTriangleIndices(meshRows);
     }
 
     private void PopulateRibbonMesh(MeshGeometry3D mesh, int meshRows, int visibleRows, double thickness, double yScale, bool mirror)
     {
-        var positions = new Point3DCollection(meshRows * PointCount * 2);
-        var triangleIndices = new Int32Collection(meshRows * (PointCount - 1) * 6);
-        var textureCoordinates = new PointCollection(meshRows * PointCount * 2);
+        var pointTotal = meshRows * PointCount * 2;
+        var positions = EnsurePoint3DCollection(mesh, pointTotal);
+        var textureCoordinates = EnsureTextureCoordinateCollection(mesh, pointTotal);
+        var writeIndex = 0;
 
         for (var row = 0; row < meshRows; row++)
         {
@@ -186,13 +212,96 @@ public partial class Waveform3DWindow : Window
 
                 var halfThickness = thickness * historyScale * (1d + loudness * 2.35d);
                 var textureX = GetTexturePosition(perspectiveAge, loudness);
-                positions.Add(new Point3D(x, y + halfThickness, z));
-                positions.Add(new Point3D(x, y - halfThickness, z));
-                textureCoordinates.Add(new Point(textureX, loudness));
-                textureCoordinates.Add(new Point(textureX, loudness));
+                positions[writeIndex] = new Point3D(x, y + halfThickness, z);
+                textureCoordinates[writeIndex] = new Point(textureX, loudness);
+                writeIndex++;
+                positions[writeIndex] = new Point3D(x, y - halfThickness, z);
+                textureCoordinates[writeIndex] = new Point(textureX, loudness);
+                writeIndex++;
             }
         }
 
+        mesh.Positions = positions;
+        mesh.TextureCoordinates = textureCoordinates;
+        mesh.TriangleIndices = GetRibbonTriangleIndices(meshRows);
+    }
+
+    private static Point3DCollection EnsurePoint3DCollection(MeshGeometry3D mesh, int count)
+    {
+        var collection = mesh.Positions;
+        if (collection is not null && !collection.IsFrozen && collection.Count == count)
+        {
+            return collection;
+        }
+
+        collection = new Point3DCollection(count);
+        for (var i = 0; i < count; i++)
+        {
+            collection.Add(default);
+        }
+
+        mesh.Positions = collection;
+        return collection;
+    }
+
+    private static PointCollection EnsureTextureCoordinateCollection(MeshGeometry3D mesh, int count)
+    {
+        var collection = mesh.TextureCoordinates;
+        if (collection is not null && !collection.IsFrozen && collection.Count == count)
+        {
+            return collection;
+        }
+
+        collection = new PointCollection(count);
+        for (var i = 0; i < count; i++)
+        {
+            collection.Add(default);
+        }
+
+        mesh.TextureCoordinates = collection;
+        return collection;
+    }
+
+    private Int32Collection GetSurfaceTriangleIndices(int meshRows)
+    {
+        if (_surfaceTriangleIndices.TryGetValue(meshRows, out var cached))
+        {
+            return cached;
+        }
+
+        var triangleIndices = new Int32Collection((meshRows - 1) * (PointCount - 1) * 6);
+        for (var row = 0; row < meshRows - 1; row++)
+        {
+            var rowOffset = row * PointCount;
+            var nextRowOffset = (row + 1) * PointCount;
+            for (var point = 0; point < PointCount - 1; point++)
+            {
+                var a = rowOffset + point;
+                var b = rowOffset + point + 1;
+                var c = nextRowOffset + point;
+                var d = nextRowOffset + point + 1;
+                triangleIndices.Add(a);
+                triangleIndices.Add(c);
+                triangleIndices.Add(b);
+                triangleIndices.Add(b);
+                triangleIndices.Add(c);
+                triangleIndices.Add(d);
+            }
+        }
+
+        FreezeCollection(triangleIndices);
+        _surfaceTriangleIndices[meshRows] = triangleIndices;
+        return triangleIndices;
+    }
+
+    private Int32Collection GetRibbonTriangleIndices(int meshRows)
+    {
+        if (_ribbonTriangleIndices.TryGetValue(meshRows, out var cached))
+        {
+            return cached;
+        }
+
+        var triangleIndices = new Int32Collection(meshRows * (PointCount - 1) * 6);
         for (var row = 0; row < meshRows; row++)
         {
             var rowOffset = row * PointCount * 2;
@@ -211,9 +320,17 @@ public partial class Waveform3DWindow : Window
             }
         }
 
-        mesh.Positions = positions;
-        mesh.TextureCoordinates = textureCoordinates;
-        mesh.TriangleIndices = triangleIndices;
+        FreezeCollection(triangleIndices);
+        _ribbonTriangleIndices[meshRows] = triangleIndices;
+        return triangleIndices;
+    }
+
+    private static void FreezeCollection(Freezable collection)
+    {
+        if (collection.CanFreeze)
+        {
+            collection.Freeze();
+        }
     }
 
     private static GeometryModel3D CreateWaveModel(MeshGeometry3D mesh, Material material)

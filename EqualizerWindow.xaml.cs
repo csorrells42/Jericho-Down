@@ -54,6 +54,9 @@ public partial class EqualizerWindow : Window
     private const long MaximumKaraokeEmbeddedLyricsProbeBytes = 256L * 1024L * 1024L;
     private const int MaximumKaraokeMp4AtomDepth = 24;
     private const int MaximumKaraokeMp4AtomCount = 100000;
+    private const int KaraokeLyricVisibleLineCount = 5;
+    private static readonly TimeSpan KaraokeLyricDisplayLead = TimeSpan.FromMilliseconds(240);
+    private static readonly TimeSpan KaraokeShortWordDisplayHold = TimeSpan.FromMilliseconds(110);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
@@ -182,6 +185,11 @@ public partial class EqualizerWindow : Window
     private readonly SolidColorBrush _meterGoodBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _meterWarnBrush = new(Color.FromRgb(215, 178, 32));
     private readonly SolidColorBrush _meterDangerBrush = new(Color.FromRgb(218, 80, 72));
+    private readonly SolidColorBrush _karaokeInactiveLineBrush = new(Color.FromRgb(141, 162, 183));
+    private readonly SolidColorBrush _karaokeActiveLineBrush = new(Colors.White);
+    private readonly SolidColorBrush _karaokeSungWordBrush = new(Color.FromRgb(121, 238, 226));
+    private readonly SolidColorBrush _karaokeActiveWordBrush = new(Color.FromRgb(53, 232, 216));
+    private readonly SolidColorBrush _karaokeActiveLineBackgroundBrush = new(Color.FromArgb(105, 38, 61, 74));
     private SpectrumFrame? _latestFrame;
     private double[] _renderedMagnitudes = [];
     private double[] _renderedRawMagnitudes = [];
@@ -192,6 +200,13 @@ public partial class EqualizerWindow : Window
     private double _visualCeiling = 0.25d;
     private double _recordingVisualCeiling = 0.25d;
     private double _displayInputPeak;
+    private long _lastInputLevelDisplayTimestamp;
+    private double _lastInputLevelMeterWidth = -1d;
+    private string? _lastInputCoachText;
+    private Brush? _lastInputCoachForeground;
+    private Brush? _lastInputLevelFill;
+    private long _lastPeakDisplayTimestamp;
+    private string? _lastPeakText;
     private long _lastAudioStabilityDisplayTimestamp;
     private double _audioStabilityScore;
     private double _audioStabilityMeterWidth;
@@ -277,9 +292,20 @@ public partial class EqualizerWindow : Window
     private readonly ObservableCollection<KaraokeBrowserFileItem> _karaokeBrowserFiles = [];
     private bool _karaokeQueueExplicitlyCleared;
     private readonly ObservableCollection<KaraokeLyricLineItem> _karaokeLyricDisplayLines = [];
+    private readonly List<Border> _karaokeLyricLineBorders = [];
+    private readonly List<TextBlock> _karaokeLyricLineTextBlocks = [];
+    private readonly List<List<Run>> _karaokeLyricLineRuns = [];
     private List<KaraokeTimedLyricLine> _karaokeTimedLyrics = [];
     private int _karaokeActiveLineIndex = -1;
     private int _karaokeActiveTokenIndex = -1;
+    private int _karaokeRenderedActiveLineIndex = int.MinValue;
+    private int _karaokeRenderedActiveTokenIndex = int.MinValue;
+    private int _karaokeRenderedWindowStartLineIndex = int.MinValue;
+    private readonly Stopwatch _karaokePlaybackClock = new();
+    private TimeSpan _karaokePlaybackClockBasePosition;
+    private DateTime _lastKaraokeTransportUiUpdateUtc = DateTime.MinValue;
+    private DateTime _lastAudioVisualRenderUtc = DateTime.MinValue;
+    private DateTime _lastRecordingHealthUpdateUtc = DateTime.MinValue;
     private string? _activeRecordingSessionFolder;
     private string? _lastSessionRecordingPath;
     private int _activeRecordingSetNumber;
@@ -408,7 +434,7 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
-        _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
+        _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(45);
         _karaokePlaybackPositionTimer.Tick += KaraokePlaybackPositionTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
     }
@@ -424,6 +450,11 @@ public partial class EqualizerWindow : Window
         FreezeBrush(_meterGoodBrush);
         FreezeBrush(_meterWarnBrush);
         FreezeBrush(_meterDangerBrush);
+        FreezeBrush(_karaokeInactiveLineBrush);
+        FreezeBrush(_karaokeActiveLineBrush);
+        FreezeBrush(_karaokeSungWordBrush);
+        FreezeBrush(_karaokeActiveWordBrush);
+        FreezeBrush(_karaokeActiveLineBackgroundBrush);
     }
 
     private static void FreezeBrush(SolidColorBrush brush)
@@ -1987,6 +2018,11 @@ public partial class EqualizerWindow : Window
     private bool IsKaraokeTabSelected()
     {
         return IsMainTabSelected("Karaoke");
+    }
+
+    private bool IsMicDspTabSelected()
+    {
+        return IsMainTabSelected("Mic / DSP");
     }
 
     private bool IsMainTabSelected(string header)
@@ -4228,7 +4264,13 @@ public partial class EqualizerWindow : Window
     private void CompositionTargetRendering(object? sender, EventArgs e)
     {
         UpdateRecordingTimer();
-        UpdateRecordingHealthPanel();
+        var now = DateTime.UtcNow;
+        if (now - _lastRecordingHealthUpdateUtc >= TimeSpan.FromMilliseconds(250))
+        {
+            _lastRecordingHealthUpdateUtc = now;
+            UpdateRecordingHealthPanel();
+        }
+
         SyncStandaloneAudioRecordingState();
         UpdateMicAnalysisProgress();
 
@@ -4237,9 +4279,49 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        RenderSpectrum(_latestFrame);
-        RenderWaveform(_latestFrame);
-        RenderRecordingSignalStrip(_latestFrame);
+        var isMicDspTabSelected = IsMicDspTabSelected();
+        var isPodcastTabSelected = IsPodcastTabSelected();
+        var shouldRenderSpectrum = isMicDspTabSelected
+            && SpectrumCanvas.IsVisible
+            && SpectrumCanvas.ActualWidth > 1d
+            && SpectrumCanvas.ActualHeight > 1d;
+        var shouldRenderWaveform = isMicDspTabSelected
+            && WaveformCanvas.IsVisible
+            && WaveformCanvas.ActualWidth > 1d
+            && WaveformCanvas.ActualHeight > 1d;
+        var shouldRenderRecordingStrip = isPodcastTabSelected
+            && RecordingSignalCanvas.IsVisible
+            && RecordingSignalCanvas.ActualWidth > 1d
+            && RecordingSignalCanvas.ActualHeight > 1d;
+        if (!shouldRenderSpectrum && !shouldRenderWaveform && !shouldRenderRecordingStrip)
+        {
+            return;
+        }
+
+        if (!isMicDspTabSelected)
+        {
+            if (now - _lastAudioVisualRenderUtc < TimeSpan.FromMilliseconds(16))
+            {
+                return;
+            }
+
+            _lastAudioVisualRenderUtc = now;
+        }
+
+        if (shouldRenderSpectrum)
+        {
+            RenderSpectrum(_latestFrame);
+        }
+
+        if (shouldRenderWaveform)
+        {
+            RenderWaveform(_latestFrame);
+        }
+
+        if (shouldRenderRecordingStrip)
+        {
+            RenderRecordingSignalStrip(_latestFrame);
+        }
     }
 
     private void UpdateRecordingTimer()
@@ -5089,6 +5171,7 @@ public partial class EqualizerWindow : Window
                 _isStoppingKaraokePlayback = false;
                 _karaokeTrackMediaPlayer.Play();
                 _isKaraokeTrackPlaying = true;
+                StartKaraokePlaybackClock(GetKaraokeMediaPosition());
                 _karaokePlaybackPositionTimer.Start();
                 KaraokePlaybackStatusText.Text = $"Playing {System.IO.Path.GetFileName(_karaokeTrackPath)} via Windows media fallback.";
                 return true;
@@ -5132,6 +5215,7 @@ public partial class EqualizerWindow : Window
             _isStoppingKaraokePlayback = false;
             _karaokeTrackOutput.Play();
             _isKaraokeTrackPlaying = true;
+            StartKaraokePlaybackClock(GetKaraokeMediaPosition());
             _karaokePlaybackPositionTimer.Start();
             KaraokePlaybackStatusText.Text = $"Playing {System.IO.Path.GetFileName(_karaokeTrackPath)}.";
             return true;
@@ -5154,6 +5238,7 @@ public partial class EqualizerWindow : Window
         {
             _karaokeTrackMediaPlayer.Pause();
             _isKaraokeTrackPlaying = false;
+            PauseKaraokePlaybackClock();
             _karaokePlaybackPositionTimer.Stop();
             UpdateKaraokePlaybackProgress();
             KaraokePlaybackStatusText.Text = "Backing track paused.";
@@ -5168,6 +5253,7 @@ public partial class EqualizerWindow : Window
 
         _karaokeTrackOutput.Pause();
         _isKaraokeTrackPlaying = false;
+        PauseKaraokePlaybackClock();
         _karaokePlaybackPositionTimer.Stop();
         UpdateKaraokePlaybackProgress();
         KaraokePlaybackStatusText.Text = "Backing track paused.";
@@ -5178,6 +5264,7 @@ public partial class EqualizerWindow : Window
     {
         _karaokePlaybackPositionTimer.Stop();
         _isKaraokeTrackPlaying = false;
+        StopKaraokePlaybackClock();
         _isScrubbingKaraokePlayback = false;
         if (KaraokeSeekSlider is not null && KaraokeSeekSlider.IsMouseCaptured)
         {
@@ -5259,6 +5346,7 @@ public partial class EqualizerWindow : Window
         _karaokeTrackMediaPlayer = player;
         _isStoppingKaraokePlayback = false;
         _isKaraokeTrackPlaying = true;
+        StartKaraokePlaybackClock(TimeSpan.Zero);
         _karaokePlaybackPositionTimer.Start();
         player.Play();
         KaraokePlaybackStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)} via Windows media fallback. WAV/MP3 enables key, tempo, and vocal reduction.";
@@ -5345,27 +5433,33 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var position = _karaokeTrackMediaPlayer?.Position
-            ?? _karaokeTrackReader?.CurrentTime
-            ?? TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider.Value, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds)));
+        var position = GetKaraokePlaybackClockPosition();
         var duration = _karaokeTrackDuration;
         var maxSeconds = Math.Max(1d, duration.TotalSeconds);
         var positionSeconds = Math.Clamp(position.TotalSeconds, 0d, maxSeconds);
 
-        _isUpdatingKaraokePlaybackPosition = true;
-        try
+        var now = DateTime.UtcNow;
+        var shouldUpdateTransportUi = !_isKaraokeTrackPlaying
+            || now - _lastKaraokeTransportUiUpdateUtc >= TimeSpan.FromMilliseconds(180);
+        if (shouldUpdateTransportUi)
         {
-            KaraokeSeekSlider.Minimum = 0d;
-            KaraokeSeekSlider.Maximum = maxSeconds;
-            KaraokeSeekSlider.Value = positionSeconds;
-        }
-        finally
-        {
-            _isUpdatingKaraokePlaybackPosition = false;
+            _lastKaraokeTransportUiUpdateUtc = now;
+            _isUpdatingKaraokePlaybackPosition = true;
+            try
+            {
+                KaraokeSeekSlider.Minimum = 0d;
+                KaraokeSeekSlider.Maximum = maxSeconds;
+                KaraokeSeekSlider.Value = positionSeconds;
+            }
+            finally
+            {
+                _isUpdatingKaraokePlaybackPosition = false;
+            }
+
+            KaraokePositionText.Text = FormatDuration(TimeSpan.FromSeconds(positionSeconds));
+            KaraokeDurationText.Text = duration > TimeSpan.Zero ? FormatDuration(duration) : "00:00:00";
         }
 
-        KaraokePositionText.Text = FormatDuration(TimeSpan.FromSeconds(positionSeconds));
-        KaraokeDurationText.Text = duration > TimeSpan.Zero ? FormatDuration(duration) : "00:00:00";
         UpdateActiveKaraokeLyric(TimeSpan.FromSeconds(positionSeconds));
     }
 
@@ -5415,6 +5509,7 @@ public partial class EqualizerWindow : Window
             _karaokeTrackMediaPlayer.Position = clamped;
         }
 
+        SetKaraokePlaybackClockPosition(clamped);
         _isUpdatingKaraokePlaybackPosition = true;
         try
         {
@@ -5428,7 +5523,74 @@ public partial class EqualizerWindow : Window
 
         KaraokePositionText.Text = FormatDuration(clamped);
         KaraokeDurationText.Text = duration > TimeSpan.Zero ? FormatDuration(duration) : "00:00:00";
+        _karaokeActiveLineIndex = -1;
+        _karaokeActiveTokenIndex = -1;
         UpdateActiveKaraokeLyric(clamped);
+    }
+
+    private TimeSpan GetKaraokeMediaPosition()
+    {
+        return _karaokeTrackMediaPlayer?.Position
+            ?? _karaokeTrackReader?.CurrentTime
+            ?? TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider?.Value ?? 0d, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds)));
+    }
+
+    private TimeSpan GetKaraokePlaybackClockPosition()
+    {
+        var position = _karaokePlaybackClockBasePosition;
+        if (_isKaraokeTrackPlaying && _karaokePlaybackClock.IsRunning)
+        {
+            position += TimeSpan.FromSeconds(_karaokePlaybackClock.Elapsed.TotalSeconds * GetKaraokePlaybackClockRate());
+        }
+
+        if (_karaokeTrackDuration > TimeSpan.Zero && position > _karaokeTrackDuration)
+        {
+            return _karaokeTrackDuration;
+        }
+
+        return position < TimeSpan.Zero ? TimeSpan.Zero : position;
+    }
+
+    private void StartKaraokePlaybackClock(TimeSpan position)
+    {
+        _karaokePlaybackClockBasePosition = ClampKaraokePlaybackPosition(position);
+        _karaokePlaybackClock.Restart();
+    }
+
+    private void PauseKaraokePlaybackClock()
+    {
+        _karaokePlaybackClockBasePosition = GetKaraokePlaybackClockPosition();
+        _karaokePlaybackClock.Reset();
+    }
+
+    private void StopKaraokePlaybackClock()
+    {
+        _karaokePlaybackClockBasePosition = TimeSpan.Zero;
+        _karaokePlaybackClock.Reset();
+    }
+
+    private void SetKaraokePlaybackClockPosition(TimeSpan position)
+    {
+        _karaokePlaybackClockBasePosition = ClampKaraokePlaybackPosition(position);
+        if (_isKaraokeTrackPlaying)
+        {
+            _karaokePlaybackClock.Restart();
+        }
+        else
+        {
+            _karaokePlaybackClock.Reset();
+        }
+    }
+
+    private TimeSpan ClampKaraokePlaybackPosition(TimeSpan position)
+    {
+        var maxSeconds = Math.Max(0d, _karaokeTrackDuration.TotalSeconds);
+        return TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0d, maxSeconds));
+    }
+
+    private double GetKaraokePlaybackClockRate()
+    {
+        return _karaokeTrackMediaPlayer is not null ? 1d : GetKaraokeTempoRatio();
     }
 
     private void KaraokeSeekSliderPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -5560,6 +5722,7 @@ public partial class EqualizerWindow : Window
 
         _karaokeActiveLineIndex = -1;
         _karaokeActiveTokenIndex = -1;
+        ResetKaraokeLyricVisualCache();
         RenderKaraokeLyrics(-1, -1);
 
         var position = _karaokeTrackMediaPlayer?.Position
@@ -6060,6 +6223,15 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
+            var loadedTimedLyrics = ParseKaraokeTimedLyrics(KaraokeLyricsTextBox.Text);
+            if (loadedTimedLyrics.Count > 0)
+            {
+                UpdateKaraokeLyricsDisplay();
+                KaraokeStatusText.Text = $"Using {loadedTimedLyrics.Count} already-loaded timed lyric lines. Clear lyrics to detect again.";
+                PersistAppState();
+                return;
+            }
+
             KaraokeStatusText.Text = "Separating lead vocal for pro lyric detection...";
             void Report(string message)
             {
@@ -6074,7 +6246,7 @@ public partial class EqualizerWindow : Window
             }
 
             KaraokeLyricsTextBox.Text = detectedLyrics.LyricsText;
-            KaraokeStatusText.Text = $"Detected {detectedLyrics.LineCount} lyric lines with {detectedLyrics.SyllableCount} timed syllables.";
+            KaraokeStatusText.Text = $"Detected {detectedLyrics.LineCount} lyric lines with {detectedLyrics.TimedTokenCount} timed words.";
             PersistAppState();
         }
         catch (Exception ex)
@@ -6183,60 +6355,22 @@ public partial class EqualizerWindow : Window
         TimeSpan start,
         TimeSpan? end)
     {
-        var rawTokens = SplitKaraokeSyllableTokens(text);
-        if (rawTokens.Count == 0)
+        if (string.IsNullOrEmpty(text))
         {
             return [];
         }
 
-        var singableTokens = rawTokens
-            .Where(token => token.IsSingable)
-            .ToList();
-        if (singableTokens.Count == 0)
-        {
-            return rawTokens
-                .Select(token => new KaraokeLyricToken(token.Text, null, null, false))
-                .ToList();
-        }
-
-        var weights = singableTokens
-            .Select(token => Math.Max(1d, token.Text.Count(char.IsLetterOrDigit) * 0.72d))
-            .ToList();
-        var totalWeight = Math.Max(0.01d, weights.Sum());
-        var hasExplicitEnd = end.HasValue && end.Value > start;
-        var duration = hasExplicitEnd
-            ? end!.Value - start
-            : TimeSpan.FromMilliseconds(Math.Clamp(totalWeight * 120d, 180d, 900d));
-        var cursor = start;
-        var singableIndex = 0;
-        var result = new List<KaraokeLyricToken>(rawTokens.Count);
-        foreach (var rawToken in rawTokens)
-        {
-            if (!rawToken.IsSingable)
-            {
-                result.Add(new KaraokeLyricToken(rawToken.Text, null, null, false));
-                continue;
-            }
-
-            var tokenDuration = TimeSpan.FromSeconds(duration.TotalSeconds * weights[singableIndex] / totalWeight);
-            TimeSpan? tokenEnd = singableIndex == singableTokens.Count - 1 && !hasExplicitEnd
-                ? null
-                : singableIndex == singableTokens.Count - 1
-                    ? end!.Value
-                : cursor + tokenDuration;
-            if (!tokenEnd.HasValue || tokenEnd.Value <= cursor)
-            {
-                tokenEnd = singableIndex == singableTokens.Count - 1 && !hasExplicitEnd
-                    ? null
-                    : cursor + TimeSpan.FromMilliseconds(120);
-            }
-
-            result.Add(new KaraokeLyricToken(rawToken.Text, cursor, tokenEnd, true));
-            cursor = tokenEnd ?? cursor + tokenDuration;
-            singableIndex++;
-        }
-
-        return result;
+        var tokenEnd = end.HasValue && end.Value > start
+            ? end.Value
+            : start + TimeSpan.FromMilliseconds(Math.Clamp(text.Count(IsKaraokeCoreCharacter) * 65d, 160d, 900d));
+        return
+        [
+            new KaraokeLyricToken(
+                text,
+                start,
+                tokenEnd,
+                text.Any(IsKaraokeCoreCharacter))
+        ];
     }
 
     private static IEnumerable<string> SplitKaraokeLyricLines(string text)
@@ -6261,7 +6395,10 @@ public partial class EqualizerWindow : Window
             _ = int.TryParse(normalized, out milliseconds);
         }
 
-        timestamp = TimeSpan.FromMilliseconds(minutes * 60000d + seconds * 1000d + milliseconds);
+        var rawTimestamp = TimeSpan.FromMilliseconds(minutes * 60000d + seconds * 1000d + milliseconds);
+        timestamp = rawTimestamp > KaraokeLyricDisplayLead
+            ? rawTimestamp - KaraokeLyricDisplayLead
+            : TimeSpan.Zero;
         return true;
     }
 
@@ -6365,45 +6502,58 @@ public partial class EqualizerWindow : Window
         Action<string> reportStatus)
     {
         Directory.CreateDirectory(KaraokeAiWorkFolder);
-        var workFolder = System.IO.Path.Combine(
-            KaraokeAiWorkFolder,
-            $"detect_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}");
+        var workFolder = System.IO.Path.Combine(KaraokeAiWorkFolder, "detect");
+        PrepareCleanKaraokeAiWorkArea(workFolder);
         Directory.CreateDirectory(workFolder);
 
+        var demucsInputPath = PrepareKaraokeAiInputTrack(trackPath, workFolder, reportStatus);
+        reportStatus("Separating lead vocal with Demucs...");
+        var vocalPath = RunDemucsVocalSeparation(demucsInputPath, workFolder, toolchain, reportStatus);
+
+        reportStatus("Aligning separated vocal with WhisperX...");
+        var whisperJsonPath = RunWhisperXAlignment(vocalPath, workFolder, toolchain, reportStatus);
+
+        reportStatus("Building bouncing-ball lyric timing...");
+        var words = ReadWhisperXWords(whisperJsonPath);
+        if (words.Count == 0)
+        {
+            throw new InvalidOperationException("WhisperX did not return word-level timings for this track.");
+        }
+
+        var lyricLines = GroupKaraokeWordsIntoLines(words);
+        var lyricText = BuildEnhancedKaraokeLrc(lyricLines, out var timedTokenCount);
+        if (string.IsNullOrWhiteSpace(lyricText))
+        {
+            throw new InvalidOperationException("Lyric detection finished without usable lyric text.");
+        }
+
+        return new KaraokeDetectedLyrics(lyricText, lyricLines.Count, timedTokenCount);
+    }
+
+    private static void PrepareCleanKaraokeAiWorkArea(string workFolder)
+    {
+        foreach (var staleFolder in Directory.EnumerateDirectories(KaraokeAiWorkFolder, "detect*", SearchOption.TopDirectoryOnly))
+        {
+            TryDeleteKaraokeAiWorkFolder(staleFolder);
+        }
+
+        if (Directory.Exists(workFolder))
+        {
+            throw new IOException("The previous karaoke lyric detection work folder is still in use and could not be cleared.");
+        }
+    }
+
+    private static void TryDeleteKaraokeAiWorkFolder(string workFolder)
+    {
         try
         {
-            var demucsInputPath = PrepareKaraokeAiInputTrack(trackPath, workFolder, reportStatus);
-            reportStatus("Separating lead vocal with Demucs...");
-            var vocalPath = RunDemucsVocalSeparation(demucsInputPath, workFolder, toolchain, reportStatus);
-
-            reportStatus("Aligning separated vocal with WhisperX...");
-            var whisperJsonPath = RunWhisperXAlignment(vocalPath, workFolder, toolchain, reportStatus);
-
-            reportStatus("Building bouncing-ball lyric timing...");
-            var words = ReadWhisperXWords(whisperJsonPath);
-            if (words.Count == 0)
-            {
-                throw new InvalidOperationException("WhisperX did not return word-level timings for this track.");
-            }
-
-            var lyricLines = GroupKaraokeWordsIntoLines(words);
-            var lyricText = BuildEnhancedKaraokeLrc(lyricLines, out var syllableCount);
-            if (string.IsNullOrWhiteSpace(lyricText))
-            {
-                throw new InvalidOperationException("Lyric detection finished without usable lyric text.");
-            }
-
-            return new KaraokeDetectedLyrics(lyricText, lyricLines.Count, syllableCount);
-        }
-        finally
-        {
-            try
+            if (Directory.Exists(workFolder))
             {
                 Directory.Delete(workFolder, recursive: true);
             }
-            catch
-            {
-            }
+        }
+        catch
+        {
         }
     }
 
@@ -6614,7 +6764,7 @@ public partial class EqualizerWindow : Window
         var outputFolder = System.IO.Path.Combine(workFolder, "whisperx");
         Directory.CreateDirectory(outputFolder);
 
-        var gpuArguments = $"{QuoteProcessArgument(vocalPath)} --model large-v3 --language en --output_format json --output_dir {QuoteProcessArgument(outputFolder)} --align_model WAV2VEC2_ASR_LARGE_LV60K_960H --return_char_alignments --vad_method silero --batch_size 4 --compute_type float16";
+        var gpuArguments = $"{QuoteProcessArgument(vocalPath)} --model large-v3 --language en --output_format json --output_dir {QuoteProcessArgument(outputFolder)} --align_model WAV2VEC2_ASR_LARGE_LV60K_960H --vad_method silero --batch_size 4 --compute_type float16";
         try
         {
             RunKaraokeExternalTool(
@@ -6633,7 +6783,7 @@ public partial class EqualizerWindow : Window
                 TryDeleteFile(staleJson);
             }
 
-            var cpuArguments = $"{QuoteProcessArgument(vocalPath)} --model medium --language en --output_format json --output_dir {QuoteProcessArgument(outputFolder)} --return_char_alignments --vad_method silero --device cpu --compute_type int8";
+            var cpuArguments = $"{QuoteProcessArgument(vocalPath)} --model medium --language en --output_format json --output_dir {QuoteProcessArgument(outputFolder)} --vad_method silero --device cpu --compute_type int8";
             RunKaraokeExternalTool(
                 toolchain.WhisperXPath,
                 toolchain.PythonPath,
@@ -6754,7 +6904,6 @@ public partial class EqualizerWindow : Window
         var detectedWords = new List<KaraokeDetectedWord>();
         foreach (var segment in segments.EnumerateArray())
         {
-            var segmentCharacters = ReadWhisperXCharacters(segment);
             if (segment.TryGetProperty("words", out var words) && words.ValueKind == JsonValueKind.Array)
             {
                 foreach (var word in words.EnumerateArray())
@@ -6772,20 +6921,10 @@ public partial class EqualizerWindow : Window
                         continue;
                     }
 
-                    var characters = ReadWhisperXCharacters(word);
-                    if (characters.Count == 0 && segmentCharacters.Count > 0)
-                    {
-                        characters = GetWhisperXCharactersForWord(
-                            segmentCharacters,
-                            TimeSpan.FromSeconds(startSeconds),
-                            TimeSpan.FromSeconds(endSeconds));
-                    }
-
                     detectedWords.Add(new KaraokeDetectedWord(
                         wordText,
                         TimeSpan.FromSeconds(startSeconds),
-                        TimeSpan.FromSeconds(endSeconds),
-                        characters.Count > 0 ? characters : null));
+                        TimeSpan.FromSeconds(endSeconds)));
                 }
 
                 continue;
@@ -6921,9 +7060,9 @@ public partial class EqualizerWindow : Window
 
     private static List<List<KaraokeDetectedWord>> GroupKaraokeWordsIntoLines(IReadOnlyList<KaraokeDetectedWord> words)
     {
-        const double maxGapSeconds = 1.05d;
-        const double maxLineSeconds = 5.8d;
-        const int maxLineCharacters = 56;
+        const double maxGapSeconds = 0.78d;
+        const double maxLineSeconds = 4.2d;
+        const int maxLineCharacters = 38;
         var lines = new List<List<KaraokeDetectedWord>>();
         var current = new List<KaraokeDetectedWord>();
 
@@ -6934,7 +7073,10 @@ public partial class EqualizerWindow : Window
                 var gapSeconds = (word.Start - current[^1].End).TotalSeconds;
                 var lineSeconds = (word.End - current[0].Start).TotalSeconds;
                 var characterCount = current.Sum(item => item.Text.Length) + current.Count + word.Text.Length;
-                if (gapSeconds > maxGapSeconds || lineSeconds > maxLineSeconds || characterCount > maxLineCharacters)
+                if (gapSeconds > maxGapSeconds
+                    || lineSeconds > maxLineSeconds
+                    || characterCount > maxLineCharacters
+                    || ShouldStartNewKaraokePhraseLine(current, word, gapSeconds, characterCount))
                 {
                     lines.Add(current);
                     current = [];
@@ -6952,12 +7094,72 @@ public partial class EqualizerWindow : Window
         return lines;
     }
 
-    private static string BuildEnhancedKaraokeLrc(IReadOnlyList<List<KaraokeDetectedWord>> lyricLines, out int syllableCount)
+    private static bool ShouldStartNewKaraokePhraseLine(
+        IReadOnlyList<KaraokeDetectedWord> current,
+        KaraokeDetectedWord nextWord,
+        double gapSeconds,
+        int characterCountWithNextWord)
+    {
+        if (current.Count < 3)
+        {
+            return false;
+        }
+
+        var currentCharacters = current.Sum(item => item.Text.Length) + Math.Max(0, current.Count - 1);
+        var next = NormalizeKaraokePhraseWord(nextWord.Text);
+        if (string.IsNullOrWhiteSpace(next))
+        {
+            return false;
+        }
+
+        if (gapSeconds >= 0.42d && currentCharacters >= 18)
+        {
+            return true;
+        }
+
+        if (currentCharacters >= 24 && IsKaraokePhraseStarter(next))
+        {
+            return true;
+        }
+
+        return characterCountWithNextWord > 32 && IsKaraokePhraseStarter(next);
+    }
+
+    private static string NormalizeKaraokePhraseWord(string text)
+    {
+        return new string((text ?? string.Empty)
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+    }
+
+    private static bool IsKaraokePhraseStarter(string word)
+    {
+        return word is "and"
+            or "but"
+            or "cause"
+            or "for"
+            or "he"
+            or "i"
+            or "im"
+            or "in"
+            or "nothing"
+            or "the"
+            or "then"
+            or "there"
+            or "we"
+            or "when"
+            or "who"
+            or "you"
+            or "your";
+    }
+
+    private static string BuildEnhancedKaraokeLrc(IReadOnlyList<List<KaraokeDetectedWord>> lyricLines, out int timedTokenCount)
     {
         var builder = new StringBuilder();
         builder.AppendLine("[by:Podcast Workbench AI Lyric Detection]");
         builder.AppendLine("[re:Demucs vocals + WhisperX word alignment]");
-        syllableCount = 0;
+        timedTokenCount = 0;
 
         foreach (var line in lyricLines)
         {
@@ -6976,7 +7178,7 @@ public partial class EqualizerWindow : Window
                 if (token.IsSingable && token.Start.HasValue)
                 {
                     builder.Append(FormatInlineLyricTimestamp(token.Start.Value));
-                    syllableCount++;
+                    timedTokenCount++;
                 }
 
                 builder.Append(token.Text);
@@ -7011,36 +7213,7 @@ public partial class EqualizerWindow : Window
             }
             else
             {
-                var syllables = SplitKaraokeWordIntoSyllables(core);
-                var characterTimedSyllables = CreateTimedKaraokeSyllablesFromCharacters(core, syllables, word);
-                if (characterTimedSyllables.Count == syllables.Count)
-                {
-                    tokens.AddRange(characterTimedSyllables);
-                }
-                else
-                {
-                    var weights = syllables
-                        .Select(syllable => Math.Max(1d, syllable.Count(char.IsLetterOrDigit) * 0.72d))
-                        .ToList();
-                    var totalWeight = Math.Max(1d, weights.Sum());
-                    var duration = word.End > word.Start
-                        ? word.End - word.Start
-                        : TimeSpan.FromMilliseconds(Math.Max(160d, core.Length * 45d));
-                    var cursor = word.Start;
-
-                    for (var i = 0; i < syllables.Count; i++)
-                    {
-                        var tokenDuration = TimeSpan.FromSeconds(duration.TotalSeconds * weights[i] / totalWeight);
-                        var tokenEnd = i == syllables.Count - 1 ? word.End : cursor + tokenDuration;
-                        if (tokenEnd <= cursor)
-                        {
-                            tokenEnd = cursor + TimeSpan.FromMilliseconds(120);
-                        }
-
-                        tokens.Add(new KaraokeLyricToken(syllables[i], cursor, tokenEnd, true));
-                        cursor = tokenEnd;
-                    }
-                }
+                tokens.Add(new KaraokeLyricToken(core, word.Start, word.End, true));
             }
 
             if (!string.IsNullOrEmpty(trailing))
@@ -7358,24 +7531,10 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var activeLineIndex = 0;
-        var timedIndexes = _karaokeLyricDisplayLines
-            .Select((line, index) => new { Line = line, Index = index })
-            .Where(item => item.Line.Start.HasValue)
-            .ToList();
-        if (timedIndexes.Count > 0)
-        {
-            activeLineIndex = timedIndexes.LastOrDefault(item => item.Line.Start!.Value <= position)?.Index
-                ?? timedIndexes[0].Index;
-        }
-        else if (_karaokeTrackDuration > TimeSpan.Zero && _karaokeLyricDisplayLines.Count > 1)
-        {
-            var ratio = Math.Clamp(position.TotalSeconds / Math.Max(1d, _karaokeTrackDuration.TotalSeconds), 0d, 0.999d);
-            activeLineIndex = (int)(ratio * _karaokeLyricDisplayLines.Count);
-        }
-
+        var activeLineIndex = GetActiveKaraokeLineIndex(position);
         var activeLine = _karaokeLyricDisplayLines[Math.Clamp(activeLineIndex, 0, _karaokeLyricDisplayLines.Count - 1)];
         var activeTokenIndex = GetActiveKaraokeTokenIndex(activeLine, position);
+        activeTokenIndex = ConstrainKaraokeTokenJump(activeLineIndex, activeTokenIndex);
         if (_karaokeActiveLineIndex == activeLineIndex && _karaokeActiveTokenIndex == activeTokenIndex)
         {
             return;
@@ -7386,6 +7545,101 @@ public partial class EqualizerWindow : Window
         RenderKaraokeLyrics(activeLineIndex, activeTokenIndex, position);
     }
 
+    private int GetActiveKaraokeLineIndex(TimeSpan position)
+    {
+        var firstTimedIndex = -1;
+        for (var i = 0; i < _karaokeLyricDisplayLines.Count; i++)
+        {
+            if (_karaokeLyricDisplayLines[i].Start.HasValue)
+            {
+                firstTimedIndex = i;
+                break;
+            }
+        }
+
+        if (firstTimedIndex >= 0)
+        {
+            for (var i = _karaokeLyricDisplayLines.Count - 1; i >= 0; i--)
+            {
+                var start = _karaokeLyricDisplayLines[i].Start;
+                if (start.HasValue && start.Value <= position)
+                {
+                    return i;
+                }
+            }
+
+            return firstTimedIndex;
+        }
+
+        if (_karaokeTrackDuration > TimeSpan.Zero && _karaokeLyricDisplayLines.Count > 1)
+        {
+            var ratio = Math.Clamp(position.TotalSeconds / Math.Max(1d, _karaokeTrackDuration.TotalSeconds), 0d, 0.999d);
+            return (int)(ratio * _karaokeLyricDisplayLines.Count);
+        }
+
+        return 0;
+    }
+
+    private int ConstrainKaraokeTokenJump(int activeLineIndex, int targetTokenIndex)
+    {
+        if (targetTokenIndex < 0
+            || _karaokeActiveLineIndex != activeLineIndex
+            || _karaokeActiveTokenIndex < 0
+            || activeLineIndex < 0
+            || activeLineIndex >= _karaokeLyricDisplayLines.Count)
+        {
+            return targetTokenIndex;
+        }
+
+        if (targetTokenIndex <= _karaokeActiveTokenIndex)
+        {
+            return targetTokenIndex;
+        }
+
+        var line = _karaokeLyricDisplayLines[activeLineIndex];
+        if (ShouldHoldCurrentKaraokeToken(line, _karaokeActiveTokenIndex))
+        {
+            return _karaokeActiveTokenIndex;
+        }
+
+        var nextSingableToken = FindNextKaraokeSingableToken(line, _karaokeActiveTokenIndex);
+        return nextSingableToken >= 0 && targetTokenIndex > nextSingableToken
+            ? nextSingableToken
+            : targetTokenIndex;
+    }
+
+    private bool ShouldHoldCurrentKaraokeToken(KaraokeLyricLineItem line, int tokenIndex)
+    {
+        if (tokenIndex < 0 || tokenIndex >= line.Tokens.Count)
+        {
+            return false;
+        }
+
+        var token = line.Tokens[tokenIndex];
+        if (!token.IsSingable
+            || token.Start is null
+            || token.Text.Count(char.IsLetterOrDigit) > 3)
+        {
+            return false;
+        }
+
+        var elapsed = GetKaraokePlaybackClockPosition() - token.Start.Value;
+        return elapsed >= TimeSpan.Zero && elapsed < KaraokeShortWordDisplayHold;
+    }
+
+    private static int FindNextKaraokeSingableToken(KaraokeLyricLineItem line, int afterTokenIndex)
+    {
+        for (var i = Math.Max(0, afterTokenIndex + 1); i < line.Tokens.Count; i++)
+        {
+            if (line.Tokens[i].IsSingable)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private static int GetActiveKaraokeTokenIndex(KaraokeLyricLineItem line, TimeSpan position)
     {
         if (line.Tokens.Count == 0)
@@ -7393,10 +7647,25 @@ public partial class EqualizerWindow : Window
             return -1;
         }
 
-        if (line.Tokens.Any(token => token.IsSingable && token.Start.HasValue))
+        var hasTimedToken = false;
+        for (var i = line.Tokens.Count - 1; i >= 0; i--)
         {
-            var timedTokenIndex = line.Tokens.FindLastIndex(token => token.IsSingable && token.Start.HasValue && token.Start.Value <= position);
-            return timedTokenIndex >= 0 ? timedTokenIndex : -1;
+            var token = line.Tokens[i];
+            if (!token.IsSingable || !token.Start.HasValue)
+            {
+                continue;
+            }
+
+            hasTimedToken = true;
+            if (token.Start.Value <= position)
+            {
+                return i;
+            }
+        }
+
+        if (hasTimedToken)
+        {
+            return -1;
         }
 
         if (!line.Start.HasValue || !line.End.HasValue || line.End <= line.Start)
@@ -7409,17 +7678,39 @@ public partial class EqualizerWindow : Window
             return -1;
         }
 
-        var singableTokens = line.Tokens
-            .Select((token, index) => new { token, index })
-            .Where(item => item.token.IsSingable)
-            .ToList();
-        if (singableTokens.Count == 0)
+        var singableTokenCount = 0;
+        foreach (var token in line.Tokens)
+        {
+            if (token.IsSingable)
+            {
+                singableTokenCount++;
+            }
+        }
+
+        if (singableTokenCount == 0)
         {
             return -1;
         }
 
         var ratio = Math.Clamp((position - line.Start.Value).TotalSeconds / Math.Max(0.1d, (line.End.Value - line.Start.Value).TotalSeconds), 0d, 0.999d);
-        return singableTokens[(int)(ratio * singableTokens.Count)].index;
+        var targetSingableIndex = (int)(ratio * singableTokenCount);
+        var currentSingableIndex = 0;
+        for (var i = 0; i < line.Tokens.Count; i++)
+        {
+            if (!line.Tokens[i].IsSingable)
+            {
+                continue;
+            }
+
+            if (currentSingableIndex == targetSingableIndex)
+            {
+                return i;
+            }
+
+            currentSingableIndex++;
+        }
+
+        return -1;
     }
 
     private void RenderKaraokeLyrics(int activeLineIndex, int activeTokenIndex, TimeSpan? position = null)
@@ -7429,117 +7720,203 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        KaraokeLyricsDisplayPanel.Children.Clear();
-        FrameworkElement? activeLineElement = null;
-        for (var lineIndex = 0; lineIndex < _karaokeLyricDisplayLines.Count; lineIndex++)
+        var windowStartLineIndex = GetKaraokeLyricWindowStart(activeLineIndex);
+        EnsureKaraokeLyricVisualTree(windowStartLineIndex);
+        var previousActiveLineIndex = _karaokeRenderedActiveLineIndex;
+        if (_karaokeRenderedActiveLineIndex == activeLineIndex
+            && _karaokeRenderedActiveTokenIndex == activeTokenIndex)
         {
-            var line = _karaokeLyricDisplayLines[lineIndex];
-            var isActiveLine = lineIndex == activeLineIndex;
+            return;
+        }
+
+        _karaokeRenderedActiveLineIndex = activeLineIndex;
+        _karaokeRenderedActiveTokenIndex = activeTokenIndex;
+
+        if (previousActiveLineIndex >= 0
+            && previousActiveLineIndex < _karaokeLyricDisplayLines.Count
+            && previousActiveLineIndex != activeLineIndex)
+        {
+            RenderKaraokeLyricLine(previousActiveLineIndex, false, -1, null);
+        }
+
+        if (activeLineIndex >= 0 && activeLineIndex < _karaokeLyricDisplayLines.Count)
+        {
+            RenderKaraokeLyricLine(activeLineIndex, true, activeTokenIndex, position);
+        }
+    }
+
+    private int GetKaraokeLyricWindowStart(int activeLineIndex)
+    {
+        if (_karaokeLyricDisplayLines.Count <= KaraokeLyricVisibleLineCount)
+        {
+            return 0;
+        }
+
+        if (activeLineIndex < 0)
+        {
+            return 0;
+        }
+
+        var maxStart = Math.Max(0, _karaokeLyricDisplayLines.Count - KaraokeLyricVisibleLineCount);
+        return Math.Clamp(activeLineIndex - 1, 0, maxStart);
+    }
+
+    private void EnsureKaraokeLyricVisualTree(int windowStartLineIndex)
+    {
+        if (KaraokeLyricsDisplayPanel is null)
+        {
+            return;
+        }
+
+        var visibleLineCount = Math.Min(KaraokeLyricVisibleLineCount, _karaokeLyricDisplayLines.Count);
+        if (_karaokeRenderedWindowStartLineIndex == windowStartLineIndex
+            && _karaokeLyricLineBorders.Count == visibleLineCount
+            && _karaokeLyricLineTextBlocks.Count == visibleLineCount
+            && _karaokeLyricLineRuns.Count == visibleLineCount
+            && KaraokeLyricsDisplayPanel.Children.Count == visibleLineCount)
+        {
+            return;
+        }
+
+        KaraokeLyricsDisplayPanel.Children.Clear();
+        _karaokeLyricLineBorders.Clear();
+        _karaokeLyricLineTextBlocks.Clear();
+        _karaokeLyricLineRuns.Clear();
+        _karaokeRenderedActiveLineIndex = int.MinValue;
+        _karaokeRenderedActiveTokenIndex = int.MinValue;
+        _karaokeRenderedWindowStartLineIndex = windowStartLineIndex;
+
+        for (var offset = 0; offset < visibleLineCount; offset++)
+        {
+            var lineIndex = windowStartLineIndex + offset;
             var textBlock = new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
-                FontSize = isActiveLine ? 38d : 30d,
-                FontWeight = isActiveLine ? FontWeights.Bold : FontWeights.SemiBold,
-                LineHeight = isActiveLine ? 54d : 44d,
-                Foreground = new SolidColorBrush(isActiveLine ? Colors.White : Color.FromRgb(141, 162, 183)),
                 Margin = new Thickness(0, 4, 0, 4)
             };
-
-            if (line.Tokens.Count == 0)
-            {
-                textBlock.Text = line.Text;
-            }
-            else
-            {
-                for (var tokenIndex = 0; tokenIndex < line.Tokens.Count; tokenIndex++)
-                {
-                    var token = line.Tokens[tokenIndex];
-                    var isActiveToken = isActiveLine && tokenIndex == activeTokenIndex && token.IsSingable;
-                    var isSungToken = isActiveLine
-                        && !isActiveToken
-                        && position.HasValue
-                        && token.IsSingable
-                        && token.Start.HasValue
-                        && token.Start.Value < position.Value;
-                    if (isActiveToken)
-                    {
-                        textBlock.Inlines.Add(CreateKaraokeBallInline());
-                    }
-
-                    textBlock.Inlines.Add(new Run(token.Text)
-                    {
-                        Foreground = new SolidColorBrush(isActiveToken
-                            ? Color.FromRgb(53, 232, 216)
-                            : isSungToken
-                                ? Color.FromRgb(121, 238, 226)
-                            : isActiveLine
-                                ? Colors.White
-                                : Color.FromRgb(141, 162, 183)),
-                        FontWeight = isActiveToken
-                            ? FontWeights.ExtraBold
-                            : isSungToken
-                                ? FontWeights.Bold
-                                : textBlock.FontWeight,
-                        FontSize = isActiveToken ? textBlock.FontSize + 4d : textBlock.FontSize
-                    });
-                }
-            }
-
             var border = new Border
             {
-                Background = isActiveLine
-                    ? new SolidColorBrush(Color.FromArgb(105, 38, 61, 74))
-                    : Brushes.Transparent,
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(8, 6, 8, 6),
                 Margin = new Thickness(0, 2, 0, 2),
                 Child = textBlock
             };
-            KaraokeLyricsDisplayPanel.Children.Add(border);
-            if (isActiveLine)
-            {
-                activeLineElement = border;
-            }
-        }
 
-        activeLineElement?.BringIntoView();
+            _karaokeLyricLineTextBlocks.Add(textBlock);
+            _karaokeLyricLineBorders.Add(border);
+            _karaokeLyricLineRuns.Add([]);
+            KaraokeLyricsDisplayPanel.Children.Add(border);
+            BuildKaraokeLyricLineRuns(lineIndex, offset);
+            RenderKaraokeLyricLine(lineIndex, false, -1, null);
+        }
     }
 
-    private static InlineUIContainer CreateKaraokeBallInline()
+    private void ResetKaraokeLyricVisualCache()
     {
-        var transform = new TranslateTransform();
-        var ball = new Ellipse
-        {
-            Width = 16,
-            Height = 16,
-            Fill = new SolidColorBrush(Color.FromRgb(53, 232, 216)),
-            Stroke = new SolidColorBrush(Color.FromRgb(215, 255, 249)),
-            StrokeThickness = 1,
-            Margin = new Thickness(0, 0, 8, 0),
-            RenderTransform = transform
-        };
-        ball.Loaded += (_, _) =>
-        {
-            transform.BeginAnimation(
-                TranslateTransform.YProperty,
-                new DoubleAnimation
-                {
-                    From = -10d,
-                    To = 0d,
-                    Duration = TimeSpan.FromMilliseconds(260),
-                    EasingFunction = new BounceEase
-                    {
-                        Bounces = 1,
-                        Bounciness = 2.2,
-                        EasingMode = EasingMode.EaseOut
-                    }
-                });
-        };
+        _karaokeLyricLineBorders.Clear();
+        _karaokeLyricLineTextBlocks.Clear();
+        _karaokeLyricLineRuns.Clear();
+        _karaokeRenderedActiveLineIndex = int.MinValue;
+        _karaokeRenderedActiveTokenIndex = int.MinValue;
+        _karaokeRenderedWindowStartLineIndex = int.MinValue;
+        KaraokeLyricsDisplayPanel?.Children.Clear();
+    }
 
-        return new InlineUIContainer(ball)
+    private void BuildKaraokeLyricLineRuns(int lineIndex, int localLineIndex)
+    {
+        if (lineIndex < 0
+            || lineIndex >= _karaokeLyricDisplayLines.Count
+            || localLineIndex < 0
+            || localLineIndex >= _karaokeLyricLineTextBlocks.Count
+            || localLineIndex >= _karaokeLyricLineRuns.Count)
         {
-            BaselineAlignment = BaselineAlignment.Center
-        };
+            return;
+        }
+
+        var line = _karaokeLyricDisplayLines[lineIndex];
+        var textBlock = _karaokeLyricLineTextBlocks[localLineIndex];
+        var runs = _karaokeLyricLineRuns[localLineIndex];
+        textBlock.Inlines.Clear();
+        textBlock.Text = string.Empty;
+        runs.Clear();
+
+        if (line.Tokens.Count == 0)
+        {
+            var run = new Run(line.Text);
+            runs.Add(run);
+            textBlock.Inlines.Add(run);
+            return;
+        }
+
+        foreach (var token in line.Tokens)
+        {
+            var run = new Run(token.Text);
+            runs.Add(run);
+            textBlock.Inlines.Add(run);
+        }
+    }
+
+    private void RenderKaraokeLyricLine(int lineIndex, bool isActiveLine, int activeTokenIndex, TimeSpan? position)
+    {
+        var localLineIndex = lineIndex - _karaokeRenderedWindowStartLineIndex;
+        if (lineIndex < 0
+            || lineIndex >= _karaokeLyricDisplayLines.Count
+            || localLineIndex < 0
+            || localLineIndex >= _karaokeLyricLineTextBlocks.Count
+            || localLineIndex >= _karaokeLyricLineBorders.Count
+            || localLineIndex >= _karaokeLyricLineRuns.Count)
+        {
+            return;
+        }
+
+        var line = _karaokeLyricDisplayLines[lineIndex];
+        var textBlock = _karaokeLyricLineTextBlocks[localLineIndex];
+        textBlock.FontSize = 34d;
+        textBlock.FontWeight = isActiveLine ? FontWeights.Bold : FontWeights.SemiBold;
+        textBlock.LineHeight = 48d;
+        textBlock.Foreground = isActiveLine ? _karaokeActiveLineBrush : _karaokeInactiveLineBrush;
+
+        var border = _karaokeLyricLineBorders[localLineIndex];
+        border.Background = isActiveLine ? _karaokeActiveLineBackgroundBrush : Brushes.Transparent;
+        var runs = _karaokeLyricLineRuns[localLineIndex];
+        if (runs.Count == 0)
+        {
+            return;
+        }
+
+        if (line.Tokens.Count == 0)
+        {
+            var run = runs[0];
+            run.Foreground = textBlock.Foreground;
+            run.FontWeight = textBlock.FontWeight;
+            run.FontSize = textBlock.FontSize;
+            return;
+        }
+
+        var tokenCount = Math.Min(line.Tokens.Count, runs.Count);
+        for (var tokenIndex = 0; tokenIndex < tokenCount; tokenIndex++)
+        {
+            var token = line.Tokens[tokenIndex];
+            var run = runs[tokenIndex];
+            var isActiveToken = isActiveLine && tokenIndex == activeTokenIndex && token.IsSingable;
+            var isSungToken = isActiveLine
+                && !isActiveToken
+                && position.HasValue
+                && token.IsSingable
+                && token.Start.HasValue
+                && token.Start.Value < position.Value;
+            run.Foreground = isActiveToken
+                ? _karaokeActiveWordBrush
+                : isSungToken
+                    ? _karaokeSungWordBrush
+                    : textBlock.Foreground;
+            run.FontWeight = isActiveToken
+                ? FontWeights.ExtraBold
+                : isSungToken
+                    ? FontWeights.Bold
+                    : textBlock.FontWeight;
+            run.FontSize = textBlock.FontSize;
+        }
     }
 
     private void KaraokeKeySliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -8574,9 +8951,9 @@ public partial class EqualizerWindow : Window
         _input2Trace.Visibility = _showMicCompare && frame.HasStereoInput ? Visibility.Visible : Visibility.Collapsed;
         _liveTrace.Data = CreateSmoothedGeometry(livePoints);
         _averageTrace.Data = CreateSmoothedGeometry(rawPoints);
-        PeakText.Text = _showMicCompare && frame.HasStereoInput
+        UpdatePeakText(_showMicCompare && frame.HasStereoInput
             ? $"Mic 1 {frame.Input1PeakLevel:P0}  Mic 2 {frame.Input2PeakLevel:P0}"
-            : $"Peak {frame.PeakLevel:P0}";
+            : $"Peak {frame.PeakLevel:P0}");
         UpdateAudioStability(frame);
         UpdateInputCoach(frame.RawPeakLevel);
         UpdateSignalStatus(frame.PeakLevel);
@@ -8692,7 +9069,7 @@ public partial class EqualizerWindow : Window
 
         _recordingSignalTrace.Data = CreateSmoothedGeometry(points);
         _recordingRawSignalTrace.Data = CreateSmoothedGeometry(rawPoints);
-        PeakText.Text = $"Peak {frame.PeakLevel:P0}";
+        UpdatePeakText($"Peak {frame.PeakLevel:P0}");
     }
 
     private void AppendWaveformHistory(float[] rawSamples, float[] processedSamples)
@@ -8853,36 +9230,97 @@ public partial class EqualizerWindow : Window
             ? Ease(_displayInputPeak, rawPeakLevel, 0.35d)
             : Ease(_displayInputPeak, rawPeakLevel, 0.06d);
 
+        var now = Stopwatch.GetTimestamp();
+        if (_lastInputLevelDisplayTimestamp != 0)
+        {
+            var elapsedMs = (now - _lastInputLevelDisplayTimestamp) * 1000d / Stopwatch.Frequency;
+            if (elapsedMs < 33d)
+            {
+                return;
+            }
+        }
+
+        _lastInputLevelDisplayTimestamp = now;
         var peakDb = 20d * Math.Log10(Math.Max(0.000001d, _displayInputPeak));
         var meterHostWidth = InputLevelMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
             ? meterHost.ActualWidth
             : 260d;
-        InputLevelMeter.Width = Math.Clamp((_displayInputPeak / 0.95d) * meterHostWidth, 0d, meterHostWidth);
+        var meterWidth = Math.Clamp((_displayInputPeak / 0.95d) * meterHostWidth, 0d, meterHostWidth);
+
+        string coachText;
+        Brush coachForeground;
+        Brush meterFill;
 
         if (peakDb < -36d)
         {
-            InputCoachText.Text = $"Input: too quiet ({peakDb:0} dB)";
-            InputCoachText.Foreground = _meterTextMutedBrush;
-            InputLevelMeter.Fill = _meterMutedBrush;
+            coachText = $"Input: too quiet ({peakDb:0} dB)";
+            coachForeground = _meterTextMutedBrush;
+            meterFill = _meterMutedBrush;
         }
         else if (peakDb < -12d)
         {
-            InputCoachText.Text = $"Input: good ({peakDb:0} dB)";
-            InputCoachText.Foreground = _meterGoodBrush;
-            InputLevelMeter.Fill = _meterGoodBrush;
+            coachText = $"Input: good ({peakDb:0} dB)";
+            coachForeground = _meterGoodBrush;
+            meterFill = _meterGoodBrush;
         }
         else if (peakDb < -3d)
         {
-            InputCoachText.Text = $"Input: hot ({peakDb:0} dB)";
-            InputCoachText.Foreground = _meterWarnBrush;
-            InputLevelMeter.Fill = _meterWarnBrush;
+            coachText = $"Input: hot ({peakDb:0} dB)";
+            coachForeground = _meterWarnBrush;
+            meterFill = _meterWarnBrush;
         }
         else
         {
-            InputCoachText.Text = $"Input: clipping risk ({peakDb:0} dB)";
-            InputCoachText.Foreground = _meterDangerBrush;
-            InputLevelMeter.Fill = _meterDangerBrush;
+            coachText = $"Input: clipping risk ({peakDb:0} dB)";
+            coachForeground = _meterDangerBrush;
+            meterFill = _meterDangerBrush;
         }
+
+        if (Math.Abs(meterWidth - _lastInputLevelMeterWidth) >= 0.5d)
+        {
+            _lastInputLevelMeterWidth = meterWidth;
+            InputLevelMeter.Width = meterWidth;
+        }
+
+        if (!string.Equals(_lastInputCoachText, coachText, StringComparison.Ordinal))
+        {
+            _lastInputCoachText = coachText;
+            InputCoachText.Text = coachText;
+        }
+
+        if (!ReferenceEquals(_lastInputCoachForeground, coachForeground))
+        {
+            _lastInputCoachForeground = coachForeground;
+            InputCoachText.Foreground = coachForeground;
+        }
+
+        if (!ReferenceEquals(_lastInputLevelFill, meterFill))
+        {
+            _lastInputLevelFill = meterFill;
+            InputLevelMeter.Fill = meterFill;
+        }
+    }
+
+    private void UpdatePeakText(string text)
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (_lastPeakDisplayTimestamp != 0)
+        {
+            var elapsedMs = (now - _lastPeakDisplayTimestamp) * 1000d / Stopwatch.Frequency;
+            if (elapsedMs < 100d)
+            {
+                return;
+            }
+        }
+
+        _lastPeakDisplayTimestamp = now;
+        if (string.Equals(_lastPeakText, text, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastPeakText = text;
+        PeakText.Text = text;
     }
 
     private void UpdateAudioStability(SpectrumFrame frame)
@@ -9134,13 +9572,14 @@ public partial class EqualizerWindow : Window
             _silentFrameCount = 0;
         }
 
-        if (_silentFrameCount > 20)
+        var statusText = _silentFrameCount > 20
+            ? "Listening, but this input is silent. Try another mic/device or raise input gain."
+            : _selectedDevice is not null
+                ? "Listening"
+                : null;
+        if (statusText is not null && !string.Equals(StatusText.Text, statusText, StringComparison.Ordinal))
         {
-            StatusText.Text = "Listening, but this input is silent. Try another mic/device or raise input gain.";
-        }
-        else if (_selectedDevice is not null)
-        {
-            StatusText.Text = "Listening";
+            StatusText.Text = statusText;
         }
     }
 
@@ -10577,7 +11016,7 @@ public partial class EqualizerWindow : Window
 
     private sealed record KaraokeAiToolchain(string? PythonPath, string? DemucsPath, string? WhisperXPath);
 
-    private sealed record KaraokeDetectedLyrics(string LyricsText, int LineCount, int SyllableCount);
+    private sealed record KaraokeDetectedLyrics(string LyricsText, int LineCount, int TimedTokenCount);
 
     private sealed record KaraokeDetectedWord(string Text, TimeSpan Start, TimeSpan End, IReadOnlyList<KaraokeDetectedCharacter>? Characters = null);
 
