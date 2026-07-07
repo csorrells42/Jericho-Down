@@ -753,7 +753,6 @@
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />
-          <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock Text="Camera" Foreground="#F8FAFC" VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -769,32 +768,7 @@
           <ComboBox x:Name="MicrophoneComboBox" Width="220" SelectionChanged="MicrophoneSelectionChanged" />
           <TextBlock Text="Channel" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
           <ComboBox x:Name="InputChannelComboBox" Width="112" SelectionChanged="InputChannelSelectionChanged" />
-          <TextBlock Text="Gain" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
-          <Slider x:Name="DisplayGainSlider" Loaded="DisplayGainSliderLoaded" ValueChanged="DisplayGainSliderValueChanged" Width="140" Minimum="1" Maximum="24" Value="6" VerticalAlignment="Center">
-            <Slider.Template>
-              <ControlTemplate TargetType="Slider">
-                <Grid>
-                  <Track x:Name="PART_Track">
-                    <Track.DecreaseRepeatButton>
-                      <RepeatButton Command="Slider.DecreaseLarge" Background="#26323D" BorderBrush="#536575" BorderThickness="1" IsTabStop="False" />
-                    </Track.DecreaseRepeatButton>
-                    <Track.IncreaseRepeatButton>
-                      <RepeatButton Command="Slider.IncreaseLarge" Background="#18222B" BorderBrush="#536575" BorderThickness="1" IsTabStop="False" />
-                    </Track.IncreaseRepeatButton>
-                    <Track.Thumb>
-                      <Thumb Width="8" Height="18" Background="#F8FAFC" BorderBrush="#93A4B8" BorderThickness="1" />
-                    </Track.Thumb>
-                  </Track>
-                  <Rectangle Width="2" Fill="#F4C542" HorizontalAlignment="Left" VerticalAlignment="Stretch" Margin="31,2,0,2" />
-                </Grid>
-              </ControlTemplate>
-            </Slider.Template>
-          </Slider>
           <TextBlock x:Name="StatusText" Text="Ready" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,0,0" />
-        </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <TextBlock x:Name="PeakText" Text="Peak 0%" Foreground="#F8FAFC" VerticalAlignment="Center" Margin="0,0,18,0" />
-          <Button Content="Close" Click="CloseClicked" Padding="14,7" />
         </StackPanel>
       </Grid>
     </Border>
@@ -931,17 +905,24 @@
               </Grid>
             </Border>
             <Border Grid.Column="1" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1" Padding="14" Margin="14,0,0,0">
-              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="0,0,12,0">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,0,12,14">
                   <TextBlock Text="Audio Confidence" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                   <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                     <Ellipse x:Name="RecordingDspIndicator" Width="14" Height="14" Fill="#42D77D" Stroke="#B8C7D9" StrokeThickness="1" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <TextBlock x:Name="RecordingDspStatusText" Text="DSP active" Foreground="#B8C7D9" VerticalAlignment="Center" />
                   </StackPanel>
-                  <Border Height="130" Background="#05070A" BorderBrush="#334F5D6B" BorderThickness="1" Margin="0,0,0,10">
-                    <Canvas x:Name="RecordingSignalCanvas" />
+                  <Border Height="160" Background="#05070A" BorderBrush="#334F5D6B" BorderThickness="1" Margin="0,0,0,10" ClipToBounds="True">
+                    <ContentControl x:Name="PodcastSpectrumWaterfallHost" />
                   </Border>
-                  <TextBlock Text="Processed signal being monitored" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,14" />
+                  <TextBlock Text="Processed signal being monitored" Foreground="#B8C7D9" TextWrapping="Wrap" />
+                </StackPanel>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                  <StackPanel Margin="0,0,12,0">
                   <TextBlock Text="Recording health" Foreground="#B8C7D9" Margin="0,0,0,3" />
                   <Border Background="#05070A" BorderBrush="#334F5D6B" BorderThickness="1" Padding="8,6" Margin="0,0,0,8">
                     <StackPanel>
@@ -965,7 +946,7 @@
                     <Button Grid.Column="2" Style="{StaticResource ConsolePushButton}" Content="Delete" Click="DeleteCameraProfileClicked" Margin="4,0,0,0" Padding="6,4" />
                   </Grid>
                   <TextBlock x:Name="CameraProfileStatusText" Text="Choose a camera profile or save the current camera setup." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,12" />
-                  <CheckBox x:Name="RecordProcessedAudioCheckBox" Content="Record processed audio" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
+                  <CheckBox x:Name="RecordProcessedAudioCheckBox" Content="Record processed audio" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8" Checked="RecordProcessedAudioChanged" Unchecked="RecordProcessedAudioChanged">
                     <CheckBox.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="When checked, the eventual video file will use the EQ/gate/compressor/limiter signal." />
                     </CheckBox.ToolTip>
@@ -1153,6 +1134,7 @@
                   </StackPanel>
                 </StackPanel>
               </ScrollViewer>
+              </Grid>
             </Border>
           </Grid>
           <Border Grid.Row="2" Background="#66111820" Padding="18,10">
@@ -1194,6 +1176,7 @@
             <Border Background="#081018" BorderBrush="#334F5D6B" BorderThickness="1" Padding="14" Margin="0,0,14,0">
               <Grid>
                 <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="*" />
@@ -1262,35 +1245,46 @@
               </Grid>
             </Border>
             <Border Grid.Column="2" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1" Padding="14" Margin="14,0,0,0">
-              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
               <Grid>
                 <Grid.RowDefinitions>
                   <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Border Grid.Row="0" Style="{StaticResource DspBubble}" Margin="0,0,0,14">
-                  <StackPanel>
-                    <Grid Margin="0,0,0,8">
-                      <TextBlock Text="Camera Preview" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
-                      <CheckBox x:Name="KaraokeRecordVideoCheckBox" Content="Record Video" HorizontalAlignment="Right" Checked="KaraokeRecordVideoChanged" Unchecked="KaraokeRecordVideoChanged" />
-                    </Grid>
-                    <Border x:Name="KaraokeVideoPreviewHost" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#030507" Height="214" ClipToBounds="True">
-                      <Grid x:Name="KaraokeVideoPreviewSurfaceGrid">
-                        <Image x:Name="KaraokeVideoPreviewImage" Visibility="Collapsed" Stretch="Uniform" SnapsToDevicePixels="True" />
-                        <TextBlock x:Name="KaraokeVideoPreviewPlaceholder" Text="Video preview off" Foreground="#8DA2B7" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="0" Margin="0,0,12,14">
+                  <TextBlock Text="Audio Confidence" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                  <Border Height="160" Background="#05070A" BorderBrush="#334F5D6B" BorderThickness="1" Margin="0,0,0,8" ClipToBounds="True">
+                    <ContentControl x:Name="KaraokeSpectrumWaterfallHost" />
+                  </Border>
+                  <TextBlock Text="Processed vocal signal being monitored" Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,14" />
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
+                      <Grid Margin="0,0,0,8">
+                        <TextBlock Text="Camera Preview" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
+                        <CheckBox x:Name="KaraokeRecordVideoCheckBox" Content="Record Video" HorizontalAlignment="Right" Checked="KaraokeRecordVideoChanged" Unchecked="KaraokeRecordVideoChanged" />
                       </Grid>
-                    </Border>
-                    <TextBlock x:Name="KaraokeVideoPreviewStatusText" Text="Karaoke camera preview is off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
-                  </StackPanel>
-                </Border>
-                <TextBlock Grid.Row="1" Text="Lyrics" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <TextBox x:Name="KaraokeLyricsTextBox" Grid.Row="1" Height="150" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" TextChanged="KaraokeLyricsTextChanged" Margin="0,32,0,0" />
-                <Grid Grid.Row="2" Margin="0,10,0,14">
+                      <Border x:Name="KaraokeVideoPreviewHost" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#030507" Height="214" ClipToBounds="True">
+                        <Grid x:Name="KaraokeVideoPreviewSurfaceGrid">
+                          <Image x:Name="KaraokeVideoPreviewImage" Visibility="Collapsed" Stretch="Uniform" SnapsToDevicePixels="True" />
+                          <TextBlock x:Name="KaraokeVideoPreviewPlaceholder" Text="Video preview off" Foreground="#8DA2B7" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
+                      </Border>
+                      <TextBlock x:Name="KaraokeVideoPreviewStatusText" Text="Karaoke camera preview is off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid Margin="0,0,12,0">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Text="Lyrics" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                <TextBox x:Name="KaraokeLyricsTextBox" Grid.Row="0" Height="150" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" TextChanged="KaraokeLyricsTextChanged" Margin="0,32,0,0" />
+                <Grid Grid.Row="1" Margin="0,10,0,14">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -1306,7 +1300,7 @@
                   </Button>
                   <Button Grid.Column="3" Style="{StaticResource ConsolePushButton}" Content="Clear" Padding="8,5" Margin="4,0,0,0" Click="ClearKaraokeLyricsClicked" />
                 </Grid>
-                <Border Grid.Row="3" BorderBrush="#334F5D6B" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+                <Border Grid.Row="2" BorderBrush="#334F5D6B" BorderThickness="0,1,0,0" Padding="0,14,0,0">
                   <Grid>
                     <Grid.RowDefinitions>
                       <RowDefinition Height="Auto" />
@@ -1336,7 +1330,7 @@
                     <CheckBox x:Name="KaraokeVocalReductionCheckBox" Grid.Row="2" Content="Reduce Lead Vocal" Foreground="#F8FAFC" Margin="0,10,0,0" Checked="KaraokeVocalReductionChanged" Unchecked="KaraokeVocalReductionChanged" />
                   </Grid>
                 </Border>
-                <Border Grid.Row="4" Style="{StaticResource DspBubble}" Margin="0,14,0,0">
+                <Border Grid.Row="3" Style="{StaticResource DspBubble}" Margin="0,14,0,0">
                   <StackPanel>
                     <Grid Margin="0,0,0,8">
                       <TextBlock Text="Playback Health" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
@@ -1368,7 +1362,7 @@
                     <TextBlock x:Name="KaraokeMonitorStatusText" Text="Live vocal monitor is off." Foreground="#B8C7D9" TextWrapping="Wrap" />
                   </StackPanel>
                 </Border>
-                <Border Grid.Row="5" Style="{StaticResource DspBubble}" Margin="0,14,0,0">
+                <Border Grid.Row="4" Style="{StaticResource DspBubble}" Margin="0,14,0,0">
                   <StackPanel>
                     <TextBlock Text="Karaoke Recording" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="Save location" Foreground="#B8C7D9" />
@@ -1448,11 +1442,12 @@
                     <TextBlock x:Name="KaraokeVocalStatusText" Text="Karaoke recorder is idle." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
                   </StackPanel>
                 </Border>
-                <StackPanel Grid.Row="6" Margin="0,10,0,0">
+                <StackPanel Grid.Row="5" Margin="0,10,0,0">
                   <TextBlock x:Name="KaraokeAdjustmentStatusText" Text="Key +0 st, tempo 100%." Foreground="#8DA2B7" TextWrapping="Wrap" />
                 </StackPanel>
               </Grid>
               </ScrollViewer>
+              </Grid>
             </Border>
           </Grid>
           <Border Grid.Row="2" Background="#66111820" Padding="18,10">
@@ -1473,13 +1468,13 @@
               </Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                  <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" IsChecked="True" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
+                  <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
                   <ToggleButton x:Name="WaveformViewButton" Style="{StaticResource PresetConsoleButton}" Content="Waveform" Click="WaveformViewClicked" Padding="10,4" Margin="0,0,6,0">
                     <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows raw and processed microphone amplitude around the centerline." />
                     </ToggleButton.ToolTip>
                   </ToggleButton>
-                  <ToggleButton x:Name="Waveform3DButton" Style="{StaticResource PresetConsoleButton}" Content="3D Wave" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">
+                  <ToggleButton x:Name="Waveform3DButton" Style="{StaticResource PresetConsoleButton}" Content="3D Wave" IsChecked="True" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">
                     <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows a GPU-backed 3D rolling waveform using the current processed sound." />
                     </ToggleButton.ToolTip>
