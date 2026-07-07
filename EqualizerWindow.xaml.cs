@@ -24,6 +24,7 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
+using PodcastWorkbench.Visualization;
 using ShapePath = System.Windows.Shapes.Path;
 
 namespace PodcastWorkbench;
@@ -337,7 +338,7 @@ public partial class EqualizerWindow : Window
     private int _spectrumFrameUpdateQueued;
     private string? _cameraPumpWarningText;
     private DateTime _cameraPumpWarningExpiresUtc = DateTime.MinValue;
-    private Waveform3DWindow? _waveform3DWindow;
+    private Direct3D12AudioGraphHost? _waveform3DGraphHost;
     private EqualizerBand? _hoveredEqualizerBand;
     private bool _showWaveform;
     private bool _showWaveform3D;
@@ -1085,10 +1086,10 @@ public partial class EqualizerWindow : Window
         Dx12Camera.CloseActive(collectGarbage: true);
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
-        if (_waveform3DWindow is not null)
+        if (_waveform3DGraphHost is not null)
         {
-            _waveform3DWindow.Close();
-            _waveform3DWindow = null;
+            _waveform3DGraphHost.Dispose();
+            _waveform3DGraphHost = null;
         }
 
         _textureNativeRecordingSession?.Dispose();
@@ -3432,7 +3433,7 @@ public partial class EqualizerWindow : Window
 
         if (_latestFrame is not null)
         {
-            _waveform3DWindow?.AcceptFrame(_latestFrame);
+            _waveform3DGraphHost?.AcceptFrame(_latestFrame);
         }
     }
 
@@ -3466,16 +3467,26 @@ public partial class EqualizerWindow : Window
 
     private void EnsureInlineWaveform3DView()
     {
-        if (_waveform3DWindow is not null)
+        if (_waveform3DGraphHost is not null)
         {
             return;
         }
 
-        var waveform3DWindow = new Waveform3DWindow();
-        var content = waveform3DWindow.Content;
-        waveform3DWindow.Content = null;
-        InlineWaveform3DHost.Content = content;
-        _waveform3DWindow = waveform3DWindow;
+        var graphHost = new Direct3D12AudioGraphHost();
+        graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
+        InlineWaveform3DHost.Content = graphHost;
+        _waveform3DGraphHost = graphHost;
+    }
+
+    private void Dx12AudioGraphStatusChanged(object? sender, string status)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_showWaveform3D && StatusText is not null)
+            {
+                StatusText.Text = status;
+            }
+        }, DispatcherPriority.Background);
     }
 
     private void UpdateMicCompareUiState()
@@ -4223,6 +4234,11 @@ public partial class EqualizerWindow : Window
 
     private void SpectrumAvailable(object? sender, SpectrumFrame frame)
     {
+        if (_showWaveform3D)
+        {
+            _waveform3DGraphHost?.AcceptFrame(frame);
+        }
+
         System.Threading.Interlocked.Exchange(ref _pendingSpectrumFrame, frame);
         if (System.Threading.Interlocked.Exchange(ref _spectrumFrameUpdateQueued, 1) != 0)
         {
@@ -4253,11 +4269,6 @@ public partial class EqualizerWindow : Window
         _latestFrame = frame;
         _waveformSampleRate = Math.Max(8000, frame.SampleRate);
         CollectMicAnalysisFrame(frame);
-        if (_showWaveform3D)
-        {
-            _waveform3DWindow?.AcceptFrame(frame);
-        }
-
         AppendWaveformHistory(frame.RawSamples, frame.ProcessedSamples);
     }
 
