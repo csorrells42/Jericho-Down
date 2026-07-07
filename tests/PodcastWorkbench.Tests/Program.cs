@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Reflection;
+using System.Text;
 using PodcastWorkbench;
 using PodcastWorkbench.Audio;
 using PodcastWorkbench.Video;
@@ -15,8 +17,6 @@ var tests = new (string Name, Action Test)[]
     ("File browser watcher refreshes relevant paths", FileBrowserWatcherRefreshesRelevantPaths),
     ("File browser watcher refreshes relevant renames", FileBrowserWatcherRefreshesRelevantRenames),
     ("File browser watcher ignores changed events", FileBrowserWatcherIgnoresChangedEvents),
-    ("Texture preview failure cache is scoped by mode", TexturePreviewFailureCacheIsScopedByMode),
-    ("Texture preview failure cache clears successful modes", TexturePreviewFailureCacheClearsSuccessfulModes),
     ("Camera catalog groups physical fallback paths", CameraCatalogGroupsPhysicalFallbackPaths),
     ("Camera catalog keeps software cameras separate", CameraCatalogKeepsSoftwareCamerasSeparate),
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
@@ -25,10 +25,16 @@ var tests = new (string Name, Action Test)[]
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
-    ("Enhanced karaoke LRC parses syllable timings", EnhancedKaraokeLrcParsesSyllableTimings),
-    ("Timed karaoke syllable selection waits for first timestamp", TimedKaraokeSyllableSelectionWaitsForFirstTimestamp),
-    ("WhisperX word JSON builds enhanced syllable LRC", WhisperXWordJsonBuildsEnhancedSyllableLrc),
-    ("WhisperX character JSON drives syllable timings", WhisperXCharacterJsonDrivesSyllableTimings),
+    ("Enhanced karaoke LRC parses inline timings", EnhancedKaraokeLrcParsesInlineTimings),
+    ("Timed karaoke word selection waits for first timestamp", TimedKaraokeWordSelectionWaitsForFirstTimestamp),
+    ("Short karaoke words stay visible across close timestamps", ShortKaraokeWordsStayVisibleAcrossCloseTimestamps),
+    ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
+    ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
+    ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
+    ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),
+    ("Karaoke line grouping keeps detected lyrics readable", KaraokeLineGroupingKeepsDetectedLyricsReadable),
+    ("WhisperX word JSON builds enhanced word LRC", WhisperXWordJsonBuildsEnhancedWordLrc),
+    ("WhisperX character JSON keeps word timings stable", WhisperXCharacterJsonKeepsWordTimingsStable),
     ("WhisperX segment fallback estimates word timings", WhisperXSegmentFallbackEstimatesWordTimings),
     ("Demucs vocal output accepts MP3 fallback", DemucsVocalOutputAcceptsMp3Fallback)
 };
@@ -181,35 +187,6 @@ static void FileBrowserWatcherIgnoresChangedEvents()
     }
 }
 
-static void TexturePreviewFailureCacheIsScopedByMode()
-{
-    var cache = new TextureNativePreviewFailureCache();
-    var camera = new CameraDevice(0, "Insta360 Link 2 Pro", "Media Foundation", @"\\?\camera");
-    var auto = CameraVideoMode.Auto;
-    var fourK = new CameraVideoMode("3840x2160 @ 24 fps", 3840, 2160, 24d, null);
-
-    cache.RememberFailure(camera, auto, "auto failed");
-
-    Assert(cache.TryGetFailure(camera, auto, out var reason), "same camera/mode should reuse cached failure");
-    Assert(reason == "auto failed", "cached failure should preserve reason");
-    Assert(!cache.TryGetFailure(camera, fourK, out _), "different modes should get a fresh texture-native attempt");
-}
-
-static void TexturePreviewFailureCacheClearsSuccessfulModes()
-{
-    var cache = new TextureNativePreviewFailureCache();
-    var camera = new CameraDevice(0, "Camera", "Media Foundation", string.Empty);
-    var sameNamedDirectShowCamera = new CameraDevice(1, "Camera", "DirectShow", string.Empty);
-
-    cache.RememberFailure(camera, CameraVideoMode.Auto, "failed once");
-    cache.RememberFailure(sameNamedDirectShowCamera, CameraVideoMode.Auto, "directshow failed");
-    cache.ForgetFailure(camera, CameraVideoMode.Auto);
-
-    Assert(!cache.TryGetFailure(camera, CameraVideoMode.Auto, out _), "successful mode should clear its cached failure");
-    Assert(cache.TryGetFailure(sameNamedDirectShowCamera, CameraVideoMode.Auto, out var reason), "camera source should be part of the cache key");
-    Assert(reason == "directshow failed", "clearing one source should not clear another source");
-}
-
 static void CameraCatalogGroupsPhysicalFallbackPaths()
 {
     const string physicalIdentity = @"\\?\usb#vid_2e1a&pid_4c06&mi_00#8&3818689d&0&0000";
@@ -322,7 +299,7 @@ static void CameraModeAutoDisplayText()
     Assert(CameraVideoMode.Auto.ToString() == "Auto", "auto mode display text changed unexpectedly");
 }
 
-static void EnhancedKaraokeLrcParsesSyllableTimings()
+static void EnhancedKaraokeLrcParsesInlineTimings()
 {
     const string lrc = "[00:01.00] <00:01.20>beau<00:01.50>ti<00:01.70>ful <00:02.10>song";
     var lines = ParseKaraokeLines(lrc);
@@ -339,25 +316,178 @@ static void EnhancedKaraokeLrcParsesSyllableTimings()
     Assert(GetProperty<string>(tokens[4], "Text") == "song", "next word text changed");
     Assert(GetProperty<bool>(tokens[0], "IsSingable"), "syllable tokens should be singable");
     Assert(!GetProperty<bool>(tokens[3], "IsSingable"), "spacing should not be singable");
-    Assert(GetProperty<TimeSpan?>(tokens[0], "Start") == TimeSpan.FromMilliseconds(1_200), "first syllable timestamp changed");
-    Assert(GetProperty<TimeSpan?>(tokens[1], "Start") == TimeSpan.FromMilliseconds(1_500), "second syllable timestamp changed");
-    Assert(GetProperty<TimeSpan?>(tokens[2], "Start") == TimeSpan.FromMilliseconds(1_700), "third syllable timestamp changed");
-    Assert(GetProperty<TimeSpan?>(tokens[4], "Start") == TimeSpan.FromMilliseconds(2_100), "next word timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[0], "Start") == ApplyKaraokeDisplayLead(1_200), "first syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[1], "Start") == ApplyKaraokeDisplayLead(1_500), "second syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[2], "Start") == ApplyKaraokeDisplayLead(1_700), "third syllable timestamp changed");
+    Assert(GetProperty<TimeSpan?>(tokens[4], "Start") == ApplyKaraokeDisplayLead(2_100), "next word timestamp changed");
 }
 
-static void TimedKaraokeSyllableSelectionWaitsForFirstTimestamp()
+static void TimedKaraokeWordSelectionWaitsForFirstTimestamp()
 {
     const string lrc = "[00:01.00] <00:01.20>beau<00:01.50>ti<00:01.70>ful <00:02.10>song";
     var line = CreateKaraokeLineItem(ParseKaraokeLines(lrc)[0], TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3));
 
-    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_100)) == -1, "ball should wait for the first syllable timestamp");
-    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_200)) == 0, "first syllable should activate at its timestamp");
-    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_520)) == 1, "second syllable should activate at its timestamp");
-    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(1_720)) == 2, "third syllable should activate at its timestamp");
-    Assert(GetActiveKaraokeTokenIndex(line, TimeSpan.FromMilliseconds(2_120)) == 4, "next word should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, ApplyKaraokeDisplayLead(1_200) - TimeSpan.FromMilliseconds(1)) == -1, "highlight should wait for the first syllable timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, ApplyKaraokeDisplayLead(1_200)) == 0, "first syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, ApplyKaraokeDisplayLead(1_520)) == 1, "second syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, ApplyKaraokeDisplayLead(1_720)) == 2, "third syllable should activate at its timestamp");
+    Assert(GetActiveKaraokeTokenIndex(line, ApplyKaraokeDisplayLead(2_120)) == 4, "next word should activate at its timestamp");
 }
 
-static void WhisperXWordJsonBuildsEnhancedSyllableLrc()
+static void ShortKaraokeWordsStayVisibleAcrossCloseTimestamps()
+{
+    const string lrc = "[00:02.00] <00:02.00>I <00:02.05>am <00:02.12>here";
+    var line = CreateKaraokeLineItem(ParseKaraokeLines(lrc)[0], TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4));
+    var firstWordStart = ApplyKaraokeDisplayLead(2_000);
+    var secondWordStart = ApplyKaraokeDisplayLead(2_050);
+    var shortWordHold = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "KaraokeShortWordDisplayHold");
+
+    Assert(GetActiveKaraokeTokenIndex(line, firstWordStart + TimeSpan.FromMilliseconds(130)) == 0, "a close following timestamp should not skip a one-letter word");
+    Assert(GetActiveKaraokeTokenIndex(line, firstWordStart + shortWordHold + TimeSpan.FromMilliseconds(5)) == 2, "second short word should activate after the first has been visible");
+    Assert(GetActiveKaraokeTokenIndex(line, secondWordStart + shortWordHold + TimeSpan.FromMilliseconds(5)) == 4, "longer following word should activate after the second short word has been visible");
+}
+
+static void KaraokeLyricCacheIsScopedByTrackFile()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var firstTrack = Path.Combine(folder, "first.wav");
+        var secondTrack = Path.Combine(folder, "second.wav");
+        File.WriteAllBytes(firstTrack, [1, 2, 3]);
+        File.WriteAllBytes(secondTrack, [1, 2, 3]);
+
+        var firstCachePath = GetKaraokeLyricCachePath(firstTrack);
+        var secondCachePath = GetKaraokeLyricCachePath(secondTrack);
+
+        Assert(!string.IsNullOrWhiteSpace(firstCachePath), "first track should produce a lyric cache path");
+        Assert(!string.IsNullOrWhiteSpace(secondCachePath), "second track should produce a lyric cache path");
+        Assert(!string.Equals(firstCachePath, secondCachePath, StringComparison.OrdinalIgnoreCase), "different tracks should not share lyric cache files");
+
+        Assert(SaveCachedKaraokeLyricsForTrack(firstTrack, "[00:00.00] alpha"), "valid track lyrics should save to cache");
+        Assert(File.Exists(firstCachePath), "saved lyric cache file should exist");
+        Assert(File.ReadAllText(firstCachePath!).Contains("alpha", StringComparison.Ordinal), "saved lyric cache should preserve text");
+
+        var staleCachePath = firstCachePath;
+        Thread.Sleep(20);
+        File.WriteAllBytes(firstTrack, [1, 2, 3, 4]);
+        var changedCachePath = GetKaraokeLyricCachePath(firstTrack);
+        Assert(!string.Equals(staleCachePath, changedCachePath, StringComparison.OrdinalIgnoreCase), "track edits should not reuse stale lyric cache files");
+        Assert(!SaveCachedKaraokeLyricsForTrack(Path.Combine(folder, "missing.wav"), "[00:00.00] beta"), "missing tracks should not be marked as cached");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static void KaraokeM4aDurationReadsMovieHeader()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var path = Path.Combine(folder, "sample.m4a");
+        File.WriteAllBytes(path, CreateMinimalM4aWithDuration(44100, 44100 * 187));
+
+        Assert(TryReadKaraokeTrackDuration(path, out var duration), "synthetic M4A should expose duration from mvhd");
+        Assert(Math.Abs((duration - TimeSpan.FromSeconds(187)).TotalMilliseconds) < 1d, "M4A movie header duration should be decoded");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static void KaraokeArtistFallsBackToITunesFolder()
+{
+    var path = Path.Combine(
+        @"C:\",
+        "Users",
+        "clsor",
+        "Music",
+        "iTunes",
+        "iTunes Media",
+        "Music",
+        "Chris Tomlin",
+        "Love Ran Red",
+        "03 At the Cross.m4a");
+
+    var artist = (string)InvokeEqualizerWindowPrivateStatic("InferKaraokeArtistFromPath", path);
+
+    Assert(artist == "Chris Tomlin", "iTunes artist folder should populate karaoke author");
+}
+
+static void KaraokeEmptyLyricPromptIsTrackAware()
+{
+    var noTrackPrompt = (string)InvokeEqualizerWindowPrivateStaticWithArgs("GetKaraokeEmptyLyricDisplayText", [null]);
+    var loadedTrackPrompt = (string)InvokeEqualizerWindowPrivateStatic("GetKaraokeEmptyLyricDisplayText", @"C:\Music\Artist\Album\Song.m4a");
+
+    Assert(noTrackPrompt.Contains("Load a backing track", StringComparison.Ordinal), "empty karaoke prompt should guide users before a track is loaded");
+    Assert(loadedTrackPrompt.Contains("No lyrics loaded", StringComparison.Ordinal), "empty karaoke prompt should change once a backing track is loaded");
+    Assert(!loadedTrackPrompt.Contains("Load a backing track", StringComparison.Ordinal), "loaded-track prompt should not keep stale backing-track guidance");
+}
+
+static void KaraokeLineGroupingKeepsDetectedLyricsReadable()
+{
+    const string json = """
+        {
+          "segments": [
+            {
+              "start": 1.0,
+              "end": 9.5,
+              "text": "synthetic line grouping sample",
+              "words": [
+                { "word": "When", "start": 1.0, "end": 1.3 },
+                { "word": "bright", "start": 1.35, "end": 1.75 },
+                { "word": "morning", "start": 1.8, "end": 2.2 },
+                { "word": "comes", "start": 2.25, "end": 2.55 },
+                { "word": "we", "start": 3.1, "end": 3.25 },
+                { "word": "all", "start": 3.3, "end": 3.55 },
+                { "word": "stand", "start": 3.6, "end": 3.95 },
+                { "word": "ready", "start": 4.0, "end": 4.35 },
+                { "word": "and", "start": 4.9, "end": 5.05 },
+                { "word": "sing", "start": 5.1, "end": 5.45 },
+                { "word": "another", "start": 5.5, "end": 5.95 },
+                { "word": "gentle", "start": 6.0, "end": 6.4 },
+                { "word": "chorus", "start": 6.45, "end": 6.85 },
+                { "word": "for", "start": 7.4, "end": 7.6 },
+                { "word": "everyone", "start": 7.65, "end": 8.1 },
+                { "word": "here", "start": 8.15, "end": 8.45 },
+                { "word": "tonight", "start": 8.5, "end": 9.0 }
+              ]
+            }
+          ]
+        }
+        """;
+
+    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var timedWordCount);
+    var displayLines = lrc
+        .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+        .Where(line => line.StartsWith("[00:", StringComparison.Ordinal))
+        .Select(StripKaraokeTimingMarkersForTest)
+        .ToList();
+
+    Assert(timedWordCount == 17, "all synthetic words should be timed");
+    Assert(displayLines.Count >= 3, "long detected lyric runs should split into readable karaoke lines");
+    Assert(displayLines.All(line => line.Length <= 38), "generated lyric lines should stay inside the display line target");
+    Assert(displayLines.All(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 8), "generated lyric lines should avoid dense word piles");
+}
+
+static void WhisperXWordJsonBuildsEnhancedWordLrc()
 {
     const string json = """
         {
@@ -375,21 +505,19 @@ static void WhisperXWordJsonBuildsEnhancedSyllableLrc()
         }
         """;
 
-    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var syllableCount);
+    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var timedWordCount);
 
-    Assert(syllableCount == 4, "Beautiful song should generate four singable syllable tokens");
+    Assert(timedWordCount == 2, "Beautiful song should generate two timed word tokens");
     Assert(lrc.Contains("[re:Demucs vocals + WhisperX word alignment]", StringComparison.Ordinal), "LRC should identify the pro alignment source");
-    Assert(lrc.Contains("<00:01.00>Beau", StringComparison.Ordinal), "first syllable should keep WhisperX word start timing");
-    Assert(lrc.Contains(">ti", StringComparison.Ordinal), "middle syllable should be represented separately");
-    Assert(lrc.Contains(">ful", StringComparison.Ordinal), "final syllable should be represented separately");
+    Assert(lrc.Contains("<00:01.00>Beautiful", StringComparison.Ordinal), "first word should keep WhisperX word start timing");
     Assert(lrc.Contains("<00:02.10>song", StringComparison.Ordinal), "next word should keep its own WhisperX start timing");
 
     var parsedLine = ParseKaraokeLines(lrc).Single(line => GetProperty<string>(line, "Text") == "Beautiful song");
     var tokens = GetProperty<IEnumerable>(parsedLine, "Tokens").Cast<object>().ToList();
-    Assert(tokens.Count(token => GetProperty<bool>(token, "IsSingable")) == 4, "generated LRC should parse back into four singable display tokens");
+    Assert(tokens.Count(token => GetProperty<bool>(token, "IsSingable")) == 2, "generated LRC should parse back into two singable display tokens");
 }
 
-static void WhisperXCharacterJsonDrivesSyllableTimings()
+static void WhisperXCharacterJsonKeepsWordTimingsStable()
 {
     const string json = """
         {
@@ -423,12 +551,11 @@ static void WhisperXCharacterJsonDrivesSyllableTimings()
         }
         """;
 
-    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var syllableCount);
+    var lrc = BuildEnhancedKaraokeLrcFromJson(json, out var timedWordCount);
 
-    Assert(syllableCount == 4, "character-aligned Beautiful song should still produce four singable syllables");
-    Assert(lrc.Contains("<00:01.00>Beau", StringComparison.Ordinal), "first syllable should use first character alignment");
-    Assert(lrc.Contains("<00:01.40>ti", StringComparison.Ordinal), "second syllable should use character-derived timing");
-    Assert(lrc.Contains("<00:01.60>ful", StringComparison.Ordinal), "third syllable should use character-derived timing");
+    Assert(timedWordCount == 2, "character-rich WhisperX output should still produce stable word-level tokens");
+    Assert(lrc.Contains("<00:01.00>Beautiful", StringComparison.Ordinal), "first word should keep WhisperX word timing");
+    Assert(lrc.Contains("<00:02.10>song", StringComparison.Ordinal), "second word should keep WhisperX word timing");
 }
 
 static void WhisperXSegmentFallbackEstimatesWordTimings()
@@ -523,6 +650,34 @@ static string BuildEnhancedKaraokeLrcFromJson(string json, out int syllableCount
     return lrc;
 }
 
+static string StripKaraokeTimingMarkersForTest(string lrcLine)
+{
+    var builder = new StringBuilder(lrcLine.Length);
+    var inTimingMarker = false;
+    foreach (var character in lrcLine)
+    {
+        if (character is '[' or '<')
+        {
+            inTimingMarker = true;
+            continue;
+        }
+
+        if (inTimingMarker)
+        {
+            if (character is ']' or '>')
+            {
+                inTimingMarker = false;
+            }
+
+            continue;
+        }
+
+        builder.Append(character);
+    }
+
+    return builder.ToString().Trim();
+}
+
 static object CreateKaraokeLineItem(object timedLine, TimeSpan start, TimeSpan end)
 {
     var lineType = typeof(EqualizerWindow).GetNestedType("KaraokeLyricLineItem", BindingFlags.NonPublic);
@@ -542,6 +697,88 @@ static object CreateKaraokeLineItem(object timedLine, TimeSpan start, TimeSpan e
 static int GetActiveKaraokeTokenIndex(object line, TimeSpan position)
 {
     return (int)InvokeEqualizerWindowPrivateStatic("GetActiveKaraokeTokenIndex", line, position);
+}
+
+static TimeSpan ApplyKaraokeDisplayLead(int rawMilliseconds)
+{
+    var rawTimestamp = TimeSpan.FromMilliseconds(rawMilliseconds);
+    var lead = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "KaraokeLyricDisplayLead");
+    return rawTimestamp > lead ? rawTimestamp - lead : TimeSpan.Zero;
+}
+
+static string? GetKaraokeLyricCachePath(string trackPath)
+{
+    return (string?)InvokeEqualizerWindowPrivateStatic("GetKaraokeLyricCachePath", trackPath);
+}
+
+static bool SaveCachedKaraokeLyricsForTrack(string trackPath, string lyrics)
+{
+    return (bool)InvokeEqualizerWindowPrivateStatic("SaveCachedKaraokeLyricsForTrack", trackPath, lyrics);
+}
+
+static bool TryReadKaraokeTrackDuration(string path, out TimeSpan duration)
+{
+    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
+    if (readerType is null)
+    {
+        throw new InvalidOperationException("karaoke track audio reader type was not found");
+    }
+
+    var args = new object?[] { path, TimeSpan.Zero };
+    var method = readerType.GetMethod("TryReadDuration", BindingFlags.Public | BindingFlags.Static);
+    if (method is null)
+    {
+        throw new InvalidOperationException("KaraokeTrackAudioReader.TryReadDuration was not found");
+    }
+
+    var result = (bool)method.Invoke(null, args)!;
+    duration = (TimeSpan)args[1]!;
+    return result;
+}
+
+static byte[] CreateMinimalM4aWithDuration(uint timescale, uint duration)
+{
+    using var stream = new MemoryStream();
+    WriteBox(stream, "ftyp", writer =>
+    {
+        writer.Write("M4A "u8);
+        writer.Write(new byte[] { 0, 0, 0, 0 });
+        writer.Write("M4A "u8);
+        writer.Write("mp42"u8);
+    });
+    WriteBox(stream, "moov", writer =>
+    {
+        WriteBox(writer, "mvhd", movieHeader =>
+        {
+            movieHeader.WriteByte(0);
+            movieHeader.Write([0, 0, 0]);
+            WriteUInt32BigEndian(movieHeader, 0);
+            WriteUInt32BigEndian(movieHeader, 0);
+            WriteUInt32BigEndian(movieHeader, timescale);
+            WriteUInt32BigEndian(movieHeader, duration);
+        });
+    });
+
+    return stream.ToArray();
+}
+
+static void WriteBox(Stream stream, string type, Action<Stream> writePayload)
+{
+    var start = stream.Position;
+    WriteUInt32BigEndian(stream, 0);
+    stream.Write(Encoding.ASCII.GetBytes(type));
+    writePayload(stream);
+    var end = stream.Position;
+    stream.Position = start;
+    WriteUInt32BigEndian(stream, checked((uint)(end - start)));
+    stream.Position = end;
+}
+
+static void WriteUInt32BigEndian(Stream stream, uint value)
+{
+    Span<byte> buffer = stackalloc byte[4];
+    BinaryPrimitives.WriteUInt32BigEndian(buffer, value);
+    stream.Write(buffer);
 }
 
 static object InvokeEqualizerWindowPrivateStatic(string methodName, params object?[] args)
