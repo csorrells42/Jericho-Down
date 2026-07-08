@@ -6,7 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public sealed class Dx12Camera : IDisposable
 {

@@ -1,4 +1,4 @@
-﻿namespace PodcastWorkbench.Audio;
+namespace JerichoDown.Audio;
 
 public sealed class AudioInputDevice
 {

@@ -3,7 +3,7 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 internal static class AppStateStore
 {

@@ -1,5 +1,5 @@
 using System.Globalization;
-using PodcastWorkbench.Video;
+using JerichoDown.Video;
 using System.Windows;
 using System.Windows.Threading;
 

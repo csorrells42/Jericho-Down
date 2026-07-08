@@ -1,4 +1,4 @@
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 internal static class MediaFoundationGuids
 {

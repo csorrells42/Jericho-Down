@@ -53,11 +53,11 @@ Invoke-GatedStep "Shut down dotnet build servers" {
 }
 
 Invoke-GatedStep "Build solution" {
-    dotnet build .\PodcastWorkbench.slnx
+    dotnet build .\JerichoDown.slnx
 }
 
 Invoke-GatedStep "Run test harness" {
-    dotnet run --project .\tests\PodcastWorkbench.Tests\PodcastWorkbench.Tests.csproj
+    dotnet run --project .\tests\JerichoDown.Tests\JerichoDown.Tests.csproj
 }
 
 Invoke-GatedStep "List cameras" {
@@ -81,4 +81,4 @@ if ($TextureDiagnostic) {
 }
 
 Write-Host ""
-Write-Host "Podcast Workbench verification complete."
+Write-Host "Jericho Down verification complete."

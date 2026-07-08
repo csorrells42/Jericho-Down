@@ -3,9 +3,9 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text;
-using PodcastWorkbench;
-using PodcastWorkbench.Audio;
-using PodcastWorkbench.Video;
+using JerichoDown;
+using JerichoDown.Audio;
+using JerichoDown.Video;
 
 var tests = new (string Name, Action Test)[]
 {
@@ -143,7 +143,7 @@ static void FileBrowserWatcherRefreshesRelevantRenames()
 
 static void FileBrowserWatcherIgnoresChangedEvents()
 {
-    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(folder);
     try
     {
@@ -349,7 +349,7 @@ static void ShortKaraokeWordsStayVisibleAcrossCloseTimestamps()
 
 static void KaraokeLyricCacheIsScopedByTrackFile()
 {
-    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(folder);
     try
     {
@@ -390,7 +390,7 @@ static void KaraokeLyricCacheIsScopedByTrackFile()
 
 static void KaraokeM4aDurationReadsMovieHeader()
 {
-    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(folder);
     try
     {
@@ -582,7 +582,7 @@ static void WhisperXSegmentFallbackEstimatesWordTimings()
 
 static void DemucsVocalOutputAcceptsMp3Fallback()
 {
-    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(folder);
     try
     {
@@ -620,7 +620,7 @@ static List<object> ReadWhisperXWordsFromJson(string json)
 
 static object ReadWhisperXWordsObjectFromJson(string json)
 {
-    var folder = Path.Combine(Path.GetTempPath(), "PodcastWorkbench.Tests", Guid.NewGuid().ToString("N"));
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(folder);
     var path = Path.Combine(folder, "whisperx.json");
     try

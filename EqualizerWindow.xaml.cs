@@ -24,12 +24,12 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
-using PodcastWorkbench.Audio;
-using PodcastWorkbench.Video;
-using PodcastWorkbench.Visualization;
+using JerichoDown.Audio;
+using JerichoDown.Video;
+using JerichoDown.Visualization;
 using ShapePath = System.Windows.Shapes.Path;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 public partial class EqualizerWindow : Window
 {
@@ -75,7 +75,7 @@ public partial class EqualizerWindow : Window
     private static readonly string KaraokeLyricCacheFolder = System.IO.Path.Combine(AppStoragePaths.SettingsFolder, "KaraokeLyrics");
     private static readonly string DefaultKaraokeRecordingFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "Podcast Workbench Karaoke Recordings");
+        "Jericho Down Karaoke Recordings");
     private static readonly JsonSerializerOptions UserPresetJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -221,10 +221,10 @@ public partial class EqualizerWindow : Window
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "Podcast Workbench Sessions");
+        "Jericho Down Sessions");
     private string _audioRecordingFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "Podcast Workbench Audio Recordings");
+        "Jericho Down Audio Recordings");
     private string? _activeAudioRecordingPath;
     private DateTime _audioRecordingStartedAt;
     private DateTime _audioRecordingPausedAt;
@@ -7578,7 +7578,7 @@ public partial class EqualizerWindow : Window
     private static string BuildEnhancedKaraokeLrc(IReadOnlyList<List<KaraokeDetectedWord>> lyricLines, out int timedTokenCount)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("[by:Podcast Workbench AI Lyric Detection]");
+        builder.AppendLine("[by:Jericho Down AI Lyric Detection]");
         builder.AppendLine("[re:Demucs vocals + WhisperX word alignment]");
         timedTokenCount = 0;
 

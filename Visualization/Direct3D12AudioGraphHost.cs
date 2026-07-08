@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
-using PodcastWorkbench.Audio;
+using JerichoDown.Audio;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.D3DCompiler;
@@ -13,7 +13,7 @@ using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
 
-namespace PodcastWorkbench.Visualization;
+namespace JerichoDown.Visualization;
 
 public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 {
@@ -40,7 +40,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         _renderThread = new Thread(RenderWorkerLoop)
         {
             IsBackground = true,
-            Name = "Podcast Workbench DX12 audio graph"
+            Name = "Jericho Down DX12 audio graph"
         };
         _renderThread.Start();
     }
@@ -708,7 +708,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             return Compiler.Compile(
                     AudioGraphShaderSource,
                     entryPoint,
-                    "PodcastWorkbenchAudioGraph.hlsl",
+                    "JerichoDownAudioGraph.hlsl",
                     profile,
                     ShaderFlags.OptimizationLevel3,
                     EffectFlags.None)

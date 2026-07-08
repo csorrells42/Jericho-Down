@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public sealed record TextureNativeCameraProbeResult(
     bool D3D12ManagerReady,

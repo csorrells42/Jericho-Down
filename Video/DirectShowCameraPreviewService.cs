@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public sealed class DirectShowCameraPreviewService : IDisposable
 {

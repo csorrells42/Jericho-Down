@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.IO;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 internal sealed class MediaFoundationVideoRecorder : IDisposable
 {

@@ -1,4 +1,4 @@
-﻿using NAudio.Wave;
+using NAudio.Wave;
 
 using NAudio.CoreAudioApi;
 using NAudio.Dmo;
@@ -8,7 +8,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace PodcastWorkbench.Audio;
+namespace JerichoDown.Audio;
 
 public sealed class MicrophoneSpectrumService : IDisposable
 {

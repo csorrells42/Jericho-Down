@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 internal static class AppStoragePaths
 {

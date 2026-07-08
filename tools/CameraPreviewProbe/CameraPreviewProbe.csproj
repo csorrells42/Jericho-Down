@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\PodcastWorkbench.csproj" />
+    <ProjectReference Include="..\..\JerichoDown.csproj" />
   </ItemGroup>
 
 </Project>

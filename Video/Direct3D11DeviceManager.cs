@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 internal sealed class Direct3D11DeviceManager : ITextureNativeDeviceManager
 {

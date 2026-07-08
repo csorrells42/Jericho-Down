@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="JerichoDown.csproj" />
+  <Project Path="tests\JerichoDown.Tests\JerichoDown.Tests.csproj" />
+  <Project Path="tools\CameraPreviewProbe\CameraPreviewProbe.csproj" />
+</Solution>

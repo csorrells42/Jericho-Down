@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace PodcastWorkbench.Audio;
+namespace JerichoDown.Audio;
 
 public sealed class VoiceProcessorSettings : INotifyPropertyChanged
 {

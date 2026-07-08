@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 public sealed class FileBrowserWatcher : IDisposable
 {

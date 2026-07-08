@@ -12,7 +12,7 @@ using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 {
@@ -42,7 +42,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         _renderThread = new Thread(RenderWorkerLoop)
         {
             IsBackground = true,
-            Name = "Podcast Workbench DX12 preview"
+            Name = "Jericho Down DX12 preview"
         };
         _renderThread.Start();
     }
@@ -1591,7 +1591,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             return Compiler.Compile(
                     shaderSource,
                     entryPoint,
-                    "PodcastWorkbenchPreview.hlsl",
+                    "JerichoDownPreview.hlsl",
                     profile,
                     ShaderFlags.OptimizationLevel3,
                     EffectFlags.None)

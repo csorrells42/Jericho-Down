@@ -1,4 +1,4 @@
-namespace PodcastWorkbench.Audio;
+namespace JerichoDown.Audio;
 
 public readonly record struct AudioDeviceFormat(int SampleRate, int Channels, int BitsPerSample)
 {

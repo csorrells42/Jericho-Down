@@ -1,4 +1,4 @@
-﻿namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public sealed class CameraVideoMode
 {

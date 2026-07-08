@@ -1,9 +1,9 @@
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
-using PodcastWorkbench.Audio;
+using JerichoDown.Audio;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 public partial class Waveform3DWindow : Window
 {

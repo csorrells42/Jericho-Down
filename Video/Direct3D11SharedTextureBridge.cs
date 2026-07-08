@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using Vortice.DXGI;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 internal sealed class Direct3D11SharedTextureBridge : IDisposable
 {

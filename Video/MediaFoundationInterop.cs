@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 internal static class MediaFoundationInterop
 {

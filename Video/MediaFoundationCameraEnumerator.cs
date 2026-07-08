@@ -1,4 +1,4 @@
-namespace PodcastWorkbench.Video;
+namespace JerichoDown.Video;
 
 public static class MediaFoundationCameraEnumerator
 {

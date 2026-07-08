@@ -1,6 +1,6 @@
-# Podcast Workbench
+# Jericho Down
 
-Podcast Workbench is a standalone WPF podcast recording, camera preview, microphone DSP, and voice analysis tool split out of Automagination Amalgastation.
+Jericho Down is a standalone WPF podcast recording, camera preview, microphone DSP, and voice analysis tool split out of Automagination Amalgastation.
 
 ## Current Features
 
@@ -18,22 +18,22 @@ Podcast Workbench is a standalone WPF podcast recording, camera preview, microph
 ## Build
 
 ```powershell
-dotnet restore PodcastWorkbench.csproj
-dotnet build PodcastWorkbench.csproj
+dotnet restore JerichoDown.csproj
+dotnet build JerichoDown.csproj
 ```
 
 ## Tests
 
 ```powershell
-dotnet run --project tests\PodcastWorkbench.Tests\PodcastWorkbench.Tests.csproj
+dotnet run --project tests\JerichoDown.Tests\JerichoDown.Tests.csproj
 ```
 
 ## Verification
 
 ```powershell
-.\tools\VerifyPodcastWorkbench.ps1
-.\tools\VerifyPodcastWorkbench.ps1 -LiveCamera
-.\tools\VerifyPodcastWorkbench.ps1 -TextureDiagnostic
+.\tools\VerifyJerichoDown.ps1
+.\tools\VerifyJerichoDown.ps1 -LiveCamera
+.\tools\VerifyJerichoDown.ps1 -TextureDiagnostic
 ```
 
 The default verifier builds the solution, runs the test harness, and lists available cameras. `-LiveCamera` briefly opens the configured real and virtual cameras through the DX12 preview host. `-TextureDiagnostic` probes the texture-native path without making that experimental path a required pass condition.

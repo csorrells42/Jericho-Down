@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 
-namespace PodcastWorkbench;
+namespace JerichoDown;
 
 /// <summary>
 /// Interaction logic for App.xaml
