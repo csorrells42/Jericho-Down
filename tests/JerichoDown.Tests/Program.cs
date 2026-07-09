@@ -49,6 +49,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
+    ("Live service bus records auxiliary mic in program mix", LiveServiceBusRecordsAuxiliaryMicInProgramMix),
     ("Live service bus records selected auxiliary mic sources", LiveServiceBusRecordsSelectedAuxiliaryMicSources),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
@@ -1058,6 +1059,61 @@ static void LiveServiceBusMixesAuxiliaryCaptureDevice()
         "auxiliary capture device should feed the service output bus",
         leftMaximum: 0.03f,
         rightMinimum: 0.12f);
+}
+
+static void LiveServiceBusRecordsAuxiliaryMicInProgramMix()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out _);
+        service.ConfigureLiveMix(
+            [
+                new MicrophoneLiveChannelSettings(
+                    3,
+                    7,
+                    InputChannelMode.MonoSum,
+                    CreateTransparentVoiceSettings(),
+                    100d,
+                    0d,
+                    100d,
+                    false,
+                    false,
+                    0d,
+                    true,
+                    false)
+            ],
+            new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.ProgramMix, 3);
+
+        var auxiliaryCapture = new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 1));
+        var auxiliaryRuntime = CreateAdditionalCaptureRuntime(service, deviceNumber: 7, auxiliaryCapture);
+        var auxiliarySamples = new float[2_400];
+        for (var i = 0; i < auxiliarySamples.Length; i++)
+        {
+            auxiliarySamples[i] = (i / 4) % 2 == 0 ? 0.35f : -0.35f;
+        }
+
+        InvokeAdditionalCapture(service, auxiliaryRuntime, auxiliarySamples);
+        SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+
+        var recordingPath = Path.Combine(folder, "aux_program_mix.wav");
+        service.StartProcessedAudioRecording(recordingPath);
+        InvokePrimaryCapture(service, new float[384 * 2]);
+        service.StopProcessedAudioRecording();
+
+        using var reader = new WaveFileReader(recordingPath);
+        var recorded = ReadWaveFloatSamples(reader);
+        Assert(reader.WaveFormat.Channels == 2, "auxiliary program mix recording should remain stereo");
+        Assert(recorded.Length >= 768, "auxiliary program mix recording should write the synced mic block");
+        Assert(MeasureLeftPeak(recorded, startFrame: 150, frameCount: int.MaxValue) < 0.03f, "auxiliary hard-right mic should stay out of the left program recording channel");
+        Assert(MeasureRightPeak(recorded, startFrame: 150, frameCount: int.MaxValue) > 0.12f, "auxiliary hard-right mic should reach the right program recording channel");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
 }
 
 static void LiveServiceBusRecordsSelectedAuxiliaryMicSources()
