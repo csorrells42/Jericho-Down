@@ -10821,7 +10821,11 @@ public partial class EqualizerWindow : Window
         var enabledChannels = _micChannels
             .Where(channel => channel.SelectedDevice is not null)
             .ToList();
-        var audibleChannels = enabledChannels
+        var soloedChannels = enabledChannels
+            .Where(channel => channel.IsSoloed)
+            .ToList();
+        var candidateAudibleChannels = soloedChannels.Count > 0 ? soloedChannels : enabledChannels;
+        var audibleChannels = candidateAudibleChannels
             .Where(channel => !channel.IsMuted && channel.VolumePercent > 0.1d)
             .ToList();
         var hasInput = frame.MicrophoneLines.Any(line => line.RawPeakLevel > 0.001d)
