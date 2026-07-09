@@ -46,6 +46,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private readonly MixBusProcessor _mixBusProcessor = new();
     private MicrophoneLiveChannelSettings[] _configuredLiveMixChannels = [];
     private LiveMicChannelRuntime[] _liveMixChannels = [];
+    private MixingSampleProvider? _programMixer;
     private MixBusSettings _mixBusSettings = MixBusSettings.Default;
     private readonly object _additionalCaptureLock = new();
     private readonly Dictionary<int, AdditionalCaptureRuntime> _additionalCaptures = [];
@@ -116,13 +117,31 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         public required InputChannelMode InputChannelMode { get; init; }
 
-        public required double VolumeLinear { get; init; }
+        public required VoiceProcessorSettings ProcessorSettings { get; init; }
+
+        public required double VolumeLinear { get; set; }
+
+        public required double InputGainLinear { get; set; }
 
         public required bool IsEnabled { get; init; }
 
-        public required bool IsMuted { get; init; }
+        public required bool IsMuted { get; set; }
+
+        public required bool IsSoloed { get; set; }
+
+        public required bool IsPolarityInverted { get; set; }
+
+        public required double DelayMilliseconds { get; set; }
 
         public required VoiceSampleProcessor Processor { get; init; }
+
+        public required LiveMicBlockSampleProvider SourceProvider { get; init; }
+
+        public required VoiceProcessorSampleProvider DspProvider { get; init; }
+
+        public required VolumeSampleProvider VolumeProvider { get; init; }
+
+        public required AudioDelayLine DelayLine { get; init; }
 
         public required SpectrumAnalyzer Analyzer { get; init; }
 
@@ -400,15 +419,23 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public void ConfigureLiveMix(IReadOnlyList<MicrophoneLiveChannelSettings> channels, MixBusSettings mixBusSettings)
     {
         ArgumentNullException.ThrowIfNull(channels);
+        var configuredChannels = channels
+            .Where(channel => channel.ChannelNumber > 0 && channel.ProcessorSettings is not null)
+            .OrderBy(channel => channel.ChannelNumber)
+            .ToArray();
 
         lock (_liveMixLock)
         {
-            _configuredLiveMixChannels = channels
-                .Where(channel => channel.ChannelNumber > 0 && channel.ProcessorSettings is not null)
-                .OrderBy(channel => channel.ChannelNumber)
-                .ToArray();
+            _configuredLiveMixChannels = configuredChannels;
             _mixBusSettings = mixBusSettings;
-            RebuildLiveMixProcessorsLocked();
+            if (CanUpdateLiveMixControlsLocked(configuredChannels))
+            {
+                UpdateLiveMixControlsLocked(configuredChannels);
+            }
+            else
+            {
+                RebuildLiveMixProcessorsLocked();
+            }
         }
 
         if (_capture is not null)
@@ -417,27 +444,119 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    private bool CanUpdateLiveMixControlsLocked(IReadOnlyList<MicrophoneLiveChannelSettings> channels)
+    {
+        if (channels.Count != _liveMixChannels.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < channels.Count; i++)
+        {
+            var channel = channels[i];
+            var runtime = _liveMixChannels[i];
+            if (runtime.ChannelNumber != channel.ChannelNumber
+                || runtime.DeviceNumber != channel.DeviceNumber
+                || runtime.InputChannelMode != channel.InputChannelMode
+                || runtime.IsEnabled != channel.IsEnabled
+                || !ReferenceEquals(runtime.ProcessorSettings, channel.ProcessorSettings))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void UpdateLiveMixControlsLocked(IReadOnlyList<MicrophoneLiveChannelSettings> channels)
+    {
+        for (var i = 0; i < channels.Count; i++)
+        {
+            var channel = channels[i];
+            var runtime = _liveMixChannels[i];
+            runtime.VolumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent);
+            runtime.InputGainLinear = DbToLinear(Math.Clamp(channel.InputGainDb, -24d, 24d));
+            runtime.IsMuted = channel.IsMuted;
+            runtime.IsSoloed = channel.IsSoloed;
+            runtime.IsPolarityInverted = channel.IsPolarityInverted;
+            var delayMilliseconds = Math.Clamp(channel.DelayMilliseconds, 0d, 250d);
+            if (Math.Abs(runtime.DelayMilliseconds - delayMilliseconds) > 0.01d
+                && delayMilliseconds <= 0.01d)
+            {
+                runtime.DelayLine.Reset();
+            }
+
+            runtime.DelayMilliseconds = delayMilliseconds;
+        }
+
+        ApplyLiveMixAudibilityLocked();
+    }
+
     private void RebuildLiveMixProcessorsLocked()
     {
         var sampleRate = Math.Max(8000, _activeSampleRate);
         _liveMixChannels = _configuredLiveMixChannels
-            .Select(channel => new LiveMicChannelRuntime
+            .Select(channel =>
             {
-                ChannelNumber = channel.ChannelNumber,
-                DeviceNumber = channel.DeviceNumber,
-                InputChannelMode = channel.InputChannelMode,
-                VolumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent),
-                IsEnabled = channel.IsEnabled,
-                IsMuted = channel.IsMuted,
-                Processor = new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate),
-                Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
-                RawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
-                SyncBuffer = channel.DeviceNumber == _currentDeviceNumber
-                    ? null
-                    : new AudioSyncBuffer(sampleRate, AuxiliaryCaptureTargetLatency, AuxiliaryCaptureMaximumLatency)
+                var sourceProvider = new LiveMicBlockSampleProvider(sampleRate);
+                var processor = new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate);
+                var dspProvider = new VoiceProcessorSampleProvider(sourceProvider, processor);
+                var volumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent);
+                var volumeProvider = new VolumeSampleProvider(dspProvider)
+                {
+                    Volume = 0f
+                };
+
+                return new LiveMicChannelRuntime
+                {
+                    ChannelNumber = channel.ChannelNumber,
+                    DeviceNumber = channel.DeviceNumber,
+                    InputChannelMode = channel.InputChannelMode,
+                    ProcessorSettings = channel.ProcessorSettings,
+                    VolumeLinear = volumeLinear,
+                    InputGainLinear = DbToLinear(Math.Clamp(channel.InputGainDb, -24d, 24d)),
+                    IsEnabled = channel.IsEnabled,
+                    IsMuted = channel.IsMuted,
+                    IsSoloed = channel.IsSoloed,
+                    IsPolarityInverted = channel.IsPolarityInverted,
+                    DelayMilliseconds = Math.Clamp(channel.DelayMilliseconds, 0d, 250d),
+                    Processor = processor,
+                    SourceProvider = sourceProvider,
+                    DspProvider = dspProvider,
+                    VolumeProvider = volumeProvider,
+                    DelayLine = new AudioDelayLine(sampleRate, 250d),
+                    Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
+                    RawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
+                    SyncBuffer = channel.DeviceNumber == _currentDeviceNumber
+                        ? null
+                        : new AudioSyncBuffer(sampleRate, AuxiliaryCaptureTargetLatency, AuxiliaryCaptureMaximumLatency)
+                };
             })
             .ToArray();
+        var programMixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1))
+        {
+            ReadFully = true
+        };
+        foreach (var channel in _liveMixChannels.Where(channel => channel.IsEnabled))
+        {
+            programMixer.AddMixerInput(channel.VolumeProvider);
+        }
+
+        _programMixer = programMixer;
+        ApplyLiveMixAudibilityLocked();
         _mixBusProcessor.Reset();
+    }
+
+    private void ApplyLiveMixAudibilityLocked()
+    {
+        var hasSolo = _liveMixChannels.Any(channel => channel.IsEnabled && channel.IsSoloed);
+        foreach (var channel in _liveMixChannels)
+        {
+            var audible = channel.IsEnabled
+                && !channel.IsMuted
+                && (!hasSolo || channel.IsSoloed);
+            channel.VolumeProvider.Volume = audible ? (float)channel.VolumeLinear : 0f;
+        }
     }
 
     public static IReadOnlyList<AudioInputDevice> GetInputDevices()
@@ -1043,10 +1162,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         out VoiceProcessingTelemetry telemetry)
     {
         LiveMicChannelRuntime[] liveMixChannels;
+        MixingSampleProvider? programMixer;
         MixBusSettings mixBusSettings;
         lock (_liveMixLock)
         {
             liveMixChannels = _liveMixChannels;
+            programMixer = _programMixer;
             mixBusSettings = _mixBusSettings;
         }
 
@@ -1075,7 +1196,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
         mixSamples.Clear();
         var rawPrimarySamples = _monoSamples.AsSpan(0, fallbackRawSamples.Length);
         var hasRawPrimarySamples = false;
-        VoiceProcessingTelemetry? primaryTelemetry = null;
         var includedChannelCount = 0;
 
         foreach (var channel in liveMixChannels)
@@ -1105,20 +1225,31 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 hasRawPrimarySamples = true;
             }
 
-            var channelProcessedSamples = _mixChannelProcessedSamples.AsSpan(0, fallbackRawSamples.Length);
-            channel.Processor.Process(channelInputSamples, channelProcessedSamples);
-            CaptureLastMicSamples(channel, channelInputSamples, channelProcessedSamples);
-            primaryTelemetry ??= channel.Processor.Telemetry.Snapshot();
+            CaptureLastMicSamples(channel, channelInputSamples, ReadOnlySpan<float>.Empty);
+            ApplyPreDspLiveChannelControls(channel, channelInputSamples);
+            channel.SourceProvider.SetBlock(channelInputSamples);
+            includedChannelCount++;
+        }
 
-            if (!channel.IsMuted && channel.VolumeLinear > 0d)
+        var mixedRead = includedChannelCount > 0 && programMixer is not null
+            ? programMixer.Read(_mixBusSamples, 0, fallbackRawSamples.Length)
+            : 0;
+        var validMixedRead = Math.Clamp(mixedRead, 0, fallbackRawSamples.Length);
+        if (validMixedRead < fallbackRawSamples.Length)
+        {
+            _mixBusSamples.AsSpan(validMixedRead, fallbackRawSamples.Length - validMixedRead).Clear();
+        }
+
+        VoiceProcessingTelemetry? primaryTelemetry = null;
+        foreach (var channel in liveMixChannels)
+        {
+            if (!channel.IsEnabled)
             {
-                for (var i = 0; i < mixSamples.Length; i++)
-                {
-                    mixSamples[i] += (float)(channelProcessedSamples[i] * channel.VolumeLinear);
-                }
+                continue;
             }
 
-            includedChannelCount++;
+            CaptureLastMicSamples(channel, ReadOnlySpan<float>.Empty, channel.DspProvider.LastProcessedSamples);
+            primaryTelemetry ??= channel.DspProvider.Processor.Telemetry.Snapshot();
         }
 
         if (includedChannelCount == 0)
@@ -1139,21 +1270,47 @@ public sealed class MicrophoneSpectrumService : IDisposable
         ReadOnlySpan<float> rawSamples,
         ReadOnlySpan<float> processedSamples)
     {
-        if (channel.LastRawSamples.Length < rawSamples.Length)
+        if (!rawSamples.IsEmpty)
         {
-            channel.LastRawSamples = new float[rawSamples.Length];
+            if (channel.LastRawSamples.Length < rawSamples.Length)
+            {
+                channel.LastRawSamples = new float[rawSamples.Length];
+            }
+
+            rawSamples.CopyTo(channel.LastRawSamples);
+            channel.LastRawSampleCount = rawSamples.Length;
         }
 
-        rawSamples.CopyTo(channel.LastRawSamples);
-        channel.LastRawSampleCount = rawSamples.Length;
-
-        if (channel.LastProcessedSamples.Length < processedSamples.Length)
+        if (!processedSamples.IsEmpty)
         {
-            channel.LastProcessedSamples = new float[processedSamples.Length];
+            if (channel.LastProcessedSamples.Length < processedSamples.Length)
+            {
+                channel.LastProcessedSamples = new float[processedSamples.Length];
+            }
+
+            processedSamples.CopyTo(channel.LastProcessedSamples);
+            channel.LastProcessedSampleCount = processedSamples.Length;
+        }
+    }
+
+    private static void ApplyPreDspLiveChannelControls(LiveMicChannelRuntime channel, Span<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return;
         }
 
-        processedSamples.CopyTo(channel.LastProcessedSamples);
-        channel.LastProcessedSampleCount = processedSamples.Length;
+        channel.DelayLine.Process(samples, channel.DelayMilliseconds);
+        var gain = channel.InputGainLinear * (channel.IsPolarityInverted ? -1d : 1d);
+        if (Math.Abs(gain - 1d) < 0.0001d)
+        {
+            return;
+        }
+
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = (float)Math.Clamp(samples[i] * gain, -1d, 1d);
+        }
     }
 
     private MicrophoneSpectrumSampleSnapshot[] CreateMicrophoneSpectrumSampleSnapshots()
@@ -1266,7 +1423,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     rawMicrophoneAnalysis.Magnitudes,
                     GetPeakLevel(rawSampleSpan),
                     includeWaveformSamples ? processedSampleSpan.ToArray() : [],
-                    includeWaveformSamples ? rawSampleSpan.ToArray() : []));
+                    includeWaveformSamples ? rawSampleSpan.ToArray() : [],
+                    GetRmsLevel(processedSampleSpan),
+                    GetRmsLevel(rawSampleSpan)));
             }
 
             microphoneLines = lines;
@@ -1363,6 +1522,30 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         return peak;
+    }
+
+    private static double GetRmsLevel(ReadOnlySpan<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return 0d;
+        }
+
+        var sumSquares = 0d;
+        var count = 0;
+        foreach (var sample in samples)
+        {
+            var value = Math.Clamp(float.IsFinite(sample) ? sample : 0f, -1f, 1f);
+            sumSquares += value * value;
+            count++;
+        }
+
+        return count == 0 ? 0d : Math.Sqrt(sumSquares / count);
+    }
+
+    private static double DbToLinear(double decibels)
+    {
+        return Math.Pow(10d, decibels / 20d);
     }
 
     private IWaveIn StartCapture(int deviceNumber)

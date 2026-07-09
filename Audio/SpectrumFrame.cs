@@ -9,7 +9,9 @@ public sealed class MicrophoneSpectrumLine
         double[]? rawMagnitudes = null,
         double rawPeakLevel = 0d,
         float[]? processedSamples = null,
-        float[]? rawSamples = null)
+        float[]? rawSamples = null,
+        double rmsLevel = 0d,
+        double rawRmsLevel = 0d)
     {
         ChannelNumber = channelNumber;
         Magnitudes = magnitudes;
@@ -18,6 +20,8 @@ public sealed class MicrophoneSpectrumLine
         RawPeakLevel = rawPeakLevel;
         ProcessedSamples = processedSamples ?? [];
         RawSamples = rawSamples ?? [];
+        RmsLevel = rmsLevel;
+        RawRmsLevel = rawRmsLevel;
     }
 
     public int ChannelNumber { get; }
@@ -29,6 +33,10 @@ public sealed class MicrophoneSpectrumLine
     public double[] RawMagnitudes { get; }
 
     public double RawPeakLevel { get; }
+
+    public double RmsLevel { get; }
+
+    public double RawRmsLevel { get; }
 
     public float[] ProcessedSamples { get; }
 

@@ -2067,10 +2067,11 @@
             <RowDefinition Height="2*" />
           </Grid.RowDefinitions>
           <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="340" />
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="360" />
+            <ColumnDefinition Width="340" />
           </Grid.ColumnDefinitions>
-          <Border Grid.Row="0" Background="#C0111820" Padding="18,12">
+          <Border Grid.Row="0" Grid.Column="1" Background="#C0111820" Padding="18,12">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -2096,7 +2097,7 @@
               <TextBlock x:Name="MixBusStatusText" Grid.Column="6" Text="Bus: processed output" Foreground="#8DA2B7" VerticalAlignment="Center" HorizontalAlignment="Right" />
             </Grid>
           </Border>
-          <Grid Grid.Row="1" Margin="18,14,18,0">
+          <Grid Grid.Row="1" Grid.Column="1" Margin="18,14,18,0">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="2*" />
               <ColumnDefinition Width="*" />
@@ -2108,7 +2109,7 @@
                   <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                  <TextBlock Text="Mic spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" DockPanel.Dock="Left" />
+                  <TextBlock Text="Program / recording spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" DockPanel.Dock="Left" />
                   <WrapPanel x:Name="MixingMicLegendPanel" DockPanel.Dock="Right" HorizontalAlignment="Right" />
                 </DockPanel>
                 <Border Grid.Row="1" Background="#050B10" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
@@ -2135,7 +2136,7 @@
               </Grid>
             </Border>
           </Grid>
-          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer Grid.Row="2" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <Border Style="{StaticResource DspBubble}" Margin="18" Padding="12">
               <ItemsControl x:Name="MixingChannelsItemsControl">
                 <ItemsControl.ItemsPanel>
@@ -2179,7 +2180,7 @@
               </ItemsControl>
             </Border>
           </ScrollViewer>
-          <Border Grid.RowSpan="3" Grid.Column="1" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14">
+          <Border Grid.RowSpan="3" Grid.Column="0" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="0,0,1,0" Padding="14">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
               <StackPanel>
                 <Border Style="{StaticResource DspBubble}">
@@ -2297,6 +2298,87 @@
                       <Button x:Name="AudioOpenLocationButton" Grid.Column="1" Style="{StaticResource RecordingStopButton}" Content="Open Location" Margin="4,0,0,0" Click="OpenAudioRecordingLocationClicked" />
                     </Grid>
                     <TextBlock x:Name="AudioRecordingStatusText" Text="Ready to record the program mix." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
+          <Border Grid.RowSpan="3" Grid.Column="2" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel DataContext="{Binding ElementName=MicChannelComboBox, Path=SelectedItem}">
+                <Border Style="{StaticResource DspBubble}">
+                  <StackPanel>
+                    <TextBlock Text="Selected Mic" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding RouteText}" Foreground="#8DA2B7" TextWrapping="Wrap" Margin="0,3,0,10" />
+                    <Grid Margin="0,0,0,8">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Peak / RMS" Foreground="#B8C7D9" VerticalAlignment="Center" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="10" Height="10" Stroke="#D7FFF9" StrokeThickness="1" Margin="0,0,5,0">
+                          <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                              <Setter Property="Fill" Value="#334B5C" />
+                              <Setter Property="Opacity" Value="0.45" />
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsClipping}" Value="True">
+                                  <Setter Property="Fill" Value="#DA5048" />
+                                  <Setter Property="Opacity" Value="1" />
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Clip" Foreground="#B8C7D9" FontSize="11" />
+                      </StackPanel>
+                    </Grid>
+                    <Border Height="20" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+                      <Grid>
+                        <Rectangle Fill="#10202A" />
+                        <Rectangle Fill="#8DA2B7" HorizontalAlignment="Stretch" Opacity="0.62" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
+                          <Rectangle.RenderTransform>
+                            <ScaleTransform ScaleX="{Binding RmsMeterScale}" />
+                          </Rectangle.RenderTransform>
+                        </Rectangle>
+                        <Rectangle Fill="#35E8D8" HorizontalAlignment="Stretch" Height="9" VerticalAlignment="Center" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
+                          <Rectangle.RenderTransform>
+                            <ScaleTransform ScaleX="{Binding LevelMeterScale}" />
+                          </Rectangle.RenderTransform>
+                        </Rectangle>
+                      </Grid>
+                    </Border>
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource DspBubble}">
+                  <StackPanel>
+                    <TextBlock Text="Channel Controls" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                      <CheckBox Content="Mute" IsChecked="{Binding IsMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="0,0,8,6" />
+                      <CheckBox Content="Solo" IsChecked="{Binding IsSoloed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="8,0,0,6" />
+                      <CheckBox Content="Invert" IsChecked="{Binding PolarityInverted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="0,0,8,0">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Flips polarity for this mic before DSP. Useful when two nearby mics cancel each other." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                    </UniformGrid>
+                    <Grid>
+                      <TextBlock Text="Input gain" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding InputGainDisplayText}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider Minimum="-24" Maximum="24" Value="{Binding InputGainDb, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="3" ValueChanged="MixerChannelControlChanged" Margin="0,0,0,10" />
+                    <Grid>
+                      <TextBlock Text="Pan" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding PanDisplayText}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider Minimum="-100" Maximum="100" Value="{Binding Pan, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="25" ValueChanged="MixerChannelControlChanged" Margin="0,0,0,10" />
+                    <Grid>
+                      <TextBlock Text="Delay" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding DelayDisplayText}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider Minimum="0" Maximum="250" Value="{Binding DelayMilliseconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="5" ValueChanged="MixerChannelControlChanged" />
                   </StackPanel>
                 </Border>
               </StackPanel>

@@ -919,6 +919,11 @@ public partial class EqualizerWindow : Window
         channel.IsEnabled = true;
         channel.IsMuted = state.IsMuted;
         channel.VolumePercent = Math.Clamp(state.VolumePercent ?? 100d, 0d, 150d);
+        channel.InputGainDb = Math.Clamp(state.InputGainDb ?? 0d, -24d, 24d);
+        channel.Pan = Math.Clamp(state.Pan ?? 0d, -100d, 100d);
+        channel.PolarityInverted = state.PolarityInverted;
+        channel.IsSoloed = state.IsSoloed;
+        channel.DelayMilliseconds = Math.Clamp(state.DelayMilliseconds ?? 0d, 0d, 250d);
         channel.ActivePresetName = string.IsNullOrWhiteSpace(state.ActivePresetName)
             ? channel.ActivePresetName
             : state.ActivePresetName.Trim();
@@ -1261,6 +1266,11 @@ public partial class EqualizerWindow : Window
                 IsEnabled = true,
                 IsMuted = channel.IsMuted,
                 VolumePercent = channel.VolumePercent,
+                InputGainDb = channel.InputGainDb,
+                Pan = channel.Pan,
+                PolarityInverted = channel.PolarityInverted,
+                IsSoloed = channel.IsSoloed,
+                DelayMilliseconds = channel.DelayMilliseconds,
                 ActivePresetName = channel.ActivePresetName,
                 ActivePresetIsUserPreset = channel.ActivePresetIsUserPreset,
                 PresetDescription = channel.PresetDescription,
@@ -2379,8 +2389,9 @@ public partial class EqualizerWindow : Window
             EnsureMixingOutputWaveform3DView();
             if (_latestFrame is not null)
             {
-                _mixingMicSpectrumGraphHost?.AcceptFrame(_latestFrame);
-                _mixingOutputWaveform3DGraphHost?.AcceptFrame(_latestFrame);
+                var programOutputFrame = CreateProgramOutputFrame(_latestFrame);
+                _mixingMicSpectrumGraphHost?.AcceptFrame(programOutputFrame);
+                _mixingOutputWaveform3DGraphHost?.AcceptFrame(programOutputFrame);
             }
         }
 
@@ -4055,7 +4066,7 @@ public partial class EqualizerWindow : Window
 
         var graphHost = new Direct3D12AudioGraphHost
         {
-            GraphMode = Direct3D12AudioGraphMode.MicrophoneSpectrumLines
+            GraphMode = Direct3D12AudioGraphMode.SelectedMicSpectrum
         };
         MixingMicSpectrumGraphHost.Content = graphHost;
         _mixingMicSpectrumGraphHost = graphHost;
@@ -4641,6 +4652,11 @@ public partial class EqualizerWindow : Window
                     inputChannelMode,
                     channel.ProcessorSettings,
                     channel.VolumePercent,
+                    channel.InputGainDb,
+                    channel.Pan,
+                    channel.PolarityInverted,
+                    channel.IsSoloed,
+                    channel.DelayMilliseconds,
                     true,
                     channel.IsMuted);
             })
@@ -5282,12 +5298,12 @@ public partial class EqualizerWindow : Window
 
         if (_isMixingMicSpectrumGraphActive)
         {
-            _mixingMicSpectrumGraphHost?.AcceptFrame(frame);
+            _mixingMicSpectrumGraphHost?.AcceptFrame(CreateProgramOutputFrame(frame));
         }
 
         if (_isMixingOutputWaveform3DActive)
         {
-            _mixingOutputWaveform3DGraphHost?.AcceptFrame(frame);
+            _mixingOutputWaveform3DGraphHost?.AcceptFrame(CreateProgramOutputFrame(frame));
         }
     }
 
@@ -5303,55 +5319,17 @@ public partial class EqualizerWindow : Window
     private SpectrumFrame CreateSelectedMicFrame(SpectrumFrame frame)
     {
         var activeChannelNumber = _activeMicChannel?.ChannelNumber ?? 1;
-        var selectedLine = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == activeChannelNumber);
         var selectedInputMagnitudes = ResolveActiveInputChannelMagnitudes(frame);
-        if (selectedLine is null)
-        {
-            if (selectedInputMagnitudes.Length == 0)
-            {
-                return frame;
-            }
+        return SpectrumFrameRouter.CreateSelectedMicFrame(
+            frame,
+            activeChannelNumber,
+            _activeMicChannel?.SelectedDevice is not null,
+            selectedInputMagnitudes);
+    }
 
-            return new SpectrumFrame(
-                frame.Magnitudes,
-                selectedInputMagnitudes,
-                frame.ProcessedSamples,
-                frame.RawSamples,
-                frame.PeakLevel,
-                frame.RawPeakLevel,
-                frame.Telemetry,
-                frame.SampleRate,
-                frame.Input1Magnitudes,
-                frame.Input2Magnitudes,
-                frame.Input1PeakLevel,
-                frame.Input2PeakLevel,
-                frame.Input1Samples,
-                frame.Input2Samples,
-                frame.MicrophoneLines);
-        }
-
-        // The selected mic graph compares that strip's raw input against that strip's processed output.
-        var rawMagnitudes = selectedLine.RawMagnitudes.Length > 0
-            ? selectedLine.RawMagnitudes
-            : selectedInputMagnitudes.Length > 0
-            ? selectedInputMagnitudes
-            : frame.RawMagnitudes;
-        return new SpectrumFrame(
-            selectedLine.Magnitudes,
-            rawMagnitudes,
-            selectedLine.ProcessedSamples,
-            selectedLine.RawSamples,
-            selectedLine.PeakLevel,
-            selectedLine.RawPeakLevel,
-            frame.Telemetry,
-            frame.SampleRate,
-            frame.Input1Magnitudes,
-            frame.Input2Magnitudes,
-            frame.Input1PeakLevel,
-            frame.Input2PeakLevel,
-            frame.Input1Samples,
-            frame.Input2Samples,
-            frame.MicrophoneLines);
+    private static SpectrumFrame CreateProgramOutputFrame(SpectrumFrame frame)
+    {
+        return SpectrumFrameRouter.CreateProgramOutputFrame(frame);
     }
 
     private double[] ResolveActiveInputChannelMagnitudes(SpectrumFrame frame)
@@ -5464,7 +5442,7 @@ public partial class EqualizerWindow : Window
 
         if (shouldRenderMixingSpectrum)
         {
-            RenderMixingMicSpectrum(_latestFrame);
+            RenderMixingMicSpectrum(CreateProgramOutputFrame(_latestFrame));
         }
 
     }
@@ -10571,16 +10549,10 @@ public partial class EqualizerWindow : Window
         var usableHeight = Math.Max(1d, graphBottom - graphTop);
         EnsureMixingSpectrumGrid(width, graphTop, graphBottom);
 
-        var lines = frame.MicrophoneLines.Count > 0
-            ? frame.MicrophoneLines
-            : [new MicrophoneSpectrumLine(1, frame.Magnitudes, frame.PeakLevel)];
         var frameCeiling = 0.08d;
-        foreach (var line in lines)
+        foreach (var magnitude in frame.Magnitudes)
         {
-            foreach (var magnitude in line.Magnitudes)
-            {
-                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(magnitude));
-            }
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(magnitude));
         }
 
         _mixingVisualCeiling = frameCeiling > _mixingVisualCeiling
@@ -10592,33 +10564,31 @@ public partial class EqualizerWindow : Window
             trace.Visibility = Visibility.Collapsed;
         }
 
-        var smoothing = GetAnalyzerSmoothingCoefficient();
-        foreach (var line in lines)
+        if (frame.Magnitudes.Length == 0)
         {
-            var traceIndex = line.ChannelNumber - 1;
-            if (traceIndex < 0 || traceIndex >= _mixingMicSpectrumTraces.Length || line.Magnitudes.Length == 0)
-            {
-                continue;
-            }
-
-            EnsureMixingMicRenderBuffer(traceIndex, line.Magnitudes.Length);
-            var renderedMagnitudes = _renderedMixingMicMagnitudes[traceIndex];
-            var points = new PointCollection();
-            for (var i = 0; i < line.Magnitudes.Length; i++)
-            {
-                var shaped = NormalizeForDisplay(ShapeMagnitude(line.Magnitudes[i]), _mixingVisualCeiling);
-                renderedMagnitudes[i] = Ease(renderedMagnitudes[i], shaped, smoothing);
-                var x = line.Magnitudes.Length == 1
-                    ? 0d
-                    : i / (double)(line.Magnitudes.Length - 1) * width;
-                points.Add(new Point(x, graphBottom - usableHeight * renderedMagnitudes[i]));
-            }
-
-            var trace = _mixingMicSpectrumTraces[traceIndex];
-            trace.Data = CreateSmoothedGeometry(points);
-            trace.Opacity = line.PeakLevel <= 0.0001d ? 0.34d : traceIndex == 0 ? 0.98d : 0.88d;
-            trace.Visibility = Visibility.Visible;
+            return;
         }
+
+        EnsureMixingMicRenderBuffer(0, frame.Magnitudes.Length);
+        var renderedMagnitudes = _renderedMixingMicMagnitudes[0];
+        var points = new PointCollection();
+        var smoothing = GetAnalyzerSmoothingCoefficient();
+        for (var i = 0; i < frame.Magnitudes.Length; i++)
+        {
+            var shaped = NormalizeForDisplay(ShapeMagnitude(frame.Magnitudes[i]), _mixingVisualCeiling);
+            renderedMagnitudes[i] = Ease(renderedMagnitudes[i], shaped, smoothing);
+            var x = frame.Magnitudes.Length == 1
+                ? 0d
+                : i / (double)(frame.Magnitudes.Length - 1) * width;
+            points.Add(new Point(x, graphBottom - usableHeight * renderedMagnitudes[i]));
+        }
+
+        var outputTrace = _mixingMicSpectrumTraces[0];
+        outputTrace.Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230));
+        outputTrace.StrokeThickness = 2.6d;
+        outputTrace.Data = CreateSmoothedGeometry(points);
+        outputTrace.Opacity = frame.PeakLevel <= 0.0001d ? 0.34d : 0.98d;
+        outputTrace.Visibility = Visibility.Visible;
     }
 
     private void UpdateMixerChannelMeters(SpectrumFrame frame)
@@ -10632,7 +10602,7 @@ public partial class EqualizerWindow : Window
                 continue;
             }
 
-            channel.UpdateLevelMeter(line.RawPeakLevel);
+            channel.UpdateLevelMeter(line.RawPeakLevel, line.RawRmsLevel);
             updatedChannels.Add(line.ChannelNumber);
         }
 
@@ -10719,44 +10689,29 @@ public partial class EqualizerWindow : Window
         }
 
         MixingMicLegendPanel.Children.Clear();
-        foreach (var channel in _micChannels.Where(channel => channel.SelectedDevice is not null))
+        var item = new StackPanel
         {
-            var color = MixingMicSpectrumColors[(channel.ChannelNumber - 1) % MixingMicSpectrumColors.Length];
-            var item = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(8, 0, 0, 0)
-            };
-            item.Children.Add(new Rectangle
-            {
-                Width = 18,
-                Height = 3,
-                RadiusX = 1.5,
-                RadiusY = 1.5,
-                Fill = new SolidColorBrush(color),
-                Margin = new Thickness(0, 0, 5, 0)
-            });
-            item.Children.Add(new TextBlock
-            {
-                Text = channel.DisplayName,
-                Foreground = new SolidColorBrush(color),
-                FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            MixingMicLegendPanel.Children.Add(item);
-        }
-
-        if (MixingMicLegendPanel.Children.Count == 0)
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        item.Children.Add(new Rectangle
         {
-            MixingMicLegendPanel.Children.Add(new TextBlock
-            {
-                Text = "No mics assigned",
-                Foreground = _meterTextMutedBrush,
-                FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-        }
+            Width = 22,
+            Height = 3,
+            RadiusX = 1.5,
+            RadiusY = 1.5,
+            Fill = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+            Margin = new Thickness(0, 0, 6, 0)
+        });
+        item.Children.Add(new TextBlock
+        {
+            Text = "Program / recording output",
+            Foreground = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        MixingMicLegendPanel.Children.Add(item);
     }
 
     private double GetAnalyzerSmoothingCoefficient()
@@ -13051,12 +13006,20 @@ public partial class EqualizerWindow : Window
         private InputChannelMode _inputChannelMode = InputChannelMode.MonoSum;
         private bool _isEnabled = true;
         private bool _isMuted;
+        private bool _isSoloed;
+        private bool _polarityInverted;
         private double _volumePercent = 100d;
+        private double _inputGainDb;
+        private double _pan;
+        private double _delayMilliseconds;
         private string _activePresetName = "Custom";
         private bool _activePresetIsUserPreset;
         private string _presetDescription = "Custom channel settings.";
         private double _analyzerSmoothing = 80d;
         private double _levelMeterScale;
+        private double _rmsMeterScale;
+        private bool _isClipping;
+        private int _clipHoldFrames;
 
         public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
         {
@@ -13122,6 +13085,18 @@ public partial class EqualizerWindow : Window
             set => SetField(ref _isMuted, value);
         }
 
+        public bool IsSoloed
+        {
+            get => _isSoloed;
+            set => SetField(ref _isSoloed, value);
+        }
+
+        public bool PolarityInverted
+        {
+            get => _polarityInverted;
+            set => SetField(ref _polarityInverted, value);
+        }
+
         public double VolumePercent
         {
             get => _volumePercent;
@@ -13136,6 +13111,57 @@ public partial class EqualizerWindow : Window
                 _volumePercent = normalized;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(VolumeDisplayText));
+            }
+        }
+
+        public double InputGainDb
+        {
+            get => _inputGainDb;
+            set
+            {
+                var normalized = Math.Clamp(double.IsFinite(value) ? value : 0d, -24d, 24d);
+                if (Math.Abs(_inputGainDb - normalized) < 0.01d)
+                {
+                    return;
+                }
+
+                _inputGainDb = normalized;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(InputGainDisplayText));
+            }
+        }
+
+        public double Pan
+        {
+            get => _pan;
+            set
+            {
+                var normalized = Math.Clamp(double.IsFinite(value) ? value : 0d, -100d, 100d);
+                if (Math.Abs(_pan - normalized) < 0.01d)
+                {
+                    return;
+                }
+
+                _pan = normalized;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(PanDisplayText));
+            }
+        }
+
+        public double DelayMilliseconds
+        {
+            get => _delayMilliseconds;
+            set
+            {
+                var normalized = Math.Clamp(double.IsFinite(value) ? value : 0d, 0d, 250d);
+                if (Math.Abs(_delayMilliseconds - normalized) < 0.01d)
+                {
+                    return;
+                }
+
+                _delayMilliseconds = normalized;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DelayDisplayText));
             }
         }
 
@@ -13169,7 +13195,21 @@ public partial class EqualizerWindow : Window
 
         public string VolumeDisplayText => $"{VolumePercent:0}%";
 
+        public string InputGainDisplayText => $"{InputGainDb:+0.0;-0.0;0.0} dB";
+
+        public string PanDisplayText => Pan < -0.5d
+            ? $"L {Math.Abs(Pan):0}"
+            : Pan > 0.5d
+            ? $"R {Pan:0}"
+            : "C";
+
+        public string DelayDisplayText => $"{DelayMilliseconds:0} ms";
+
         public double LevelMeterScale => _levelMeterScale;
+
+        public double RmsMeterScale => _rmsMeterScale;
+
+        public bool IsClipping => _isClipping;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -13177,21 +13217,49 @@ public partial class EqualizerWindow : Window
 
         public void UpdateLevelMeter(double peakLevel)
         {
+            UpdateLevelMeter(peakLevel, peakLevel * 0.6d);
+        }
+
+        public void UpdateLevelMeter(double peakLevel, double rmsLevel)
+        {
             var target = Math.Clamp((double.IsFinite(peakLevel) ? peakLevel : 0d) / 0.85d, 0d, 1d);
+            var rmsTarget = Math.Clamp((double.IsFinite(rmsLevel) ? rmsLevel : 0d) / 0.45d, 0d, 1d);
             var amount = target > _levelMeterScale ? 0.42d : 0.14d;
             var next = _levelMeterScale + (target - _levelMeterScale) * amount;
+            var rmsNext = _rmsMeterScale + (rmsTarget - _rmsMeterScale) * (rmsTarget > _rmsMeterScale ? 0.30d : 0.10d);
             if (Math.Abs(next - _levelMeterScale) < 0.004d)
             {
                 next = target <= 0.004d ? 0d : next;
             }
 
-            if (Math.Abs(next - _levelMeterScale) < 0.002d)
+            if (Math.Abs(rmsNext - _rmsMeterScale) < 0.004d)
+            {
+                rmsNext = rmsTarget <= 0.004d ? 0d : rmsNext;
+            }
+
+            if (peakLevel >= 0.98d)
+            {
+                _clipHoldFrames = 18;
+            }
+            else if (_clipHoldFrames > 0)
+            {
+                _clipHoldFrames--;
+            }
+
+            var clipping = _clipHoldFrames > 0;
+            if (Math.Abs(next - _levelMeterScale) < 0.002d
+                && Math.Abs(rmsNext - _rmsMeterScale) < 0.002d
+                && clipping == _isClipping)
             {
                 return;
             }
 
             _levelMeterScale = Math.Clamp(next, 0d, 1d);
+            _rmsMeterScale = Math.Clamp(rmsNext, 0d, 1d);
+            _isClipping = clipping;
             OnPropertyChanged(nameof(LevelMeterScale));
+            OnPropertyChanged(nameof(RmsMeterScale));
+            OnPropertyChanged(nameof(IsClipping));
         }
 
         private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

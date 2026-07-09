@@ -120,5 +120,10 @@ public sealed record MicrophoneLiveChannelSettings(
     InputChannelMode InputChannelMode,
     VoiceProcessorSettings ProcessorSettings,
     double VolumePercent,
+    double InputGainDb,
+    double Pan,
+    bool IsPolarityInverted,
+    bool IsSoloed,
+    double DelayMilliseconds,
     bool IsEnabled,
     bool IsMuted);

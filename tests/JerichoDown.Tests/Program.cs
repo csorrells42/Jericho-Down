@@ -6,6 +6,7 @@ using System.Text;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Video;
+using NAudio.Wave.SampleProviders;
 
 var tests = new (string Name, Action Test)[]
 {
@@ -26,8 +27,11 @@ var tests = new (string Name, Action Test)[]
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
+    ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
+    ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
     ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
     ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
@@ -324,6 +328,44 @@ static void InputChannelModeFallsBackForMonoDevices()
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
 }
 
+static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()
+{
+    var lines = Enumerable.Range(1, 10)
+        .Select(channelNumber => new MicrophoneSpectrumLine(
+            channelNumber,
+            [channelNumber / 10d, channelNumber / 20d],
+            channelNumber / 100d,
+            [channelNumber / 30d, channelNumber / 40d],
+            channelNumber / 200d))
+        .ToArray();
+    var frame = new SpectrumFrame(
+        [0.91d, 0.72d],
+        [0.42d, 0.21d],
+        [0.5f, -0.5f],
+        [0.1f, -0.1f],
+        0.8d,
+        0.6d,
+        new VoiceProcessingTelemetry(),
+        48_000,
+        microphoneLines: lines);
+
+    foreach (var channelNumber in Enumerable.Range(1, 10))
+    {
+        var selected = SpectrumFrameRouter.CreateSelectedMicFrame(frame, channelNumber, selectedChannelHasSource: true);
+        var expected = lines[channelNumber - 1];
+
+        AssertSequenceEqual(expected.Magnitudes, selected.Magnitudes, $"mic {channelNumber} processed graph should use its own line");
+        AssertSequenceEqual(expected.RawMagnitudes, selected.RawMagnitudes, $"mic {channelNumber} raw graph should use its own line");
+        Assert(Math.Abs(expected.PeakLevel - selected.PeakLevel) < 0.0001d, $"mic {channelNumber} peak should follow its own line");
+        Assert(Math.Abs(expected.RawPeakLevel - selected.RawPeakLevel) < 0.0001d, $"mic {channelNumber} raw peak should follow its own line");
+    }
+
+    var output = SpectrumFrameRouter.CreateProgramOutputFrame(frame);
+    AssertSequenceEqual(frame.Magnitudes, output.Magnitudes, "mixing spectrum should use final program magnitudes");
+    Assert(output.MicrophoneLines.Count == 0, "mixing output frame should not carry the ten individual mic graph lines");
+    Assert(output.RawMagnitudes.Length == 0, "mixing output frame should not draw a separate raw mic reference line");
+}
+
 static void SpectrumAnalyzerEmitsHighResolutionBins()
 {
     var analyzer = new SpectrumAnalyzer(48_000);
@@ -354,6 +396,57 @@ static void MixBusProcessorScalesAndProtectsOutput()
     processor.Process([1f, -1f, float.NaN], output, new MixBusSettings(200d, true, true, -1d));
     Assert(output.All(float.IsFinite), "mix bus output should stay finite");
     Assert(output.All(sample => Math.Abs(sample) <= 1f), "mix bus output should stay in audio range");
+}
+
+static void NAudioProgramBusMixesOneShotMicBlocks()
+{
+    var mic1 = new LiveMicBlockSampleProvider(48_000);
+    var mic2 = new LiveMicBlockSampleProvider(48_000);
+    var mic1Fader = new VolumeSampleProvider(mic1) { Volume = 0.5f };
+    var mic2Fader = new VolumeSampleProvider(mic2) { Volume = 0f };
+    var mixer = new MixingSampleProvider(mic1.WaveFormat)
+    {
+        ReadFully = true
+    };
+
+    mixer.AddMixerInput(mic1Fader);
+    mixer.AddMixerInput(mic2Fader);
+    mic1.SetBlock([0.4f, -0.2f, 0.1f, 0f]);
+    mic2.SetBlock([1f, 1f, 1f, 1f]);
+
+    var output = new float[6];
+    var read = mixer.Read(output, 0, output.Length);
+
+    Assert(read == output.Length, "program mixer should keep the live bus full for output routing");
+    Assert(Math.Abs(output[0] - 0.2f) < 0.0001f, "mic 1 fader should scale the first sample");
+    Assert(Math.Abs(output[1] + 0.1f) < 0.0001f, "mic 1 fader should scale negative samples");
+    Assert(Math.Abs(output[2] - 0.05f) < 0.0001f, "mic 1 fader should scale following samples");
+    Assert(Math.Abs(output[4]) < 0.0001f, "exhausted one-shot blocks should read as silence");
+
+    mic1.SetBlock([0.2f, 0.2f]);
+    mic2.SetBlock([0.2f, 0.2f]);
+    mic2Fader.Volume = 1f;
+    output = new float[2];
+    mixer.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - 0.3f) < 0.0001f, "program mixer should sum active mic faders");
+    Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "program mixer should sum each sample frame");
+}
+
+static void AudioDelayLineDelaysAndResetsSamples()
+{
+    var delay = new AudioDelayLine(8_000, 10d);
+    var samples = new[] { 1f, 2f, 3f, 4f };
+
+    delay.Process(samples, 0.25d);
+
+    AssertSequenceEqual(new[] { 0f, 0f, 1f, 2f }, samples, "delay line should emit older samples after the requested delay");
+
+    delay.Reset();
+    samples = [5f, 6f];
+    delay.Process(samples, 0d);
+
+    AssertSequenceEqual(new[] { 5f, 6f }, samples, "zero delay after reset should pass samples through");
 }
 
 static void AudioSyncBufferHoldsTargetLatency()

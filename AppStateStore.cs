@@ -294,6 +294,16 @@ internal sealed class MicChannelSettingsState
 
     public double? VolumePercent { get; set; }
 
+    public double? InputGainDb { get; set; }
+
+    public double? Pan { get; set; }
+
+    public bool PolarityInverted { get; set; }
+
+    public bool IsSoloed { get; set; }
+
+    public double? DelayMilliseconds { get; set; }
+
     public string? ActivePresetName { get; set; }
 
     public bool ActivePresetIsUserPreset { get; set; }
