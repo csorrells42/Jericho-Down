@@ -33,6 +33,7 @@ var tests = new (string Name, Action Test)[]
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
+    ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
@@ -484,6 +485,46 @@ static void NAudioProgramBusMixesOneShotMicBlocks()
 
     Assert(Math.Abs(output[0] - 0.3f) < 0.0001f, "program mixer should sum active mic faders");
     Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "program mixer should sum each sample frame");
+}
+
+static void LiveMixAudibilityGatesMuteAndSolo()
+{
+    var mic1 = new LiveMicBlockSampleProvider(48_000);
+    var mic2 = new LiveMicBlockSampleProvider(48_000);
+    var mic3 = new LiveMicBlockSampleProvider(48_000);
+    var mic1Fader = new VolumeSampleProvider(mic1);
+    var mic2Fader = new VolumeSampleProvider(mic2);
+    var mic3Fader = new VolumeSampleProvider(mic3);
+    var mixer = new MixingSampleProvider(mic1.WaveFormat)
+    {
+        ReadFully = true
+    };
+
+    mixer.AddMixerInput(mic1Fader);
+    mixer.AddMixerInput(mic2Fader);
+    mixer.AddMixerInput(mic3Fader);
+
+    mic1Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: false, isSoloed: false, hasSolo: false);
+    mic2Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: true, isSoloed: false, hasSolo: false);
+    mic3Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: false, isSoloed: false, hasSolo: false);
+    mic1.SetBlock([0.2f]);
+    mic2.SetBlock([0.7f]);
+    mic3.SetBlock([0.4f]);
+    var output = new float[1];
+    mixer.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - 0.6f) < 0.0001f, "muted mics should not reach the live program bus");
+
+    mic1Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: false, isSoloed: false, hasSolo: true);
+    mic2Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: false, isSoloed: true, hasSolo: true);
+    mic3Fader.Volume = (float)LiveMixAudibility.ResolveVolume(1d, isEnabled: true, isMuted: false, isSoloed: false, hasSolo: true);
+    mic1.SetBlock([0.2f]);
+    mic2.SetBlock([0.7f]);
+    mic3.SetBlock([0.4f]);
+    output[0] = 0f;
+    mixer.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - 0.7f) < 0.0001f, "solo should leave only soloed mics in the live program bus");
 }
 
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()

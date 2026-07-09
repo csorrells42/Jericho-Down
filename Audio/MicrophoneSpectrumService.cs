@@ -566,10 +566,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         var hasSolo = _liveMixChannels.Any(channel => channel.IsEnabled && channel.IsSoloed);
         foreach (var channel in _liveMixChannels)
         {
-            var audible = channel.IsEnabled
-                && !channel.IsMuted
-                && (!hasSolo || channel.IsSoloed);
-            channel.VolumeProvider.Volume = audible ? (float)channel.VolumeLinear : 0f;
+            channel.VolumeProvider.Volume = (float)LiveMixAudibility.ResolveVolume(
+                channel.VolumeLinear,
+                channel.IsEnabled,
+                channel.IsMuted,
+                channel.IsSoloed,
+                hasSolo);
         }
     }
 
