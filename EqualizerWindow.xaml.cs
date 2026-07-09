@@ -3963,7 +3963,7 @@ public partial class EqualizerWindow : Window
 
         var graphHost = new Direct3D12AudioGraphHost
         {
-            GraphMode = Direct3D12AudioGraphMode.ProgramOutputSpectrum
+            GraphMode = ResolveSelectedMicSpectrumGraphMode()
         };
         graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
         InlineWaveform3DHost.Content = graphHost;
@@ -4074,10 +4074,20 @@ public partial class EqualizerWindow : Window
 
         var graphHost = new Direct3D12AudioGraphHost
         {
-            GraphMode = Direct3D12AudioGraphMode.SelectedMicSpectrum
+            GraphMode = ResolveMixingSpectrumGraphMode()
         };
         MixingMicSpectrumGraphHost.Content = graphHost;
         _mixingMicSpectrumGraphHost = graphHost;
+    }
+
+    private static Direct3D12AudioGraphMode ResolveSelectedMicSpectrumGraphMode()
+    {
+        return Direct3D12AudioGraphMode.SelectedMicSpectrum;
+    }
+
+    private static Direct3D12AudioGraphMode ResolveMixingSpectrumGraphMode()
+    {
+        return Direct3D12AudioGraphMode.ProgramOutputSpectrum;
     }
 
     private void RecordProcessedAudioChanged(object sender, RoutedEventArgs e)

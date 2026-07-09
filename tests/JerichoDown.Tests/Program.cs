@@ -8,6 +8,7 @@ using System.Text;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Video;
+using JerichoDown.Visualization;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -58,6 +59,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Mic compare frame router follows live mic lines", MicCompareFrameRouterFollowsLiveMicLines),
+    ("DX12 graph modes match selected mic and mixer roles", Dx12GraphModesMatchSelectedMicAndMixerRoles),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
@@ -1804,6 +1806,28 @@ static void MicCompareFrameRouterFollowsLiveMicLines()
     AssertSequenceEqual(new[] { 0.24d }, fallback.Mic2Magnitudes, "mic compare should still fall back to legacy stereo input 2 when no live mic line exists");
     AssertSequenceEqual(new[] { 0.35f }, fallback.Mic1Samples, "mic analysis should still fall back to legacy stereo input 1 samples");
     AssertSequenceEqual(new[] { 0.46f }, fallback.Mic2Samples, "mic analysis should still fall back to legacy stereo input 2 samples");
+}
+
+static void Dx12GraphModesMatchSelectedMicAndMixerRoles()
+{
+    var selectedMicModeMethod = typeof(EqualizerWindow).GetMethod(
+        "ResolveSelectedMicSpectrumGraphMode",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    var mixingModeMethod = typeof(EqualizerWindow).GetMethod(
+        "ResolveMixingSpectrumGraphMode",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(selectedMicModeMethod is not null, "selected mic DX12 graph mode resolver should be available");
+    Assert(mixingModeMethod is not null, "mixing DX12 graph mode resolver should be available");
+
+    var selectedMicMode = (Direct3D12AudioGraphMode)selectedMicModeMethod!.Invoke(null, [])!;
+    var mixingMode = (Direct3D12AudioGraphMode)mixingModeMethod!.Invoke(null, [])!;
+
+    Assert(
+        selectedMicMode == Direct3D12AudioGraphMode.SelectedMicSpectrum,
+        "Mic/DSP spectrum should use the selected-mic DX12 mode so hover bands and the selected mic frame line up");
+    Assert(
+        mixingMode == Direct3D12AudioGraphMode.ProgramOutputSpectrum,
+        "Mixing spectrum should use the program-output DX12 mode so it can draw program and recording reference lines");
 }
 
 static void SpectrumAnalyzerEmitsHighResolutionBins()
