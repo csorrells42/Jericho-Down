@@ -35,6 +35,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
+    ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
@@ -503,6 +504,29 @@ static void SpectrumAnalyzerEmitsHighResolutionBins()
     Assert(analysis.Magnitudes.Length >= 1000, "spectrum graph should have enough real bins for high-resolution displays");
     Assert(analysis.Magnitudes.All(double.IsFinite), "spectrum magnitudes should stay finite");
     Assert(analysis.Magnitudes.Any(value => value > 0d), "a sine input should produce visible spectrum energy");
+}
+
+static void FeedbackDetectorCatchesNarrowRunawaySpikes()
+{
+    var smooth = Enumerable.Repeat(0.34d, 1024).ToArray();
+    var quietResult = FeedbackDangerDetector.Analyze(smooth);
+
+    Assert(!quietResult.IsDangerous, "smooth program spectrum should not raise feedback danger");
+
+    var spiky = Enumerable.Repeat(0.32d, 1024).ToArray();
+    var spikeIndex = FeedbackDangerDetector.FrequencyToIndex(2800d, spiky.Length);
+    spiky[spikeIndex - 2] = 0.39d;
+    spiky[spikeIndex - 1] = 0.48d;
+    spiky[spikeIndex] = 0.86d;
+    spiky[spikeIndex + 1] = 0.50d;
+    spiky[spikeIndex + 2] = 0.40d;
+
+    var danger = FeedbackDangerDetector.Analyze(spiky);
+
+    Assert(danger.IsDangerous, "narrow, tall spectrum spike should raise feedback danger");
+    Assert(danger.Score > 0.45d, "feedback score should reflect a strong spike");
+    Assert(Math.Abs(danger.FrequencyHz - 2800d) < 120d, $"feedback frequency should point near the spike, found {danger.FrequencyHz:0} Hz");
+    Assert(danger.SpikeRiseDb > 15d, "feedback spike should report meaningful rise over its neighborhood");
 }
 
 static void MixBusProcessorScalesAndProtectsOutput()

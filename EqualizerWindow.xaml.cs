@@ -206,10 +206,16 @@ public partial class EqualizerWindow : Window
     private string? _lastMasterMeterText;
     private string? _lastMasterLimiterReductionText;
     private string? _lastMasterLimiterNormalizeText;
+    private string? _lastFeedbackRiskText;
     private Brush? _lastOutputSignalForeground;
     private Brush? _lastOutputLevelFill;
     private Brush? _lastMasterClipFill;
+    private Brush? _lastFeedbackRiskForeground;
     private int _masterClipHoldFrames;
+    private int _feedbackRiskHoldFrames;
+    private double _displayFeedbackRiskScore;
+    private double _lastFeedbackRiskFrequencyHz;
+    private double _lastFeedbackRiskSpikeRiseDb;
     private long _lastAudioStabilityDisplayTimestamp;
     private double _audioStabilityScore;
     private double _audioStabilityMeterWidth;
@@ -11028,6 +11034,84 @@ public partial class EqualizerWindow : Window
             MasterClipIndicator.Fill = clipFill;
             MasterClipIndicator.Opacity = _masterClipHoldFrames > 0 ? 1d : 0.45d;
         }
+
+        UpdateFeedbackRisk(frame);
+    }
+
+    private void UpdateFeedbackRisk(SpectrumFrame frame)
+    {
+        if (FeedbackRiskText is null)
+        {
+            return;
+        }
+
+        var risk = _spectrumService.IsRunning && frame.PeakLevel > 0.001d
+            ? FeedbackDangerDetector.Analyze(frame.Magnitudes)
+            : FeedbackDangerResult.None;
+        if (risk.IsDangerous)
+        {
+            _feedbackRiskHoldFrames = risk.Score >= 0.55d ? 36 : 20;
+            _lastFeedbackRiskFrequencyHz = risk.FrequencyHz;
+            _lastFeedbackRiskSpikeRiseDb = risk.SpikeRiseDb;
+        }
+        else if (_feedbackRiskHoldFrames > 0)
+        {
+            _feedbackRiskHoldFrames--;
+        }
+
+        var targetScore = risk.IsDangerous ? risk.Score : 0d;
+        _displayFeedbackRiskScore = targetScore > _displayFeedbackRiskScore
+            ? Ease(_displayFeedbackRiskScore, targetScore, 0.44d)
+            : Ease(_displayFeedbackRiskScore, targetScore, 0.07d);
+
+        string text;
+        Brush foreground;
+        if (!_spectrumService.IsRunning)
+        {
+            text = "Feedback: not listening";
+            foreground = _meterTextMutedBrush;
+        }
+        else if (_feedbackRiskHoldFrames <= 0 || _displayFeedbackRiskScore < 0.16d)
+        {
+            text = "Feedback: clear";
+            foreground = _meterTextMutedBrush;
+        }
+        else
+        {
+            var frequencyText = FormatFrequencyText(_lastFeedbackRiskFrequencyHz);
+            var spikeText = _lastFeedbackRiskSpikeRiseDb > 0d
+                ? $" (+{_lastFeedbackRiskSpikeRiseDb:0} dB spike)"
+                : string.Empty;
+            if (_displayFeedbackRiskScore >= 0.62d)
+            {
+                text = $"Feedback risk: {frequencyText} ringing{spikeText}";
+                foreground = _meterDangerBrush;
+            }
+            else
+            {
+                text = $"Feedback watch: narrow spike near {frequencyText}{spikeText}";
+                foreground = _meterWarnBrush;
+            }
+        }
+
+        if (!string.Equals(_lastFeedbackRiskText, text, StringComparison.Ordinal))
+        {
+            _lastFeedbackRiskText = text;
+            FeedbackRiskText.Text = text;
+        }
+
+        if (!ReferenceEquals(_lastFeedbackRiskForeground, foreground))
+        {
+            _lastFeedbackRiskForeground = foreground;
+            FeedbackRiskText.Foreground = foreground;
+        }
+    }
+
+    private static string FormatFrequencyText(double frequencyHz)
+    {
+        return frequencyHz >= 1000d
+            ? $"{frequencyHz / 1000d:0.0} kHz"
+            : $"{frequencyHz:0} Hz";
     }
 
     private static string FormatDbText(double decibels)
