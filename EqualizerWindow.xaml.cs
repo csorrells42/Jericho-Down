@@ -1557,6 +1557,13 @@ public partial class EqualizerWindow : Window
 
         ConfigureLiveMixFromChannels();
         var sourceLabel = GetAudioRecordingSourceLabel();
+        if (_audioRecordingSource != ProcessedRecordingSource.ProgramMix
+            && _activeMicChannel?.SelectedDevice is null)
+        {
+            AudioRecordingStatusText.Text = $"Assign {_activeMicChannel?.DisplayName ?? "the selected mic"} before recording {sourceLabel}.";
+            return;
+        }
+
         if (!_spectrumService.IsRunning)
         {
             StartSelectedDevice();

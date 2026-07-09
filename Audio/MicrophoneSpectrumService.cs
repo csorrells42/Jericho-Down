@@ -850,9 +850,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
             }
 
             var sampleRate = Math.Max(8000, _activeSampleRate);
+            var recordingChannelCount = GetProcessedRecordingChannelCount(_processedRecordingSource);
             _processedRecordingWriter = new WaveFileWriter(
                 path,
-                WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 2));
+                WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, recordingChannelCount));
             _processedRecordingPath = path;
             _isProcessedRecordingPaused = false;
         }
@@ -1388,7 +1389,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             selectedChannelNumber = _processedRecordingSelectedChannelNumber;
         }
 
-        recordingChannelCount = Math.Max(1, programOutputChannelCount);
+        recordingChannelCount = GetProcessedRecordingChannelCount(source);
         if (source == ProcessedRecordingSource.ProgramMix)
         {
             return programOutputSamples;
@@ -1402,7 +1403,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         if (selectedChannel is null)
         {
-            return programOutputSamples;
+            return [];
         }
 
         var samples = source == ProcessedRecordingSource.SelectedMicRawBackup
@@ -1410,11 +1411,15 @@ public sealed class MicrophoneSpectrumService : IDisposable
             : selectedChannel.LastProcessedSamples.AsSpan(0, Math.Clamp(selectedChannel.LastProcessedSampleCount, 0, selectedChannel.LastProcessedSamples.Length));
         if (samples.IsEmpty)
         {
-            return programOutputSamples;
+            return [];
         }
 
-        recordingChannelCount = 1;
         return samples;
+    }
+
+    private static int GetProcessedRecordingChannelCount(ProcessedRecordingSource source)
+    {
+        return source == ProcessedRecordingSource.ProgramMix ? 2 : 1;
     }
 
     private MicrophoneSpectrumSampleSnapshot[] CreateMicrophoneSpectrumSampleSnapshots()

@@ -6,6 +6,7 @@ using System.Text;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Video;
+using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
 var tests = new (string Name, Action Test)[]
@@ -29,6 +30,7 @@ var tests = new (string Name, Action Test)[]
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
+    ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
@@ -366,6 +368,38 @@ static void AudioRecordingFilenamesIdentifySelectedSource()
     Assert(program == "jericho_program_mix_2026-07-09_14-03-05.wav", "program mix recordings should be clearly named");
     Assert(processed == "jericho_mic3_processed_2026-07-09_14-03-05.wav", "selected processed mic recordings should identify the mic");
     Assert(raw == "jericho_mic3_raw_backup_2026-07-09_14-03-05.wav", "raw backup recordings should identify the mic and raw source");
+}
+
+static void AudioRecordingWaveFormatFollowsSelectedSource()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        using var service = new MicrophoneSpectrumService();
+        var programPath = Path.Combine(folder, "program.wav");
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.ProgramMix, 1);
+        service.StartProcessedAudioRecording(programPath);
+        service.StopProcessedAudioRecording();
+
+        var processedPath = Path.Combine(folder, "selected_processed.wav");
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.SelectedMicProcessed, 3);
+        service.StartProcessedAudioRecording(processedPath);
+        service.StopProcessedAudioRecording();
+
+        var rawPath = Path.Combine(folder, "selected_raw.wav");
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.SelectedMicRawBackup, 3);
+        service.StartProcessedAudioRecording(rawPath);
+        service.StopProcessedAudioRecording();
+
+        AssertWaveChannelCount(programPath, 2, "program mix recording should be stereo");
+        AssertWaveChannelCount(processedPath, 1, "selected processed mic recording should be mono");
+        AssertWaveChannelCount(rawPath, 1, "selected raw backup recording should be mono");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
 }
 
 static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()
@@ -1155,6 +1189,12 @@ static void AssertSequenceEqual<T>(IReadOnlyList<T> expected, IReadOnlyList<T> a
     {
         Assert(expected[i].Equals(actual[i]), $"{message}: mismatch at index {i}");
     }
+}
+
+static void AssertWaveChannelCount(string path, int expectedChannels, string message)
+{
+    using var reader = new WaveFileReader(path);
+    Assert(reader.WaveFormat.Channels == expectedChannels, $"{message}: found {reader.WaveFormat.Channels} channels");
 }
 
 static float[] GenerateSine(int sampleRate, double frequencyHz, double amplitude, double durationSeconds)
