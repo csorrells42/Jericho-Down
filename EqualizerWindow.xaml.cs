@@ -436,6 +436,7 @@ public partial class EqualizerWindow : Window
         FreezeSharedBrushes();
         OrderMainTabs();
         _activeMicChannel = _micChannels[0];
+        UpdateActiveMicSelectionFlags();
         DataContext = Settings;
         EqBandPanel.ItemsSource = Bands;
         Dispatcher.BeginInvoke(new Action(UpdateEqualizerGuideLayout), DispatcherPriority.Loaded);
@@ -885,6 +886,15 @@ public partial class EqualizerWindow : Window
         }
 
         _activeMicChannel = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
+        UpdateActiveMicSelectionFlags();
+    }
+
+    private void UpdateActiveMicSelectionFlags()
+    {
+        foreach (var channel in _micChannels)
+        {
+            channel.IsSelected = ReferenceEquals(channel, _activeMicChannel);
+        }
     }
 
     private void ApplyMicChannelState(MicChannelStrip channel, MicChannelSettingsState state, IReadOnlyList<AudioInputDevice> devices)
@@ -4273,16 +4283,29 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not MicChannelStrip channel)
+        {
+            return;
+        }
+
+        await SetActiveMicChannelAsync(channel, restartAudio: false);
+        PersistAppState();
+    }
+
     private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)
     {
         if (ReferenceEquals(_activeMicChannel, channel))
         {
+            UpdateActiveMicSelectionFlags();
             ApplyActiveMicChannelToUi();
             return;
         }
 
         DetachEqualizerBandHandlers(_activeMicChannel);
         _activeMicChannel = channel;
+        UpdateActiveMicSelectionFlags();
         AttachEqualizerBandHandlers(_activeMicChannel);
         DataContext = Settings;
         EqBandPanel.ItemsSource = Bands;
@@ -13204,6 +13227,7 @@ public partial class EqualizerWindow : Window
         private AudioInputDevice? _selectedDevice;
         private InputChannelMode _inputChannelMode = InputChannelMode.MonoSum;
         private bool _isEnabled = true;
+        private bool _isSelected;
         private bool _isMuted;
         private bool _isSoloed;
         private bool _polarityInverted;
@@ -13279,6 +13303,12 @@ public partial class EqualizerWindow : Window
         {
             get => _isEnabled;
             set => SetField(ref _isEnabled, value);
+        }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set => SetField(ref _isSelected, value);
         }
 
         public bool IsMuted

@@ -2290,7 +2290,19 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Width="126" MinHeight="490" Background="#071017" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="6" Padding="8" Margin="4">
+                    <Border Width="126" MinHeight="490" BorderThickness="1" CornerRadius="6" Padding="8" Margin="4" PreviewMouseLeftButtonDown="MixerChannelStripPreviewMouseLeftButtonDown">
+                      <Border.Style>
+                        <Style TargetType="Border">
+                          <Setter Property="Background" Value="#071017" />
+                          <Setter Property="BorderBrush" Value="#334B5C" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                              <Setter Property="Background" Value="#0A1822" />
+                              <Setter Property="BorderBrush" Value="#35E8D8" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Border.Style>
                       <Grid>
                         <Grid.RowDefinitions>
                           <RowDefinition Height="Auto" />
