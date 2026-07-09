@@ -43,6 +43,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Live service bus records interface left and right", LiveServiceBusRecordsInterfaceLeftAndRight),
+    ("Live service bus records higher interface lanes", LiveServiceBusRecordsHigherInterfaceLanes),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -726,6 +727,84 @@ static void LiveServiceBusRecordsInterfaceLeftAndRight()
         Assert(Math.Abs(recorded[1] - 0.10f) < 0.04f, "mic 2 input 2 should reach the right program channel");
         Assert(Math.Abs(recorded[2] + 0.20f) < 0.05f, "left channel should preserve following input 1 samples");
         Assert(Math.Abs(recorded[3] + 0.05f) < 0.04f, "right channel should preserve following input 2 samples");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
+}
+
+static void LiveServiceBusRecordsHigherInterfaceLanes()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        using var service = new MicrophoneSpectrumService();
+        var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 4);
+        var capture = new FakeWaveIn(waveFormat);
+        SetPrivateField<IWaveIn?>(service, "_capture", capture);
+        SetPrivateField(service, "_currentDeviceNumber", 0);
+        SetPrivateField(service, "_activeSampleRate", 48_000);
+        SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
+        service.ConfigureLiveMix(
+            [
+                new MicrophoneLiveChannelSettings(
+                    3,
+                    0,
+                    InputChannelMode.Input3,
+                    CreateTransparentVoiceSettings(),
+                    100d,
+                    0d,
+                    -100d,
+                    false,
+                    false,
+                    0d,
+                    true,
+                    false),
+                new MicrophoneLiveChannelSettings(
+                    4,
+                    0,
+                    InputChannelMode.Input4,
+                    CreateTransparentVoiceSettings(),
+                    100d,
+                    0d,
+                    100d,
+                    false,
+                    false,
+                    0d,
+                    true,
+                    false)
+            ],
+            new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.ProgramMix, 3);
+
+        var recordingPath = Path.Combine(folder, "program.wav");
+        service.StartProcessedAudioRecording(recordingPath);
+        var fourLaneSamples = new[]
+        {
+            0.01f, 0.02f, 0.50f, 0.20f,
+            -0.01f, -0.02f, -0.25f, -0.10f,
+            0.03f, 0.04f, 0.40f, 0.30f
+        };
+        var buffer = MemoryMarshal.AsBytes(fourLaneSamples.AsSpan()).ToArray();
+        var method = typeof(MicrophoneSpectrumService).GetMethod(
+            "CaptureDataAvailable",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(method is not null, "capture callback should be available for higher-lane service integration test");
+        method!.Invoke(service, [null, new WaveInEventArgs(buffer, buffer.Length)]);
+        service.StopProcessedAudioRecording();
+
+        using var reader = new WaveFileReader(recordingPath);
+        var recorded = ReadWaveFloatSamples(reader);
+        Assert(reader.WaveFormat.Channels == 2, "higher-lane program mix recording should remain stereo");
+        Assert(recorded.Length >= 6, "higher-lane program mix should write the captured block");
+        Assert(Math.Abs(recorded[0] - 0.50f) < 0.05f, "mic 3 input 3 should reach the left program channel");
+        Assert(Math.Abs(recorded[1] - 0.20f) < 0.04f, "mic 4 input 4 should reach the right program channel");
+        Assert(Math.Abs(recorded[2] + 0.25f) < 0.05f, "left channel should preserve following input 3 samples");
+        Assert(Math.Abs(recorded[3] + 0.10f) < 0.04f, "right channel should preserve following input 4 samples");
+        Assert(Math.Abs(recorded[4] - 0.40f) < 0.05f, "left channel should ignore unrelated interface lanes");
+        Assert(Math.Abs(recorded[5] - 0.30f) < 0.04f, "right channel should ignore unrelated interface lanes");
     }
     finally
     {
