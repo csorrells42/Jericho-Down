@@ -49,6 +49,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
+    ("Live service bus records selected auxiliary mic sources", LiveServiceBusRecordsSelectedAuxiliaryMicSources),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -1059,6 +1060,73 @@ static void LiveServiceBusMixesAuxiliaryCaptureDevice()
         rightMinimum: 0.12f);
 }
 
+static void LiveServiceBusRecordsSelectedAuxiliaryMicSources()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var rawPath = Path.Combine(folder, "aux_selected_raw.wav");
+        var rawRecorded = RecordSelectedAuxiliaryMicSource(rawPath, ProcessedRecordingSource.SelectedMicRawBackup);
+        Assert(rawRecorded.Length >= 384, "selected auxiliary raw backup should write the synced mic block");
+        Assert(rawRecorded[0] > 0.20f, "selected auxiliary raw backup should preserve the headset mic sample polarity");
+        Assert(rawRecorded[1] < -0.20f, "selected auxiliary raw backup should preserve following raw samples");
+
+        var processedPath = Path.Combine(folder, "aux_selected_processed.wav");
+        var processedRecorded = RecordSelectedAuxiliaryMicSource(processedPath, ProcessedRecordingSource.SelectedMicProcessed);
+        Assert(processedRecorded.Length >= 384, "selected auxiliary processed mic should write the synced mic block");
+        Assert(processedRecorded[0] < -0.12f, "selected auxiliary processed mic should include polarity inversion");
+        Assert(processedRecorded[1] > 0.12f, "selected auxiliary processed mic should preserve inverted following samples");
+        Assert(MeasureMonoDotProduct(rawRecorded, processedRecorded, 220) < -2f, "raw and processed auxiliary recordings should be opposite-polarity paths");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
+}
+
+static float[] RecordSelectedAuxiliaryMicSource(string recordingPath, ProcessedRecordingSource source)
+{
+    using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out _);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                3,
+                7,
+                InputChannelMode.MonoSum,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                0d,
+                true,
+                false,
+                0d,
+                true,
+                false)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+    service.ConfigureProcessedRecordingSource(source, 3);
+
+    var auxiliaryCapture = new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 1));
+    var auxiliaryRuntime = CreateAdditionalCaptureRuntime(service, deviceNumber: 7, auxiliaryCapture);
+    var auxiliarySamples = new float[2_400];
+    for (var i = 0; i < auxiliarySamples.Length; i++)
+    {
+        auxiliarySamples[i] = i % 2 == 0 ? 0.35f : -0.35f;
+    }
+
+    InvokeAdditionalCapture(service, auxiliaryRuntime, auxiliarySamples);
+    SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+
+    service.StartProcessedAudioRecording(recordingPath);
+    InvokePrimaryCapture(service, new float[384 * 2]);
+    service.StopProcessedAudioRecording();
+
+    using var reader = new WaveFileReader(recordingPath);
+    Assert(reader.WaveFormat.Channels == 1, "selected auxiliary mic recordings should be mono");
+    return ReadWaveFloatSamples(reader);
+}
+
 static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
 {
     using var service = CreateLiveOutputServiceForProvider(outputProvider);
@@ -1310,6 +1378,18 @@ static float MeasureLeftDotProduct(IReadOnlyList<float> first, IReadOnlyList<flo
     var maxExclusive = Math.Min(Math.Min(first.Count, second.Count), start + Math.Max(0, frameCount) * 2);
     var dotProduct = 0f;
     for (var i = start; i < maxExclusive; i += 2)
+    {
+        dotProduct += first[i] * second[i];
+    }
+
+    return dotProduct;
+}
+
+static float MeasureMonoDotProduct(IReadOnlyList<float> first, IReadOnlyList<float> second, int sampleCount)
+{
+    var count = Math.Min(Math.Min(first.Count, second.Count), Math.Max(0, sampleCount));
+    var dotProduct = 0f;
+    for (var i = 0; i < count; i++)
     {
         dotProduct += first[i] * second[i];
     }
