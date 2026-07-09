@@ -26,6 +26,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice hum removal notches mains buzz", VoiceHumRemovalNotchesMainsBuzz),
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
+    ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
@@ -350,6 +351,33 @@ static void VoiceParametricEqShapesOneAdjustableBand()
     Assert(centerCutRms < centerBypassRms * 0.52d, "parametric EQ cut should lower the selected frequency");
     Assert(offBoostedRms > offBypassRms * 0.86d && offBoostedRms < offBypassRms * 1.14d, "parametric EQ should leave off-band content mostly unchanged");
     Assert(centerBoosted.All(float.IsFinite), "parametric EQ output should stay finite");
+}
+
+static void VoiceShelfEqShapesLowBodyAndHighAir()
+{
+    const int sampleRate = 48_000;
+    var lowTone = GenerateSine(sampleRate, 120d, 0.35d, 2.0d);
+    var midTone = GenerateSine(sampleRate, 1_000d, 0.35d, 2.0d);
+    var highTone = GenerateSine(sampleRate, 10_000d, 0.35d, 2.0d);
+    var lowBypass = ProcessShelfEqTestTone(lowTone, enabled: false);
+    var lowShaped = ProcessShelfEqTestTone(lowTone, enabled: true);
+    var midBypass = ProcessShelfEqTestTone(midTone, enabled: false);
+    var midShaped = ProcessShelfEqTestTone(midTone, enabled: true);
+    var highBypass = ProcessShelfEqTestTone(highTone, enabled: false);
+    var highShaped = ProcessShelfEqTestTone(highTone, enabled: true);
+
+    var start = sampleRate;
+    var lowBypassRms = CalculateTailRms(lowBypass, start);
+    var lowShapedRms = CalculateTailRms(lowShaped, start);
+    var midBypassRms = CalculateTailRms(midBypass, start);
+    var midShapedRms = CalculateTailRms(midShaped, start);
+    var highBypassRms = CalculateTailRms(highBypass, start);
+    var highShapedRms = CalculateTailRms(highShaped, start);
+
+    Assert(lowShapedRms > lowBypassRms * 1.45d, "low shelf boost should raise low body");
+    Assert(highShapedRms < highBypassRms * 0.70d, "high shelf cut should tame high air");
+    Assert(midShapedRms > midBypassRms * 0.82d && midShapedRms < midBypassRms * 1.22d, "shelf EQ should keep mid voice mostly stable");
+    Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
 }
 
 static void VoiceSaturationAddsWarmHarmonicsSafely()
@@ -1412,6 +1440,36 @@ static float[] ProcessParametricEqTestTone(float[] samples, bool enabled, double
         ParametricEqFrequencyHz = 1_000,
         ParametricEqGainDb = gainDb,
         ParametricEqQ = 2.2,
+        LowPassEnabled = false,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        SaturationEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessShelfEqTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = false,
+        NotchFilterEnabled = false,
+        ParametricEqEnabled = false,
+        ShelfEqEnabled = enabled,
+        LowShelfFrequencyHz = 180,
+        LowShelfGainDb = 6,
+        HighShelfFrequencyHz = 7_500,
+        HighShelfGainDb = -7,
         LowPassEnabled = false,
         DePopperEnabled = false,
         NoiseGateEnabled = false,

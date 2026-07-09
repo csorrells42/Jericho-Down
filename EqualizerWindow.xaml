@@ -1871,6 +1871,35 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Shelf EQ" IsChecked="{Binding ShelfEqEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Broadly boosts or cuts low-end body and high-end air with low-shelf and high-shelf filters." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Low shelf" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LowShelfFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LowShelfFrequencySlider" Minimum="60" Maximum="500" Value="{Binding LowShelfFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Low gain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LowShelfGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LowShelfGainSlider" Minimum="-12" Maximum="12" Value="{Binding LowShelfGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="High shelf" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=HighShelfFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="HighShelfFrequencySlider" Minimum="3000" Maximum="14000" Value="{Binding HighShelfFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="High gain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=HighShelfGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="HighShelfGainSlider" Minimum="-12" Maximum="12" Value="{Binding HighShelfGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />

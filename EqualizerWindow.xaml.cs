@@ -11866,6 +11866,7 @@ public partial class EqualizerWindow : Window
         Settings.HumRemovalEnabled = false;
         Settings.NotchFilterEnabled = false;
         Settings.ParametricEqEnabled = false;
+        Settings.ShelfEqEnabled = false;
         Settings.InputTrimDb = 0;
         Settings.HighPassFrequencyHz = highPassFrequencyHz;
         Settings.LowPassFrequencyHz = 16000;
@@ -11876,6 +11877,10 @@ public partial class EqualizerWindow : Window
         Settings.ParametricEqFrequencyHz = 1000;
         Settings.ParametricEqGainDb = 0;
         Settings.ParametricEqQ = 1.2;
+        Settings.LowShelfFrequencyHz = 160;
+        Settings.LowShelfGainDb = 0;
+        Settings.HighShelfFrequencyHz = 8000;
+        Settings.HighShelfGainDb = 0;
         Settings.DePopperEnabled = true;
         Settings.DePopperAmountDb = dePopperAmountDb;
         Settings.DePopperFrequencyHz = 180;
@@ -12956,6 +12961,10 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(ParametricEqFrequencySlider, Settings.ParametricEqFrequencyHz);
         SetProcessingSliderDefault(ParametricEqGainSlider, Settings.ParametricEqGainDb);
         SetProcessingSliderDefault(ParametricEqQSlider, Settings.ParametricEqQ);
+        SetProcessingSliderDefault(LowShelfFrequencySlider, Settings.LowShelfFrequencyHz);
+        SetProcessingSliderDefault(LowShelfGainSlider, Settings.LowShelfGainDb);
+        SetProcessingSliderDefault(HighShelfFrequencySlider, Settings.HighShelfFrequencyHz);
+        SetProcessingSliderDefault(HighShelfGainSlider, Settings.HighShelfGainDb);
         SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
         SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
         SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);

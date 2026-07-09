@@ -42,6 +42,15 @@ public sealed class VoiceSampleProcessor
     private double _parametricEqX2;
     private double _parametricEqY1;
     private double _parametricEqY2;
+    private double _shelfEqWet;
+    private double _lowShelfX1;
+    private double _lowShelfX2;
+    private double _lowShelfY1;
+    private double _lowShelfY2;
+    private double _highShelfX1;
+    private double _highShelfX2;
+    private double _highShelfY1;
+    private double _highShelfY2;
     private double _lowPassWet;
     private double _lowPassX1;
     private double _lowPassX2;
@@ -98,6 +107,7 @@ public sealed class VoiceSampleProcessor
     private bool _humRemovalEnabled;
     private bool _notchFilterEnabled;
     private bool _parametricEqEnabled;
+    private bool _shelfEqEnabled;
     private bool _lowPassEnabled;
     private bool _dePopperEnabled;
     private bool _noiseGateEnabled;
@@ -150,6 +160,21 @@ public sealed class VoiceSampleProcessor
     private double _lastParametricEqFrequencyHz;
     private double _lastParametricEqGainDb = double.NaN;
     private double _lastParametricEqQ;
+    private double _shelfEqWetCoefficient;
+    private double _lowShelfB0 = 1d;
+    private double _lowShelfB1;
+    private double _lowShelfB2;
+    private double _lowShelfA1;
+    private double _lowShelfA2;
+    private double _highShelfB0 = 1d;
+    private double _highShelfB1;
+    private double _highShelfB2;
+    private double _highShelfA1;
+    private double _highShelfA2;
+    private double _lastLowShelfFrequencyHz;
+    private double _lastLowShelfGainDb = double.NaN;
+    private double _lastHighShelfFrequencyHz;
+    private double _lastHighShelfGainDb = double.NaN;
     private double _lowPassB0 = 1d;
     private double _lowPassWetCoefficient;
     private double _lowPassB1;
@@ -294,6 +319,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyManualNotch(sample);
             sample = ApplyEqualizer(sample);
             sample = ApplyParametricEq(sample);
+            sample = ApplyShelfEq(sample);
             sample = ApplySaturation(sample);
             sample = ApplyNoiseSuppression(sample);
             sample = ApplyExpander(sample);
@@ -353,6 +379,8 @@ public sealed class VoiceSampleProcessor
         _humRemovalEnabled = _settings.HumRemovalEnabled;
         _notchFilterEnabled = _settings.NotchFilterEnabled && _settings.NotchFilterDepthDb > 0d;
         _parametricEqEnabled = _settings.ParametricEqEnabled && Math.Abs(_settings.ParametricEqGainDb) > 0.01d;
+        _shelfEqEnabled = _settings.ShelfEqEnabled
+            && (Math.Abs(_settings.LowShelfGainDb) > 0.01d || Math.Abs(_settings.HighShelfGainDb) > 0.01d);
         _lowPassEnabled = _settings.LowPassEnabled;
         _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
         _noiseGateEnabled = _settings.NoiseGateEnabled;
@@ -368,11 +396,13 @@ public sealed class VoiceSampleProcessor
         _humRemovalWetCoefficient = TimeCoefficient(12d);
         _manualNotchWetCoefficient = TimeCoefficient(12d);
         _parametricEqWetCoefficient = TimeCoefficient(12d);
+        _shelfEqWetCoefficient = TimeCoefficient(12d);
         _lowPassWetCoefficient = TimeCoefficient(12d);
         UpdateHighPassCoefficients();
         UpdateHumRemovalCoefficients();
         UpdateManualNotchCoefficients();
         UpdateParametricEqCoefficients();
+        UpdateShelfEqCoefficients();
         UpdateLowPassCoefficients();
 
         var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
@@ -606,6 +636,26 @@ public sealed class VoiceSampleProcessor
     }
 
     private static double ApplyHumNotch(
+        double sample,
+        double b0,
+        double b1,
+        double b2,
+        double a1,
+        double a2,
+        ref double x1,
+        ref double x2,
+        ref double y1,
+        ref double y2)
+    {
+        var output = FlushDenormal(b0 * sample + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2);
+        x2 = x1;
+        x1 = FlushDenormal(sample);
+        y2 = y1;
+        y1 = output;
+        return output;
+    }
+
+    private static double ApplyBiquad(
         double sample,
         double b0,
         double b1,
@@ -1083,6 +1133,152 @@ public sealed class VoiceSampleProcessor
         _parametricEqB2 = b2 / a0;
         _parametricEqA1 = a1 / a0;
         _parametricEqA2 = a2 / a0;
+    }
+
+    private double ApplyShelfEq(double sample)
+    {
+        if (!_shelfEqEnabled && _shelfEqWet <= 0d)
+        {
+            ResetShelfEqState();
+            return sample;
+        }
+
+        var shaped = ApplyBiquad(
+            sample,
+            _lowShelfB0,
+            _lowShelfB1,
+            _lowShelfB2,
+            _lowShelfA1,
+            _lowShelfA2,
+            ref _lowShelfX1,
+            ref _lowShelfX2,
+            ref _lowShelfY1,
+            ref _lowShelfY2);
+        shaped = ApplyBiquad(
+            shaped,
+            _highShelfB0,
+            _highShelfB1,
+            _highShelfB2,
+            _highShelfA1,
+            _highShelfA2,
+            ref _highShelfX1,
+            ref _highShelfX2,
+            ref _highShelfY1,
+            ref _highShelfY2);
+
+        var targetWet = _shelfEqEnabled ? 1d : 0d;
+        _shelfEqWet = FlushDenormal(_shelfEqWet + (targetWet - _shelfEqWet) * _shelfEqWetCoefficient);
+        if (!_shelfEqEnabled && _shelfEqWet < 0.0001d)
+        {
+            _shelfEqWet = 0d;
+            ResetShelfEqState();
+        }
+        else if (_shelfEqEnabled && _shelfEqWet > 0.9999d)
+        {
+            _shelfEqWet = 1d;
+        }
+
+        return sample + (shaped - sample) * _shelfEqWet;
+    }
+
+    private void ResetShelfEqState()
+    {
+        _lowShelfX1 = 0d;
+        _lowShelfX2 = 0d;
+        _lowShelfY1 = 0d;
+        _lowShelfY2 = 0d;
+        _highShelfX1 = 0d;
+        _highShelfX2 = 0d;
+        _highShelfY1 = 0d;
+        _highShelfY2 = 0d;
+    }
+
+    private void UpdateShelfEqCoefficients()
+    {
+        var lowFrequencyHz = Math.Clamp(_settings.LowShelfFrequencyHz, 40d, Math.Min(800d, _sampleRate * 0.45d));
+        var lowGainDb = Math.Clamp(_settings.LowShelfGainDb, -12d, 12d);
+        var highFrequencyHz = Math.Clamp(_settings.HighShelfFrequencyHz, 1500d, Math.Min(16000d, _sampleRate * 0.45d));
+        var highGainDb = Math.Clamp(_settings.HighShelfGainDb, -12d, 12d);
+        if (Math.Abs(lowFrequencyHz - _lastLowShelfFrequencyHz) >= 0.01d
+            || Math.Abs(lowGainDb - _lastLowShelfGainDb) >= 0.001d)
+        {
+            _lastLowShelfFrequencyHz = lowFrequencyHz;
+            _lastLowShelfGainDb = lowGainDb;
+            SetShelfCoefficients(
+                lowFrequencyHz,
+                lowGainDb,
+                lowShelf: true,
+                out _lowShelfB0,
+                out _lowShelfB1,
+                out _lowShelfB2,
+                out _lowShelfA1,
+                out _lowShelfA2);
+        }
+
+        if (Math.Abs(highFrequencyHz - _lastHighShelfFrequencyHz) >= 0.01d
+            || Math.Abs(highGainDb - _lastHighShelfGainDb) >= 0.001d)
+        {
+            _lastHighShelfFrequencyHz = highFrequencyHz;
+            _lastHighShelfGainDb = highGainDb;
+            SetShelfCoefficients(
+                highFrequencyHz,
+                highGainDb,
+                lowShelf: false,
+                out _highShelfB0,
+                out _highShelfB1,
+                out _highShelfB2,
+                out _highShelfA1,
+                out _highShelfA2);
+        }
+    }
+
+    private void SetShelfCoefficients(
+        double frequencyHz,
+        double gainDb,
+        bool lowShelf,
+        out double b0,
+        out double b1,
+        out double b2,
+        out double a1,
+        out double a2)
+    {
+        var amplitude = Math.Pow(10d, gainDb / 40d);
+        var omega = 2d * Math.PI * frequencyHz / _sampleRate;
+        var sine = Math.Sin(omega);
+        var cosine = Math.Cos(omega);
+        const double shelfSlope = 1d;
+        var beta = Math.Sqrt(amplitude) * Math.Sqrt((amplitude + 1d / amplitude) * (1d / shelfSlope - 1d) + 2d);
+
+        double rawB0;
+        double rawB1;
+        double rawB2;
+        double rawA0;
+        double rawA1;
+        double rawA2;
+        if (lowShelf)
+        {
+            rawB0 = amplitude * ((amplitude + 1d) - (amplitude - 1d) * cosine + beta * sine);
+            rawB1 = 2d * amplitude * ((amplitude - 1d) - (amplitude + 1d) * cosine);
+            rawB2 = amplitude * ((amplitude + 1d) - (amplitude - 1d) * cosine - beta * sine);
+            rawA0 = (amplitude + 1d) + (amplitude - 1d) * cosine + beta * sine;
+            rawA1 = -2d * ((amplitude - 1d) + (amplitude + 1d) * cosine);
+            rawA2 = (amplitude + 1d) + (amplitude - 1d) * cosine - beta * sine;
+        }
+        else
+        {
+            rawB0 = amplitude * ((amplitude + 1d) + (amplitude - 1d) * cosine + beta * sine);
+            rawB1 = -2d * amplitude * ((amplitude - 1d) + (amplitude + 1d) * cosine);
+            rawB2 = amplitude * ((amplitude + 1d) + (amplitude - 1d) * cosine - beta * sine);
+            rawA0 = (amplitude + 1d) - (amplitude - 1d) * cosine + beta * sine;
+            rawA1 = 2d * ((amplitude - 1d) - (amplitude + 1d) * cosine);
+            rawA2 = (amplitude + 1d) - (amplitude - 1d) * cosine - beta * sine;
+        }
+
+        b0 = rawB0 / rawA0;
+        b1 = rawB1 / rawA0;
+        b2 = rawB2 / rawA0;
+        a1 = rawA1 / rawA0;
+        a2 = rawA2 / rawA0;
     }
 
     private double ApplySaturation(double sample)

@@ -24,6 +24,11 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _parametricEqFrequencyHz = 1000;
     private double _parametricEqGainDb;
     private double _parametricEqQ = 1.2;
+    private bool _shelfEqEnabled;
+    private double _lowShelfFrequencyHz = 160;
+    private double _lowShelfGainDb;
+    private double _highShelfFrequencyHz = 8000;
+    private double _highShelfGainDb;
     private bool _noiseGateEnabled = true;
     private double _noiseGateThresholdDb = -48;
     private double _noiseGateAttackMs = 5;
@@ -161,6 +166,36 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _parametricEqQ;
         set => SetField(ref _parametricEqQ, value);
+    }
+
+    public bool ShelfEqEnabled
+    {
+        get => _shelfEqEnabled;
+        set => SetField(ref _shelfEqEnabled, value);
+    }
+
+    public double LowShelfFrequencyHz
+    {
+        get => _lowShelfFrequencyHz;
+        set => SetField(ref _lowShelfFrequencyHz, value);
+    }
+
+    public double LowShelfGainDb
+    {
+        get => _lowShelfGainDb;
+        set => SetField(ref _lowShelfGainDb, value);
+    }
+
+    public double HighShelfFrequencyHz
+    {
+        get => _highShelfFrequencyHz;
+        set => SetField(ref _highShelfFrequencyHz, value);
+    }
+
+    public double HighShelfGainDb
+    {
+        get => _highShelfGainDb;
+        set => SetField(ref _highShelfGainDb, value);
     }
 
     public bool NoiseGateEnabled
