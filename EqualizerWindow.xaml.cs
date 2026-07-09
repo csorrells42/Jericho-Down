@@ -13163,8 +13163,10 @@ public partial class EqualizerWindow : Window
         private double _analyzerSmoothing = 80d;
         private double _levelMeterScale;
         private double _rmsMeterScale;
+        private double _peakHoldMeterScale;
         private bool _isClipping;
         private int _clipHoldFrames;
+        private int _peakHoldFrames;
         private string _syncStatusText = "Primary capture";
 
         public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
@@ -13355,6 +13357,8 @@ public partial class EqualizerWindow : Window
 
         public double RmsMeterScale => _rmsMeterScale;
 
+        public double PeakHoldMeterScale => _peakHoldMeterScale;
+
         public bool IsClipping => _isClipping;
 
         public string SyncStatusText
@@ -13379,6 +13383,22 @@ public partial class EqualizerWindow : Window
             var amount = target > _levelMeterScale ? 0.42d : 0.14d;
             var next = _levelMeterScale + (target - _levelMeterScale) * amount;
             var rmsNext = _rmsMeterScale + (rmsTarget - _rmsMeterScale) * (rmsTarget > _rmsMeterScale ? 0.30d : 0.10d);
+            double peakHoldNext;
+            if (target >= _peakHoldMeterScale)
+            {
+                peakHoldNext = target;
+                _peakHoldFrames = 42;
+            }
+            else if (_peakHoldFrames > 0)
+            {
+                _peakHoldFrames--;
+                peakHoldNext = _peakHoldMeterScale;
+            }
+            else
+            {
+                peakHoldNext = _peakHoldMeterScale + (target - _peakHoldMeterScale) * 0.035d;
+            }
+
             if (Math.Abs(next - _levelMeterScale) < 0.004d)
             {
                 next = target <= 0.004d ? 0d : next;
@@ -13387,6 +13407,11 @@ public partial class EqualizerWindow : Window
             if (Math.Abs(rmsNext - _rmsMeterScale) < 0.004d)
             {
                 rmsNext = rmsTarget <= 0.004d ? 0d : rmsNext;
+            }
+
+            if (Math.Abs(peakHoldNext - _peakHoldMeterScale) < 0.003d)
+            {
+                peakHoldNext = target <= 0.004d && _peakHoldFrames <= 0 ? 0d : peakHoldNext;
             }
 
             if (peakLevel >= 0.98d)
@@ -13401,6 +13426,7 @@ public partial class EqualizerWindow : Window
             var clipping = _clipHoldFrames > 0;
             if (Math.Abs(next - _levelMeterScale) < 0.002d
                 && Math.Abs(rmsNext - _rmsMeterScale) < 0.002d
+                && Math.Abs(peakHoldNext - _peakHoldMeterScale) < 0.002d
                 && clipping == _isClipping)
             {
                 return;
@@ -13408,9 +13434,11 @@ public partial class EqualizerWindow : Window
 
             _levelMeterScale = Math.Clamp(next, 0d, 1d);
             _rmsMeterScale = Math.Clamp(rmsNext, 0d, 1d);
+            _peakHoldMeterScale = Math.Clamp(peakHoldNext, 0d, 1d);
             _isClipping = clipping;
             OnPropertyChanged(nameof(LevelMeterScale));
             OnPropertyChanged(nameof(RmsMeterScale));
+            OnPropertyChanged(nameof(PeakHoldMeterScale));
             OnPropertyChanged(nameof(IsClipping));
         }
 

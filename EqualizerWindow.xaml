@@ -2169,13 +2169,39 @@
                           <CheckBox Content="Mute" IsChecked="{Binding IsMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" />
                         </StackPanel>
                         <Slider Grid.Row="3" Style="{StaticResource MixerFaderSlider}" Minimum="0" Maximum="150" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="10" HorizontalAlignment="Center" ValueChanged="MixerChannelControlChanged" />
-                        <TextBlock Grid.Row="4" Text="{Binding VolumeDisplayText}" Foreground="#F8FAFC" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,8,0,8" />
-                        <Border Grid.Row="5" Height="16" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+                        <Grid Grid.Row="4" Margin="0,8,0,8">
+                          <TextBlock Text="{Binding VolumeDisplayText}" Foreground="#F8FAFC" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                          <Ellipse Width="9" Height="9" Stroke="#D7FFF9" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                              <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="#334B5C" />
+                                <Setter Property="Opacity" Value="0.45" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsClipping}" Value="True">
+                                    <Setter Property="Fill" Value="#DA5048" />
+                                    <Setter Property="Opacity" Value="1" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </Ellipse.Style>
+                          </Ellipse>
+                        </Grid>
+                        <Border Grid.Row="5" Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
                           <Grid>
                             <Rectangle Fill="#10202A" />
-                            <Rectangle Fill="#35E8D8" HorizontalAlignment="Stretch" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
+                            <Rectangle Fill="#8DA2B7" HorizontalAlignment="Stretch" Opacity="0.58" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
+                              <Rectangle.RenderTransform>
+                                <ScaleTransform ScaleX="{Binding RmsMeterScale}" />
+                              </Rectangle.RenderTransform>
+                            </Rectangle>
+                            <Rectangle Fill="#35E8D8" HorizontalAlignment="Stretch" Height="9" VerticalAlignment="Center" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
                               <Rectangle.RenderTransform>
                                 <ScaleTransform ScaleX="{Binding LevelMeterScale}" />
+                              </Rectangle.RenderTransform>
+                            </Rectangle>
+                            <Rectangle Fill="#D7B220" HorizontalAlignment="Stretch" Height="2" VerticalAlignment="Top" RenderTransformOrigin="0,0.5">
+                              <Rectangle.RenderTransform>
+                                <ScaleTransform ScaleX="{Binding PeakHoldMeterScale}" />
                               </Rectangle.RenderTransform>
                             </Rectangle>
                           </Grid>
@@ -2379,6 +2405,11 @@
                         <Rectangle Fill="#35E8D8" HorizontalAlignment="Stretch" Height="9" VerticalAlignment="Center" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
                           <Rectangle.RenderTransform>
                             <ScaleTransform ScaleX="{Binding LevelMeterScale}" />
+                          </Rectangle.RenderTransform>
+                        </Rectangle>
+                        <Rectangle Fill="#D7B220" HorizontalAlignment="Stretch" Height="2" VerticalAlignment="Top" RenderTransformOrigin="0,0.5">
+                          <Rectangle.RenderTransform>
+                            <ScaleTransform ScaleX="{Binding PeakHoldMeterScale}" />
                           </Rectangle.RenderTransform>
                         </Rectangle>
                       </Grid>
