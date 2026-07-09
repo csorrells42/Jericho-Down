@@ -11768,9 +11768,11 @@ public partial class EqualizerWindow : Window
     {
         Settings.HighPassEnabled = true;
         Settings.LowPassEnabled = false;
+        Settings.HumRemovalEnabled = false;
         Settings.InputTrimDb = 0;
         Settings.HighPassFrequencyHz = highPassFrequencyHz;
         Settings.LowPassFrequencyHz = 16000;
+        Settings.HumRemovalFrequencyHz = 60;
         Settings.DePopperEnabled = true;
         Settings.DePopperAmountDb = dePopperAmountDb;
         Settings.DePopperFrequencyHz = 180;
@@ -12842,6 +12844,7 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(InputTrimSlider, Settings.InputTrimDb);
         SetProcessingSliderDefault(HighPassSlider, Settings.HighPassFrequencyHz);
         SetProcessingSliderDefault(LowPassSlider, Settings.LowPassFrequencyHz);
+        SetProcessingSliderDefault(HumRemovalFrequencySlider, Settings.HumRemovalFrequencyHz);
         SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
         SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
         SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);

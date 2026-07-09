@@ -23,6 +23,15 @@ public sealed class VoiceSampleProcessor
     private double _highPassX2;
     private double _highPassY1;
     private double _highPassY2;
+    private double _humRemovalWet;
+    private double _humNotchX1;
+    private double _humNotchX2;
+    private double _humNotchY1;
+    private double _humNotchY2;
+    private double _humHarmonicNotchX1;
+    private double _humHarmonicNotchX2;
+    private double _humHarmonicNotchY1;
+    private double _humHarmonicNotchY2;
     private double _lowPassWet;
     private double _lowPassX1;
     private double _lowPassX2;
@@ -75,6 +84,7 @@ public sealed class VoiceSampleProcessor
     private double _makeupTargetGain = 1d;
     private double _levelSmoothingCoefficient;
     private bool _highPassEnabled;
+    private bool _humRemovalEnabled;
     private bool _lowPassEnabled;
     private bool _dePopperEnabled;
     private bool _noiseGateEnabled;
@@ -95,6 +105,18 @@ public sealed class VoiceSampleProcessor
     private double _highPassA1;
     private double _highPassA2;
     private double _lastHighPassFrequencyHz;
+    private double _humNotchB0 = 1d;
+    private double _humRemovalWetCoefficient;
+    private double _humNotchB1;
+    private double _humNotchB2;
+    private double _humNotchA1;
+    private double _humNotchA2;
+    private double _humHarmonicNotchB0 = 1d;
+    private double _humHarmonicNotchB1;
+    private double _humHarmonicNotchB2;
+    private double _humHarmonicNotchA1;
+    private double _humHarmonicNotchA2;
+    private double _lastHumRemovalFrequencyHz;
     private double _lowPassB0 = 1d;
     private double _lowPassWetCoefficient;
     private double _lowPassB1;
@@ -231,6 +253,7 @@ public sealed class VoiceSampleProcessor
             sample *= _inputTrimGain;
             sample = ApplyDePopper(sample);
             sample = ApplyHighPass(sample);
+            sample = ApplyHumRemoval(sample);
             sample = ApplyEqualizer(sample);
             sample = ApplyNoiseSuppression(sample);
             sample = ApplyExpander(sample);
@@ -287,6 +310,7 @@ public sealed class VoiceSampleProcessor
         _makeupTargetGain = DbToLinear(Math.Clamp(_settings.MakeupGainDb, -12d, 18d));
         _levelSmoothingCoefficient = TimeCoefficient(6d);
         _highPassEnabled = _settings.HighPassEnabled;
+        _humRemovalEnabled = _settings.HumRemovalEnabled;
         _lowPassEnabled = _settings.LowPassEnabled;
         _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
         _noiseGateEnabled = _settings.NoiseGateEnabled;
@@ -298,8 +322,10 @@ public sealed class VoiceSampleProcessor
         _presenceEnhancerEnabled = _settings.PresenceEnhancerEnabled && _settings.PresenceEnhancerAmountDb > 0d;
         _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
         _highPassWetCoefficient = TimeCoefficient(12d);
+        _humRemovalWetCoefficient = TimeCoefficient(12d);
         _lowPassWetCoefficient = TimeCoefficient(12d);
         UpdateHighPassCoefficients();
+        UpdateHumRemovalCoefficients();
         UpdateLowPassCoefficients();
 
         var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
@@ -478,6 +504,134 @@ public sealed class VoiceSampleProcessor
         _highPassB2 = b2 / a0;
         _highPassA1 = a1 / a0;
         _highPassA2 = a2 / a0;
+    }
+
+    private double ApplyHumRemoval(double sample)
+    {
+        if (!_humRemovalEnabled && _humRemovalWet <= 0d)
+        {
+            ResetHumRemovalState();
+            return sample;
+        }
+
+        var notched = ApplyHumNotch(
+            sample,
+            _humNotchB0,
+            _humNotchB1,
+            _humNotchB2,
+            _humNotchA1,
+            _humNotchA2,
+            ref _humNotchX1,
+            ref _humNotchX2,
+            ref _humNotchY1,
+            ref _humNotchY2);
+        notched = ApplyHumNotch(
+            notched,
+            _humHarmonicNotchB0,
+            _humHarmonicNotchB1,
+            _humHarmonicNotchB2,
+            _humHarmonicNotchA1,
+            _humHarmonicNotchA2,
+            ref _humHarmonicNotchX1,
+            ref _humHarmonicNotchX2,
+            ref _humHarmonicNotchY1,
+            ref _humHarmonicNotchY2);
+
+        var targetWet = _humRemovalEnabled ? 1d : 0d;
+        _humRemovalWet = FlushDenormal(_humRemovalWet + (targetWet - _humRemovalWet) * _humRemovalWetCoefficient);
+        if (!_humRemovalEnabled && _humRemovalWet < 0.0001d)
+        {
+            _humRemovalWet = 0d;
+            ResetHumRemovalState();
+        }
+        else if (_humRemovalEnabled && _humRemovalWet > 0.9999d)
+        {
+            _humRemovalWet = 1d;
+        }
+
+        return sample + (notched - sample) * _humRemovalWet;
+    }
+
+    private static double ApplyHumNotch(
+        double sample,
+        double b0,
+        double b1,
+        double b2,
+        double a1,
+        double a2,
+        ref double x1,
+        ref double x2,
+        ref double y1,
+        ref double y2)
+    {
+        var output = FlushDenormal(b0 * sample + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2);
+        x2 = x1;
+        x1 = FlushDenormal(sample);
+        y2 = y1;
+        y1 = output;
+        return output;
+    }
+
+    private void ResetHumRemovalState()
+    {
+        _humNotchX1 = 0d;
+        _humNotchX2 = 0d;
+        _humNotchY1 = 0d;
+        _humNotchY2 = 0d;
+        _humHarmonicNotchX1 = 0d;
+        _humHarmonicNotchX2 = 0d;
+        _humHarmonicNotchY1 = 0d;
+        _humHarmonicNotchY2 = 0d;
+    }
+
+    private void UpdateHumRemovalCoefficients()
+    {
+        var frequencyHz = Math.Clamp(_settings.HumRemovalFrequencyHz, 45d, 65d);
+        if (Math.Abs(frequencyHz - _lastHumRemovalFrequencyHz) < 0.01d)
+        {
+            return;
+        }
+
+        _lastHumRemovalFrequencyHz = frequencyHz;
+        SetNotchCoefficients(
+            frequencyHz,
+            24d,
+            out _humNotchB0,
+            out _humNotchB1,
+            out _humNotchB2,
+            out _humNotchA1,
+            out _humNotchA2);
+        SetNotchCoefficients(
+            frequencyHz * 2d,
+            30d,
+            out _humHarmonicNotchB0,
+            out _humHarmonicNotchB1,
+            out _humHarmonicNotchB2,
+            out _humHarmonicNotchA1,
+            out _humHarmonicNotchA2);
+    }
+
+    private void SetNotchCoefficients(
+        double frequencyHz,
+        double q,
+        out double b0,
+        out double b1,
+        out double b2,
+        out double a1,
+        out double a2)
+    {
+        var clampedFrequency = Math.Clamp(frequencyHz, 20d, _sampleRate * 0.45d);
+        var omega = 2d * Math.PI * clampedFrequency / _sampleRate;
+        var sine = Math.Sin(omega);
+        var cosine = Math.Cos(omega);
+        var alpha = sine / (2d * Math.Max(1d, q));
+        var a0 = 1d + alpha;
+
+        b0 = 1d / a0;
+        b1 = -2d * cosine / a0;
+        b2 = 1d / a0;
+        a1 = -2d * cosine / a0;
+        a2 = (1d - alpha) / a0;
     }
 
     private double ApplyLowPass(double sample)

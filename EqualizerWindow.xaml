@@ -1809,6 +1809,20 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Hum removal" IsChecked="{Binding HumRemovalEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Notches power hum at the selected mains frequency and its second harmonic before EQ and compression." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Mains hum" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=HumRemovalFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="HumRemovalFrequencySlider" Minimum="50" Maximum="60" Value="{Binding HumRemovalFrequencyHz}" TickPlacement="BottomRight" TickFrequency="10" IsSnapToTickEnabled="True" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />

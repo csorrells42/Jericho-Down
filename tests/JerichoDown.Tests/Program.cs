@@ -23,6 +23,7 @@ var tests = new (string Name, Action Test)[]
     ("Camera catalog keeps software cameras separate", CameraCatalogKeepsSoftwareCamerasSeparate),
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
     ("Voice low-pass filter tames high hiss", VoiceLowPassFilterTamesHighHiss),
+    ("Voice hum removal notches mains buzz", VoiceHumRemovalNotchesMainsBuzz),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
@@ -274,6 +275,32 @@ static void VoiceLowPassFilterTamesHighHiss()
 
     Assert(highFilteredRms < highBypassRms * 0.35d, "low-pass should significantly attenuate high hiss");
     Assert(voiceFilteredRms > voiceBypassRms * 0.70d, "low-pass should preserve normal voice-band energy");
+}
+
+static void VoiceHumRemovalNotchesMainsBuzz()
+{
+    const int sampleRate = 48_000;
+    var humTone = GenerateSine(sampleRate, 60d, 0.5d, 2.0d);
+    var harmonicTone = GenerateSine(sampleRate, 120d, 0.5d, 2.0d);
+    var voiceTone = GenerateSine(sampleRate, 1_000d, 0.5d, 2.0d);
+    var humBypass = ProcessHumRemovalTestTone(humTone, enabled: false);
+    var humFiltered = ProcessHumRemovalTestTone(humTone, enabled: true);
+    var harmonicBypass = ProcessHumRemovalTestTone(harmonicTone, enabled: false);
+    var harmonicFiltered = ProcessHumRemovalTestTone(harmonicTone, enabled: true);
+    var voiceBypass = ProcessHumRemovalTestTone(voiceTone, enabled: false);
+    var voiceFiltered = ProcessHumRemovalTestTone(voiceTone, enabled: true);
+
+    var start = sampleRate;
+    var humBypassRms = CalculateTailRms(humBypass, start);
+    var humFilteredRms = CalculateTailRms(humFiltered, start);
+    var harmonicBypassRms = CalculateTailRms(harmonicBypass, start);
+    var harmonicFilteredRms = CalculateTailRms(harmonicFiltered, start);
+    var voiceBypassRms = CalculateTailRms(voiceBypass, start);
+    var voiceFilteredRms = CalculateTailRms(voiceFiltered, start);
+
+    Assert(humFilteredRms < humBypassRms * 0.45d, "hum removal should attenuate 60 Hz mains hum");
+    Assert(harmonicFilteredRms < harmonicBypassRms * 0.65d, "hum removal should attenuate the second harmonic");
+    Assert(voiceFilteredRms > voiceBypassRms * 0.85d, "hum removal should preserve normal voice-band energy");
 }
 
 static void VoiceTelemetrySnapshotIsIndependent()
@@ -1216,6 +1243,29 @@ static float[] ProcessLowPassTestTone(float[] samples, bool enabled)
         HighPassEnabled = false,
         LowPassEnabled = enabled,
         LowPassFrequencyHz = 4_000,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessHumRemovalTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = enabled,
+        HumRemovalFrequencyHz = 60,
+        LowPassEnabled = false,
         DePopperEnabled = false,
         NoiseGateEnabled = false,
         ExpanderEnabled = false,
