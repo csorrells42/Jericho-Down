@@ -16,7 +16,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int SpectrumDisplaySampleRate = 48000;
     private const int CaptureBufferMilliseconds = 8;
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
-    private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(16).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
+    private const int SpectrumAnalysisIntervalMilliseconds = 24;
+    private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(SpectrumAnalysisIntervalMilliseconds).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
     private const int WasapiProcessedOutputLatencyMilliseconds = 18;
     private const int WaveOutProcessedOutputLatencyMilliseconds = 45;
     private const int MediaFoundationResamplerQuality = 60;
@@ -2427,12 +2428,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (InputChannelModeInfo.GetSelectedChannelIndex(channelMode) is not null)
-        {
-            samples.Clear();
-            return;
-        }
-
         if (channels == 1)
         {
             FillSelectedFloatChannel(floatSamples, samples, channels, 0);
@@ -2487,12 +2482,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (InputChannelModeInfo.GetSelectedChannelIndex(channelMode) is not null)
-        {
-            samples.Clear();
-            return;
-        }
-
         if (channels == 1)
         {
             FillSelectedPcm16Channel(pcmSamples, samples, channels, 0);
@@ -2533,12 +2522,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (InputChannelModeInfo.GetSelectedChannelIndex(channelMode) is not null)
-        {
-            samples.Clear();
-            return;
-        }
-
         if (channels == 1)
         {
             FillSelectedPcm32Channel(pcmSamples, samples, channels, 0);
@@ -2576,12 +2559,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
         if (TryGetSelectedChannel(channelMode, channels, out var selectedChannel))
         {
             FillSelectedPcm24Channel(buffer, samples, channels, selectedChannel);
-            return;
-        }
-
-        if (InputChannelModeInfo.GetSelectedChannelIndex(channelMode) is not null)
-        {
-            samples.Clear();
             return;
         }
 

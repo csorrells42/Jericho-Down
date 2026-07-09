@@ -1526,11 +1526,6 @@
                 <ComboBox x:Name="InputChannelComboBox" Width="120" SelectionChanged="InputChannelSelectionChanged" Margin="0,0,12,0" />
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,0,0">
                   <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
-                  <ToggleButton x:Name="WaveformViewButton" Style="{StaticResource PresetConsoleButton}" Content="Waveform" Click="WaveformViewClicked" Padding="10,4" Margin="0,0,6,0">
-                    <ToggleButton.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows raw and processed microphone amplitude around the centerline." />
-                    </ToggleButton.ToolTip>
-                  </ToggleButton>
                   <ToggleButton x:Name="Waveform3DButton" Style="{StaticResource PresetConsoleButton}" Content="3D Wave" IsChecked="True" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">
                     <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows a GPU-backed 3D rolling waveform using the current processed sound." />
@@ -1545,39 +1540,12 @@
                     </Slider>
                     <TextBlock Text="{Binding ElementName=WaterfallLinesSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" Width="18" VerticalAlignment="Center" Margin="6,0,0,0" />
                   </StackPanel>
-                  <ToggleButton x:Name="MicCompareViewButton" Style="{StaticResource PresetConsoleButton}" Content="Mic Compare" Click="MicCompareViewClicked" Padding="10,4">
-                    <ToggleButton.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows input 1 and input 2 as raw, unprocessed spectrum lines so two microphones can be compared directly." />
-                    </ToggleButton.ToolTip>
-                  </ToggleButton>
-                </StackPanel>
-                <StackPanel x:Name="WaveformOptionsPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0" Visibility="Collapsed">
-                  <TextBlock Text="Time" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
-                  <Slider x:Name="WaveformTimeSlider" Width="110" Minimum="25" Maximum="1000" Value="120" TickFrequency="100" VerticalAlignment="Center">
-                    <Slider.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Controls how much time the waveform shows. Lower values zoom in and feel faster; higher values zoom out and feel slower." />
-                    </Slider.ToolTip>
-                  </Slider>
-                  <TextBlock Text="{Binding ElementName=WaveformTimeSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" Width="48" VerticalAlignment="Center" Margin="6,0,0,0" />
-                  <CheckBox x:Name="WaveformTriggerCheckBox" Content="Lock" IsChecked="True" Foreground="#F8FAFC" VerticalAlignment="Center" Margin="10,0,0,0">
-                    <CheckBox.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Starts the waveform near a rising center crossing so the display behaves more like a triggered oscilloscope." />
-                    </CheckBox.ToolTip>
-                  </CheckBox>
                 </StackPanel>
               </StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                 <StackPanel x:Name="NormalSpectrumLegendPanel" Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="Processed" Foreground="#00BEE6" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
-                  <TextBlock Text="Raw" Foreground="#A7B0BC" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
-                </StackPanel>
-                <StackPanel x:Name="MicCompareLegendPanel" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                  <TextBlock Text="Mic 1" Foreground="#00BEE6" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,12,0" />
-                  <TextBlock Text="Mic 2" Foreground="#A7B0BC" VerticalAlignment="Center" />
-                  <Rectangle Width="24" Height="3" Fill="#A7B0BC" Margin="6,0,0,0" />
+                  <Rectangle Width="24" Height="3" Fill="#00BEE6" Margin="6,0,0,0" />
                 </StackPanel>
               </StackPanel>
             </Grid>
@@ -1676,180 +1644,39 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
-              <TextBlock x:Name="AudioFormatRouteText" Text="Receiving: not open | Trying output: not ready" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="4,8,4,0" />
             </StackPanel>
           </Border>
           <Border x:Name="LeftControlRail" HorizontalAlignment="Left" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="0,0,1,0" Padding="0,0,0,14">
             <Grid>
               <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
               </Grid.RowDefinitions>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="44" />
               </Grid.ColumnDefinitions>
-              <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource DspBubble}" Margin="14,14,10,8">
-                <StackPanel>
-                  <Grid Margin="0,0,0,8">
-                    <TextBlock Text="Audio Stability" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
-                    <Ellipse x:Name="AudioStabilityIndicator" Width="12" Height="12" Fill="#42D77D" Stroke="#D7FFF9" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                  </Grid>
-                  <TextBlock x:Name="AudioStabilityText" Text="Stable: waiting for audio" Foreground="#B8C7D9" TextWrapping="Wrap" />
-                  <Border Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,7,0,0">
-                    <Border.Background>
-                      <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="#05090C" Offset="0" />
-                        <GradientStop Color="#0C1820" Offset="0.5" />
-                        <GradientStop Color="#05090C" Offset="1" />
-                      </LinearGradientBrush>
-                    </Border.Background>
-                    <Grid>
-                      <Rectangle x:Name="AudioStabilityMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
-                      <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
-                      <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
-                    </Grid>
-                  </Border>
-                </StackPanel>
-              </Border>
-              <ScrollViewer x:Name="LeftControlContent" Grid.Row="1" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="14,0,10,0">
+              <ScrollViewer x:Name="LeftControlContent" Grid.Row="0" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="14,14,10,0">
                 <StackPanel>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
-                      <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <TextBlock Text="Send to" Foreground="#B8C7D9" />
-                      <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
-                      <ToggleButton x:Name="ProcessedOutputCheckBox" Style="{StaticResource ProcessedOutputToggle}" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Margin="0,2,0,8">
-                        <ToggleButton.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the blue processed signal to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
-                        </ToggleButton.ToolTip>
-                      </ToggleButton>
-                      <TextBlock x:Name="OutputStatusText" Text="" Visibility="Collapsed" />
-                    </StackPanel>
-                  </Border>
-                  <Border Style="{StaticResource DspBubble}">
-                    <StackPanel>
-                      <TextBlock Text="Recording" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <TextBlock Text="Save location" Foreground="#B8C7D9" />
-                      <Grid Margin="0,3,0,0">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="*" />
-                          <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="RecordingSaveLocationTextBox" IsReadOnly="True" TextWrapping="NoWrap" ToolTip="{Binding ElementName=RecordingSaveLocationTextBox, Path=Text}" Margin="0,0,8,0" />
-                        <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Browse" Padding="10,5" Click="BrowseAudioRecordingFolderClicked">
-                          <Button.ToolTip>
-                            <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Choose where standalone audio recordings will be saved." />
-                          </Button.ToolTip>
-                        </Button>
-                      </Grid>
-                      <UniformGrid Columns="3" Margin="0,10,0,0">
-                        <Button x:Name="AudioRecordButton" Style="{StaticResource RecordingRecordButton}" Content="REC" Margin="0,0,4,0" Click="StartAudioRecordingClicked" />
-                        <Button x:Name="AudioPauseButton" Style="{StaticResource RecordingPauseButton}" Content="Pause" Margin="4,0" IsEnabled="False" Click="PauseAudioRecordingClicked" />
-                        <Button x:Name="AudioStopButton" Style="{StaticResource RecordingStopButton}" Content="Stop" Margin="4,0,0,0" IsEnabled="False" Click="StopAudioRecordingClicked" />
-                      </UniformGrid>
-                      <TextBlock Text="Saved files" Foreground="#B8C7D9" Margin="0,10,0,3" />
-                      <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" Height="132" ClipToBounds="True">
-                        <ListBox x:Name="RecordingFilesListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="RecordingFilesSelectionChanged" MouseDoubleClick="RecordingFileDoubleClicked">
-                          <ListBox.ContextMenu>
-                            <ContextMenu>
-                              <MenuItem Header="Play" Click="PlaySelectedRecordingMenuClicked" />
-                              <MenuItem Header="Properties" Click="ShowSelectedRecordingPropertiesMenuClicked" />
-                              <Separator />
-                              <MenuItem Header="Delete File" Click="DeleteSelectedRecordingMenuClicked" />
-                            </ContextMenu>
-                          </ListBox.ContextMenu>
-                          <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                              <Setter Property="Padding" Value="0" />
-                              <Setter Property="Margin" Value="0" />
-                              <Setter Property="Foreground" Value="#F8FAFC" />
-                              <EventSetter Event="PreviewMouseRightButtonDown" Handler="RecordingFileRightButtonDown" />
-                              <Setter Property="Template">
-                                <Setter.Value>
-                                  <ControlTemplate TargetType="ListBoxItem">
-                                    <Border x:Name="Row" Background="Transparent" BorderBrush="Transparent" BorderThickness="0,0,0,1" Padding="8,6">
-                                      <ContentPresenter />
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                      <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="Row" Property="Background" Value="#172632" />
-                                        <Setter TargetName="Row" Property="BorderBrush" Value="#2A4354" />
-                                      </Trigger>
-                                      <Trigger Property="IsSelected" Value="True">
-                                        <Setter TargetName="Row" Property="Background" Value="#0F3F45" />
-                                        <Setter TargetName="Row" Property="BorderBrush" Value="#35E8D8" />
-                                      </Trigger>
-                                    </ControlTemplate.Triggers>
-                                  </ControlTemplate>
-                                </Setter.Value>
-                              </Setter>
-                            </Style>
-                          </ListBox.ItemContainerStyle>
-                          <ListBox.ItemTemplate>
-                            <DataTemplate>
-                              <Grid>
-                                <Grid.RowDefinitions>
-                                  <RowDefinition Height="Auto" />
-                                  <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <TextBlock Text="{Binding Name}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
-                              </Grid>
-                            </DataTemplate>
-                          </ListBox.ItemTemplate>
-                        </ListBox>
+                      <TextBlock Text="Input Level" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <TextBlock x:Name="InputCoachText" Text="Input: waiting for signal" Foreground="#B8C7D9" />
+                      <Border Height="20" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,5,0,0">
+                        <Border.Background>
+                          <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#05090C" Offset="0" />
+                            <GradientStop Color="#0C1820" Offset="0.5" />
+                            <GradientStop Color="#05090C" Offset="1" />
+                          </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid>
+                          <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                          <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
+                          <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
+                        </Grid>
                       </Border>
-                      <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="*" />
-                          <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button x:Name="AudioPlayFileButton" Style="{StaticResource RecordingPlayButton}" Content="Play File" Margin="0,0,4,0" Click="PlayAudioFileClicked" />
-                        <Button x:Name="AudioOpenLocationButton" Grid.Column="1" Style="{StaticResource RecordingStopButton}" Content="Open Location" Margin="4,0,0,0" Click="OpenAudioRecordingLocationClicked" />
-                      </Grid>
-                      <TextBlock x:Name="AudioRecordingStatusText" Text="Ready to record processed audio." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </StackPanel>
                   </Border>
-                </StackPanel>
-              </ScrollViewer>
-              <Button x:Name="LeftControlRailToggle" Grid.RowSpan="2" Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="&lt;" Padding="0" Width="34" Height="72" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,14,4,0" Click="LeftControlRailToggleClicked">
-                <Button.ToolTip>
-                  <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Collapse or expand the left control rail." />
-                </Button.ToolTip>
-              </Button>
-            </Grid>
-          </Border>
-          <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14,0,14,14">
-            <Grid>
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-              </Grid.RowDefinitions>
-              <StackPanel Margin="0,0,12,12">
-                <Border Style="{StaticResource DspBubble}">
-                  <StackPanel>
-                    <TextBlock Text="Input Level" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock x:Name="InputCoachText" Text="Input: waiting for signal" Foreground="#B8C7D9" />
-                    <Border Height="20" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,5,0,0">
-                      <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                          <GradientStop Color="#05090C" Offset="0" />
-                          <GradientStop Color="#0C1820" Offset="0.5" />
-                          <GradientStop Color="#05090C" Offset="1" />
-                        </LinearGradientBrush>
-                      </Border.Background>
-                      <Grid>
-                        <Rectangle x:Name="InputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
-                        <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
-                        <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
-                      </Grid>
-                    </Border>
-                  </StackPanel>
-                </Border>
-              </StackPanel>
-              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="0,0,12,0">
                   <Border x:Name="MicAnalysisPanel" Style="{StaticResource DspBubble}" Visibility="Collapsed">
                     <StackPanel>
                       <TextBlock Text="Mic Analysis" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -1902,6 +1729,18 @@
                       <TextBlock x:Name="PresetDescriptionText" Text="Choose a preset to load a starting point. Yellow ticks show that preset's home settings." Foreground="#B8C7D9" TextWrapping="Wrap" />
                     </StackPanel>
                   </Border>
+                </StackPanel>
+              </ScrollViewer>
+              <Button x:Name="LeftControlRailToggle" Grid.Row="0" Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="&lt;" Padding="0" Width="34" Height="72" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,14,4,0" Click="LeftControlRailToggleClicked">
+                <Button.ToolTip>
+                  <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Collapse or expand the left control rail." />
+                </Button.ToolTip>
+              </Button>
+            </Grid>
+          </Border>
+          <Border HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="360" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14,0,14,14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,0">
+              <StackPanel Margin="0,0,12,0">
                   <TextBlock Text="Digital Signal Processing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,2,0,8" />
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
@@ -2184,7 +2023,39 @@
                   </Border>
                 </StackPanel>
               </ScrollViewer>
+          </Border>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Mic Compare">
+        <Grid Background="#05070A">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="#C0111820" Padding="18,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Mic 1" Foreground="#FF4848" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="MicCompareMic1DeviceComboBox" Width="240" SelectionChanged="MicCompareMic1DeviceSelectionChanged" Margin="0,0,8,0" />
+                <ComboBox x:Name="MicCompareMic1InputModeComboBox" Width="130" SelectionChanged="MicCompareMic1InputModeSelectionChanged" Margin="0,0,18,0" />
+                <TextBlock Text="Mic 2" Foreground="#38E66B" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <ComboBox x:Name="MicCompareMic2DeviceComboBox" Width="240" SelectionChanged="MicCompareMic2DeviceSelectionChanged" Margin="0,0,8,0" />
+                <ComboBox x:Name="MicCompareMic2InputModeComboBox" Width="130" SelectionChanged="MicCompareMic2InputModeSelectionChanged" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <TextBlock x:Name="MicCompareMic1LegendText" Text="Mic 1" Foreground="#FF4848" VerticalAlignment="Center" />
+                <Rectangle Width="24" Height="3" Fill="#FF4848" Margin="6,0,12,0" />
+                <TextBlock x:Name="MicCompareMic2LegendText" Text="Mic 2" Foreground="#38E66B" VerticalAlignment="Center" />
+                <Rectangle Width="24" Height="3" Fill="#38E66B" Margin="6,0,0,0" />
+              </StackPanel>
             </Grid>
+          </Border>
+          <Border Grid.Row="1" Margin="18" Background="#05070A" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+            <Canvas x:Name="MicCompareCanvas" Background="#05070A" ClipToBounds="True" />
           </Border>
         </Grid>
       </TabItem>
@@ -2195,6 +2066,10 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="2*" />
           </Grid.RowDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="360" />
+          </Grid.ColumnDefinitions>
           <Border Grid.Row="0" Background="#C0111820" Padding="18,12">
             <Grid>
               <Grid.ColumnDefinitions>
@@ -2233,8 +2108,8 @@
                   <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                  <TextBlock Text="Mic spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" />
-                  <TextBlock Text="10 processed mic lines" Foreground="#8DA2B7" FontSize="11" HorizontalAlignment="Right" />
+                  <TextBlock Text="Mic spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" DockPanel.Dock="Left" />
+                  <WrapPanel x:Name="MixingMicLegendPanel" DockPanel.Dock="Right" HorizontalAlignment="Right" />
                 </DockPanel>
                 <Border Grid.Row="1" Background="#050B10" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
                   <Grid ClipToBounds="True">
@@ -2283,7 +2158,6 @@
                         <TextBox Grid.Row="0" Text="{Binding DisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Foreground="#F8FAFC" FontWeight="SemiBold" Background="#081017" BorderBrush="#334B5C" Padding="5,3" TextAlignment="Center" TextChanged="MixerChannelNameChanged" />
                         <TextBlock Grid.Row="1" Text="{Binding RouteText}" Foreground="#8DA2B7" FontSize="10" TextWrapping="Wrap" TextAlignment="Center" ToolTip="{Binding RouteText}" MaxHeight="44" Margin="0,6,0,8" />
                         <StackPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,8">
-                          <CheckBox Content="On" IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="0,0,0,6" />
                           <CheckBox Content="Mute" IsChecked="{Binding IsMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" />
                         </StackPanel>
                         <Slider Grid.Row="3" Style="{StaticResource MixerFaderSlider}" Minimum="0" Maximum="150" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="10" HorizontalAlignment="Center" ValueChanged="MixerChannelControlChanged" />
@@ -2291,7 +2165,11 @@
                         <Border Grid.Row="5" Height="16" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
                           <Grid>
                             <Rectangle Fill="#10202A" />
-                            <Rectangle Fill="#35E8D8" Width="0" HorizontalAlignment="Left" RadiusX="4" RadiusY="4" />
+                            <Rectangle Fill="#35E8D8" HorizontalAlignment="Stretch" RadiusX="4" RadiusY="4" RenderTransformOrigin="0,0.5">
+                              <Rectangle.RenderTransform>
+                                <ScaleTransform ScaleX="{Binding LevelMeterScale}" />
+                              </Rectangle.RenderTransform>
+                            </Rectangle>
                           </Grid>
                         </Border>
                       </Grid>
@@ -2301,6 +2179,129 @@
               </ItemsControl>
             </Border>
           </ScrollViewer>
+          <Border Grid.RowSpan="3" Grid.Column="1" Background="#AA111820" BorderBrush="#334F5D6B" BorderThickness="1,0,0,0" Padding="14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel>
+                <Border Style="{StaticResource DspBubble}">
+                  <StackPanel>
+                    <Grid Margin="0,0,0,8">
+                      <TextBlock Text="Audio Stability" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
+                      <Ellipse x:Name="AudioStabilityIndicator" Width="12" Height="12" Fill="#42D77D" Stroke="#D7FFF9" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock x:Name="AudioStabilityText" Text="Stable: waiting for audio" Foreground="#B8C7D9" TextWrapping="Wrap" />
+                    <Border Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,7,0,0">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                          <GradientStop Color="#05090C" Offset="0" />
+                          <GradientStop Color="#0C1820" Offset="0.5" />
+                          <GradientStop Color="#05090C" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
+                      <Grid>
+                        <Rectangle x:Name="AudioStabilityMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                        <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
+                        <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
+                      </Grid>
+                    </Border>
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource DspBubble}">
+                  <StackPanel>
+                    <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Send to" Foreground="#B8C7D9" />
+                    <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
+                    <ToggleButton x:Name="ProcessedOutputCheckBox" Style="{StaticResource ProcessedOutputToggle}" Content="SEND PROGRAM MIX" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Margin="0,2,0,8">
+                      <ToggleButton.ToolTip>
+                        <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Sends the final program mix to the selected playback endpoint. To feed podcast software, choose a virtual cable input here, then choose the matching virtual cable output as the mic inside the podcast app." />
+                      </ToggleButton.ToolTip>
+                    </ToggleButton>
+                    <TextBlock x:Name="OutputSignalText" Text="Program mix: waiting for signal" Foreground="#B8C7D9" FontWeight="SemiBold" Margin="0,2,0,0" />
+                    <Border Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,5,0,0">
+                      <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                          <GradientStop Color="#05090C" Offset="0" />
+                          <GradientStop Color="#0C1820" Offset="0.5" />
+                          <GradientStop Color="#05090C" Offset="1" />
+                        </LinearGradientBrush>
+                      </Border.Background>
+                      <Grid>
+                        <Rectangle x:Name="OutputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                        <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
+                        <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
+                      </Grid>
+                    </Border>
+                    <TextBlock x:Name="OutputStatusText" Text="Output off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <TextBlock x:Name="AudioFormatRouteText" Text="Receiving: not open | Trying output: not ready" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource DspBubble}">
+                  <StackPanel>
+                    <TextBlock Text="Recording" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Save location" Foreground="#B8C7D9" />
+                    <Grid Margin="0,3,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBox x:Name="RecordingSaveLocationTextBox" IsReadOnly="True" TextWrapping="NoWrap" ToolTip="{Binding ElementName=RecordingSaveLocationTextBox, Path=Text}" Margin="0,0,8,0" />
+                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Browse" Padding="10,5" Click="BrowseAudioRecordingFolderClicked">
+                        <Button.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Choose where standalone program mix recordings will be saved." />
+                        </Button.ToolTip>
+                      </Button>
+                    </Grid>
+                    <UniformGrid Columns="3" Margin="0,10,0,0">
+                      <Button x:Name="AudioRecordButton" Style="{StaticResource RecordingRecordButton}" Content="REC" Margin="0,0,4,0" Click="StartAudioRecordingClicked" />
+                      <Button x:Name="AudioPauseButton" Style="{StaticResource RecordingPauseButton}" Content="Pause" Margin="4,0" IsEnabled="False" Click="PauseAudioRecordingClicked" />
+                      <Button x:Name="AudioStopButton" Style="{StaticResource RecordingStopButton}" Content="Stop" Margin="4,0,0,0" IsEnabled="False" Click="StopAudioRecordingClicked" />
+                    </UniformGrid>
+                    <TextBlock Text="Saved files" Foreground="#B8C7D9" Margin="0,10,0,3" />
+                    <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" Height="132" ClipToBounds="True">
+                      <ListBox x:Name="RecordingFilesListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Visible" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="RecordingFilesSelectionChanged" MouseDoubleClick="RecordingFileDoubleClicked">
+                        <ListBox.ContextMenu>
+                          <ContextMenu>
+                            <MenuItem Header="Play" Click="PlaySelectedRecordingMenuClicked" />
+                            <MenuItem Header="Properties" Click="ShowSelectedRecordingPropertiesMenuClicked" />
+                            <Separator />
+                            <MenuItem Header="Delete File" Click="DeleteSelectedRecordingMenuClicked" />
+                          </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemContainerStyle>
+                          <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="Foreground" Value="#F8FAFC" />
+                            <EventSetter Event="PreviewMouseRightButtonDown" Handler="RecordingFileRightButtonDown" />
+                          </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                          <DataTemplate>
+                            <Grid Margin="8,6">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="{Binding Name}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+                    </Border>
+                    <Grid Margin="0,8,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <Button x:Name="AudioPlayFileButton" Style="{StaticResource RecordingPlayButton}" Content="Play File" Margin="0,0,4,0" Click="PlayAudioFileClicked" />
+                      <Button x:Name="AudioOpenLocationButton" Grid.Column="1" Style="{StaticResource RecordingStopButton}" Content="Open Location" Margin="4,0,0,0" Click="OpenAudioRecordingLocationClicked" />
+                    </Grid>
+                    <TextBlock x:Name="AudioRecordingStatusText" Text="Ready to record the program mix." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </ScrollViewer>
+          </Border>
         </Grid>
       </TabItem>
       <TabItem Header="About">

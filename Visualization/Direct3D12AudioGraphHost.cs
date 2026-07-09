@@ -326,8 +326,8 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private const int FrameCount = 3;
         private const int HistoryDepth = 64;
         private const int PointCount = 384;
-        private const int DetailedSpectrumPointCount = 2048;
-        private const double DetailedSpectrumSmoothingAmount = 0.112d;
+        private const int DetailedSpectrumPointCount = 4096;
+        private const double DetailedSpectrumSmoothingAmount = 0.09d;
         private const int SegmentLayers = 2;
         private const int MaximumInterpolatedRowsPerGap = MaximumWaterfallLinesPerGap;
         private const int MaximumMicrophoneSpectrumLines = 10;
@@ -350,10 +350,9 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private readonly FrameResource[] _frameResources = new FrameResource[FrameCount];
         private readonly float[] _history = new float[HistoryDepth * PointCount];
         private readonly float[] _sliceScratch = new float[PointCount];
-        private readonly float[] _detailedRawTarget = new float[DetailedSpectrumPointCount];
         private readonly float[] _detailedProcessedTarget = new float[DetailedSpectrumPointCount];
-        private readonly float[] _detailedRawTrace = new float[DetailedSpectrumPointCount];
         private readonly float[] _detailedProcessedTrace = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedSmoothingScratch = new float[DetailedSpectrumPointCount];
         private IDXGISwapChain3 _swapChain;
         private ID3D12RootSignature? _rootSignature;
         private ID3D12PipelineState? _linePipelineState;
@@ -545,7 +544,6 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             var segments = (GraphSegment*)destination;
             var count = WriteDetailedSpectrumGridSegments(segments, maxSegments, spectrumHoverStart, spectrumHoverEnd);
             PrepareDetailedSpectrumTrace(frame);
-            count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedRawTrace, processed: false);
             count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedProcessedTrace, processed: true);
             return count;
         }
@@ -554,15 +552,15 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         {
             var segments = (GraphSegment*)destination;
             var count = WriteFlatSpectrumGridSegments(segments, maxSegments);
-            var renderedLineIndex = 0;
+            var renderedLineCount = 0;
             if (frame.MicrophoneLines.Count == 0)
             {
-                return WriteMicrophoneLineSegments(segments, count, maxSegments, renderedLineIndex, frame.Magnitudes);
+                return WriteMicrophoneLineSegments(segments, count, maxSegments, 0, frame.Magnitudes);
             }
 
             foreach (var line in frame.MicrophoneLines.OrderBy(line => line.ChannelNumber))
             {
-                if (renderedLineIndex >= MaximumMicrophoneSpectrumLines)
+                if (renderedLineCount >= MaximumMicrophoneSpectrumLines)
                 {
                     break;
                 }
@@ -576,9 +574,9 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                     segments,
                     count,
                     maxSegments,
-                    renderedLineIndex,
+                    Math.Clamp(line.ChannelNumber - 1, 0, MaximumMicrophoneSpectrumLines - 1),
                     line.Magnitudes);
-                renderedLineIndex++;
+                renderedLineCount++;
             }
 
             return count;
@@ -703,13 +701,12 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             const float yTop = 0.84f;
             var layer = processed ? 41f : 40f;
             var pointCount = Math.Min(trace.Length, DetailedSpectrumPointCount);
-            for (var point = 0; point < pointCount - 1 && count + 3 <= maxSegments; point++)
+            for (var point = 0; point < pointCount - 1 && count + 2 <= maxSegments; point++)
             {
                 var xA = Lerp(xMin, xMax, point / (double)(pointCount - 1));
                 var xB = Lerp(xMin, xMax, (point + 1) / (double)(pointCount - 1));
                 var yA = Lerp(yBottom, yTop, Math.Clamp(trace[point], 0f, 1f));
                 var yB = Lerp(yBottom, yTop, Math.Clamp(trace[point + 1], 0f, 1f));
-                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 0f);
                 segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 1f);
                 segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 2f);
             }
@@ -899,19 +896,14 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
             for (var point = 0; point < destination.Length; point++)
             {
-                var normalizedPoint = point / (double)Math.Max(1, destination.Length - 1);
-                var usefulSpectrumPosition = Math.Pow(normalizedPoint, 1.85d) * 0.68d;
-                var sourcePosition = usefulSpectrumPosition * (magnitudes.Length - 1);
+                var sourcePosition = point / (double)Math.Max(1, destination.Length - 1) * (magnitudes.Length - 1);
                 var sourceIndexA = Math.Clamp((int)Math.Floor(sourcePosition), 0, magnitudes.Length - 1);
                 var sourceIndexB = Math.Clamp(sourceIndexA + 1, 0, magnitudes.Length - 1);
                 var blend = sourcePosition - sourceIndexA;
                 var magnitude = (double)Lerp((float)magnitudes[sourceIndexA], (float)magnitudes[sourceIndexB], blend);
-                magnitude = Math.Clamp(magnitude, 0d, 1d);
-                var lifted = Math.Max(0d, magnitude - 0.055d) / 0.945d;
-                destination[point] = (float)(Math.Pow(lifted, 1.55d) * 0.92d);
+                destination[point] = (float)ShapeDetailedMagnitude(magnitude);
             }
 
-            SmoothSlice(destination);
             SmoothSlice(destination);
         }
 
@@ -938,31 +930,24 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
         private void PrepareDetailedSpectrumTrace(SpectrumFrame frame)
         {
-            BuildDetailedSpectrumTarget(frame.RawMagnitudes, _detailedRawTarget);
-            BuildDetailedSpectrumTarget(frame.Magnitudes, _detailedProcessedTarget);
+            BuildDetailedSpectrumTarget(frame.Magnitudes, _detailedProcessedTarget, _detailedSmoothingScratch);
 
             var frameCeiling = 0.08f;
             for (var i = 0; i < DetailedSpectrumPointCount; i++)
             {
-                frameCeiling = Math.Max(frameCeiling, _detailedRawTarget[i]);
                 frameCeiling = Math.Max(frameCeiling, _detailedProcessedTarget[i]);
             }
-
-            IncludeDetailedSpectrumCeiling(frame.Input1Magnitudes, ref frameCeiling);
-            IncludeDetailedSpectrumCeiling(frame.Input2Magnitudes, ref frameCeiling);
 
             _detailedVisualCeiling = frameCeiling > _detailedVisualCeiling
                 ? Lerp(_detailedVisualCeiling, frameCeiling, 0.08d)
                 : Lerp(_detailedVisualCeiling, frameCeiling, 0.015d);
 
-            NormalizeDetailedSpectrumTarget(_detailedRawTarget, _detailedVisualCeiling);
             NormalizeDetailedSpectrumTarget(_detailedProcessedTarget, _detailedVisualCeiling);
-            EaseDetailedSpectrumTrace(_detailedRawTarget, _detailedRawTrace);
             EaseDetailedSpectrumTrace(_detailedProcessedTarget, _detailedProcessedTrace);
             _hasDetailedSpectrumTrace = true;
         }
 
-        private static void BuildDetailedSpectrumTarget(double[] magnitudes, float[] destination)
+        private static void BuildDetailedSpectrumTarget(double[] magnitudes, float[] destination, float[] smoothingScratch)
         {
             if (magnitudes.Length == 0)
             {
@@ -981,13 +966,30 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                 var p3 = ShapeDetailedMagnitude(magnitudes[Math.Clamp(sourceIndex + 2, 0, magnitudes.Length - 1)]);
                 destination[point] = (float)Math.Clamp(CatmullRom(p0, p1, p2, p3, blend), 0d, 1d);
             }
+
+            SmoothDetailedSpectrumFrequencySteps(destination, smoothingScratch);
         }
 
-        private static void IncludeDetailedSpectrumCeiling(double[] magnitudes, ref float frameCeiling)
+        private static void SmoothDetailedSpectrumFrequencySteps(float[] destination, float[] scratch)
         {
-            for (var i = 0; i < magnitudes.Length; i++)
+            if (destination.Length < 5 || scratch.Length < destination.Length)
             {
-                frameCeiling = Math.Max(frameCeiling, (float)ShapeDetailedMagnitude(magnitudes[i]));
+                return;
+            }
+
+            Array.Copy(destination, scratch, destination.Length);
+            var lowEndTaperLength = Math.Max(1f, destination.Length * 0.28f);
+            for (var i = 1; i < destination.Length - 1; i++)
+            {
+                var p0 = scratch[Math.Max(0, i - 2)];
+                var p1 = scratch[i - 1];
+                var p2 = scratch[i];
+                var p3 = scratch[i + 1];
+                var p4 = scratch[Math.Min(destination.Length - 1, i + 2)];
+                var rounded = p0 * 0.0625f + p1 * 0.25f + p2 * 0.375f + p3 * 0.25f + p4 * 0.0625f;
+                var lowEndAmount = Math.Clamp(1f - i / lowEndTaperLength, 0f, 1f);
+                var blend = 0.08f + lowEndAmount * 0.34f;
+                destination[i] = Lerp(p2, rounded, blend);
             }
         }
 
@@ -1276,9 +1278,16 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
             float3 MicrophoneLineColor(float index)
             {
-                float hue = frac(index * 0.61803398875);
-                float3 phase = float3(0.00, 0.33, 0.67);
-                return saturate(0.58 + 0.42 * cos(6.2831853 * (hue + phase)));
+                if (index < 0.5) return float3(1.00, 0.28, 0.28);
+                if (index < 1.5) return float3(0.22, 0.90, 0.42);
+                if (index < 2.5) return float3(0.27, 0.67, 1.00);
+                if (index < 3.5) return float3(1.00, 0.83, 0.25);
+                if (index < 4.5) return float3(0.85, 0.44, 1.00);
+                if (index < 5.5) return float3(0.00, 0.88, 1.00);
+                if (index < 6.5) return float3(1.00, 0.53, 0.28);
+                if (index < 7.5) return float3(0.60, 0.93, 0.38);
+                if (index < 8.5) return float3(1.00, 0.44, 0.71);
+                return float3(0.91, 0.94, 0.97);
             }
 
             float2 ProjectFloor(float x, float frontness)
@@ -1326,12 +1335,10 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                     float3 processedColor = float3(0.00, 0.78, 0.96);
                     float3 traceColor = lerp(rawColor, processedColor, processedLine);
                     thickness = lerp(
-                        4.6 + loudness * 1.2,
-                        1.24 + loudness * 0.32,
-                        useBody);
-                    thickness = lerp(thickness, 0.68 + loudness * 0.22, useCore);
-                    float alpha = lerp(0.020 + loudness * 0.026, 0.18 + loudness * 0.13, useBody);
-                    alpha = lerp(alpha, 0.68 + loudness * 0.20, useCore);
+                        1.05 + loudness * 0.22,
+                        0.52 + loudness * 0.10,
+                        useCore);
+                    float alpha = lerp(0.22 + loudness * 0.10, 0.82 + loudness * 0.12, useCore);
                     color = float4(saturate(traceColor * (0.72 + useCore * 0.55 + loudness * 0.24)), saturate(alpha));
                 }
                 else if (rawLayer > 34.5)

@@ -73,16 +73,16 @@ public partial class EqualizerWindow : Window
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
     private static readonly Color[] MixingMicSpectrumColors =
     [
-        Color.FromRgb(53, 232, 216),
-        Color.FromRgb(244, 197, 66),
-        Color.FromRgb(120, 196, 255),
-        Color.FromRgb(255, 120, 160),
-        Color.FromRgb(132, 225, 132),
-        Color.FromRgb(208, 157, 255),
-        Color.FromRgb(255, 151, 86),
-        Color.FromRgb(137, 224, 255),
-        Color.FromRgb(255, 235, 128),
-        Color.FromRgb(255, 255, 255)
+        Color.FromRgb(255, 72, 72),
+        Color.FromRgb(56, 230, 107),
+        Color.FromRgb(69, 171, 255),
+        Color.FromRgb(255, 211, 64),
+        Color.FromRgb(216, 112, 255),
+        Color.FromRgb(0, 224, 255),
+        Color.FromRgb(255, 136, 72),
+        Color.FromRgb(152, 238, 96),
+        Color.FromRgb(255, 112, 181),
+        Color.FromRgb(232, 240, 248)
     ];
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
     private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
@@ -161,6 +161,20 @@ public partial class EqualizerWindow : Window
         Opacity = 0.95,
         StrokeLineJoin = PenLineJoin.Round
     };
+    private readonly ShapePath _micCompareInput1Trace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(255, 72, 72)),
+        StrokeThickness = 2,
+        Opacity = 0.95,
+        StrokeLineJoin = PenLineJoin.Round
+    };
+    private readonly ShapePath _micCompareInput2Trace = new()
+    {
+        Stroke = new SolidColorBrush(Color.FromRgb(56, 230, 107)),
+        StrokeThickness = 2,
+        Opacity = 0.95,
+        StrokeLineJoin = PenLineJoin.Round
+    };
     private readonly Rectangle _equalizerHoverRegion = new()
     {
         Fill = new SolidColorBrush(Color.FromArgb(58, 0, 190, 230)),
@@ -186,6 +200,7 @@ public partial class EqualizerWindow : Window
     };
     private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
     private readonly List<Line> _mixingSpectrumGridLines = [];
+    private readonly List<Line> _micCompareGridLines = [];
     private readonly double[][] _renderedMixingMicMagnitudes = new double[MaximumMicChannelCount][];
     private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
@@ -214,6 +229,12 @@ public partial class EqualizerWindow : Window
     private string? _lastInputCoachText;
     private Brush? _lastInputCoachForeground;
     private Brush? _lastInputLevelFill;
+    private double _displayOutputPeak;
+    private long _lastOutputLevelDisplayTimestamp;
+    private double _lastOutputLevelMeterWidth = -1d;
+    private string? _lastOutputSignalText;
+    private Brush? _lastOutputSignalForeground;
+    private Brush? _lastOutputLevelFill;
     private long _lastAudioStabilityDisplayTimestamp;
     private double _audioStabilityScore;
     private double _audioStabilityMeterWidth;
@@ -369,7 +390,6 @@ public partial class EqualizerWindow : Window
     private EqualizerBand? _hoveredEqualizerBand;
     private bool _showWaveform;
     private bool _showWaveform3D = true;
-    private bool _showMicCompare;
     private bool _isLeftControlRailCollapsed;
     private string _lastLoadedPresetName = "Warm Radio";
     private bool _lastLoadedPresetIsUserPreset;
@@ -441,6 +461,8 @@ public partial class EqualizerWindow : Window
         SpectrumCanvas.Children.Add(_input2Trace);
         SpectrumCanvas.Children.Add(_averageTrace);
         SpectrumCanvas.Children.Add(_liveTrace);
+        MicCompareCanvas.Children.Add(_micCompareInput1Trace);
+        MicCompareCanvas.Children.Add(_micCompareInput2Trace);
         WaveformCanvas.Children.Add(_rawWaveTrace);
         WaveformCanvas.Children.Add(_processedWaveTrace);
         foreach (var trace in _mixingMicSpectrumTraces)
@@ -495,6 +517,7 @@ public partial class EqualizerWindow : Window
         [
             "Podcast",
             "Mic / DSP",
+            "Mic Compare",
             "Mixing",
             "Karaoke",
             "About"
@@ -601,15 +624,17 @@ public partial class EqualizerWindow : Window
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
 
         ApplyDarkTitleBar();
         var devices = MicrophoneSpectrumService.GetInputDevices();
         MicrophoneComboBox.ItemsSource = devices;
+        MicCompareMic1DeviceComboBox.ItemsSource = devices;
+        MicCompareMic2DeviceComboBox.ItemsSource = devices;
         RestoreMicChannelState(devices);
         MicChannelComboBox.ItemsSource = _micChannels;
         MixingChannelsItemsControl.ItemsSource = _micChannels;
+        UpdateMixingMicLegend();
         MicChannelComboBox.SelectedItem = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
         ApplyMixerStateToUi();
         if (devices.Count > 0)
@@ -804,6 +829,19 @@ public partial class EqualizerWindow : Window
         return options.ToArray();
     }
 
+    private static InputChannelMode CoerceInputChannelModeForDevice(
+        AudioInputDevice? device,
+        AudioDeviceFormat? deviceFormat,
+        InputChannelMode requestedMode)
+    {
+        var options = CreateInputChannelOptions(device, deviceFormat);
+        return options.Any(option => option.Mode == requestedMode)
+            ? requestedMode
+            : options.FirstOrDefault(option => option.Mode == InputChannelMode.MonoSum)?.Mode
+                ?? options.FirstOrDefault()?.Mode
+                ?? InputChannelMode.MonoSum;
+    }
+
     private static int GetAvailableInputChannelCount(AudioInputDevice? device, AudioDeviceFormat? deviceFormat)
     {
         if (device is null)
@@ -878,7 +916,7 @@ public partial class EqualizerWindow : Window
         channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
             ? parsedMode
             : InputChannelMode.MonoSum;
-        channel.IsEnabled = state.IsEnabled;
+        channel.IsEnabled = true;
         channel.IsMuted = state.IsMuted;
         channel.VolumePercent = Math.Clamp(state.VolumePercent ?? 100d, 0d, 150d);
         channel.ActivePresetName = string.IsNullOrWhiteSpace(state.ActivePresetName)
@@ -1220,7 +1258,7 @@ public partial class EqualizerWindow : Window
                 DisplayName = channel.DisplayName,
                 MicrophoneName = channel.SelectedDevice?.Name,
                 InputChannelMode = channel.InputChannelMode.ToString(),
-                IsEnabled = channel.IsEnabled,
+                IsEnabled = true,
                 IsMuted = channel.IsMuted,
                 VolumePercent = channel.VolumePercent,
                 ActivePresetName = channel.ActivePresetName,
@@ -1527,7 +1565,7 @@ public partial class EqualizerWindow : Window
 
         if (_spectrumService.IsProcessedAudioRecording)
         {
-            AudioRecordingStatusText.Text = "Another processed audio recording is already running.";
+            AudioRecordingStatusText.Text = "Another program mix recording is already running.";
             UpdateStandaloneAudioRecordingTransportControls();
             UpdateKaraokeTransportControls();
             return;
@@ -1535,8 +1573,12 @@ public partial class EqualizerWindow : Window
 
         if (!_spectrumService.IsRunning)
         {
-            AudioRecordingStatusText.Text = "Select a microphone before recording.";
-            return;
+            StartSelectedDevice();
+            if (!_spectrumService.IsRunning)
+            {
+                AudioRecordingStatusText.Text = "Assign and enable a mic before recording the program mix.";
+                return;
+            }
         }
 
         try
@@ -1549,7 +1591,7 @@ public partial class EqualizerWindow : Window
             _audioRecordingPausedDuration = TimeSpan.Zero;
             _isStandaloneAudioRecording = true;
             _isStandaloneAudioRecordingPaused = false;
-            AudioRecordingStatusText.Text = $"Recording processed audio: {System.IO.Path.GetFileName(path)}";
+            AudioRecordingStatusText.Text = $"Recording program mix: {System.IO.Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
@@ -2314,13 +2356,20 @@ public partial class EqualizerWindow : Window
                 _waveform3DGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
             }
         }
-        else if (IsMicDspTabSelected() && !_showWaveform && !_showMicCompare)
+        else if (IsMicDspTabSelected() && !_showWaveform)
         {
             EnsureSelectedMicSpectrumGraphView();
             InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
             if (_latestFrame is not null)
             {
                 _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
+            }
+        }
+        else if (IsMicCompareTabSelected())
+        {
+            if (_latestFrame is not null)
+            {
+                RenderMicCompareSpectrum(_latestFrame);
             }
         }
 
@@ -2390,6 +2439,11 @@ public partial class EqualizerWindow : Window
         return IsMainTabSelected("Mic / DSP");
     }
 
+    private bool IsMicCompareTabSelected()
+    {
+        return IsMainTabSelected("Mic Compare");
+    }
+
     private bool IsMixingTabSelected()
     {
         return IsMainTabSelected("Mixing");
@@ -2399,6 +2453,23 @@ public partial class EqualizerWindow : Window
     {
         return MainTabControl?.SelectedItem is TabItem { Header: string selectedHeader }
             && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void SelectMainTab(string header)
+    {
+        if (MainTabControl is null)
+        {
+            return;
+        }
+
+        foreach (var item in MainTabControl.Items.OfType<TabItem>())
+        {
+            if (string.Equals(item.Header?.ToString(), header, StringComparison.OrdinalIgnoreCase))
+            {
+                MainTabControl.SelectedItem = item;
+                return;
+            }
+        }
     }
 
     private void ConfigureMediaFoundationPreview(bool denoiseEnabled)
@@ -3752,14 +3823,12 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = false;
         _showWaveform3D = false;
-        _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = true;
         EnsureSelectedMicSpectrumGraphView();
         InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
-        MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
 
         if (_latestFrame is not null)
@@ -3772,12 +3841,10 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = true;
         _showWaveform3D = false;
-        _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = false;
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
-        MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
     }
 
@@ -3785,20 +3852,18 @@ public partial class EqualizerWindow : Window
     {
         _showWaveform = false;
         _showWaveform3D = false;
-        _showMicCompare = true;
         _spectrumService.StereoInputAnalysisEnabled = true;
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        MicCompareLegendPanel.Visibility = Visibility.Visible;
         UpdateMicCompareUiState();
+        SelectMainTab("Mic Compare");
     }
 
     private void Waveform3DClicked(object sender, RoutedEventArgs e)
     {
         _showWaveform = false;
         _showWaveform3D = true;
-        _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = false;
         EnsureInlineWaveform3DView();
         ApplyWaterfallLineDensity();
@@ -3806,7 +3871,6 @@ public partial class EqualizerWindow : Window
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
 
         if (_latestFrame is not null)
@@ -3822,10 +3886,8 @@ public partial class EqualizerWindow : Window
 
     private void UpdateGraphSurfaceVisibility()
     {
-        var showDx12Spectrum = !_showWaveform && !_showWaveform3D && !_showMicCompare;
-        SpectrumCanvas.Visibility = _showMicCompare
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        var showDx12Spectrum = !_showWaveform && !_showWaveform3D;
+        SpectrumCanvas.Visibility = Visibility.Collapsed;
         WaveformCanvas.Visibility = _showWaveform
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -3851,10 +3913,8 @@ public partial class EqualizerWindow : Window
 
     private void UpdateGraphViewButtonStates()
     {
-        SpectrumViewButton.IsChecked = !_showWaveform && !_showWaveform3D && !_showMicCompare;
-        WaveformViewButton.IsChecked = _showWaveform;
+        SpectrumViewButton.IsChecked = !_showWaveform && !_showWaveform3D;
         Waveform3DButton.IsChecked = _showWaveform3D;
-        MicCompareViewButton.IsChecked = _showMicCompare;
     }
 
     private void EnsureInlineWaveform3DView()
@@ -3889,7 +3949,7 @@ public partial class EqualizerWindow : Window
         graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
         InlineWaveform3DHost.Content = graphHost;
         _selectedMicSpectrumGraphHost = graphHost;
-        if (!_showWaveform && !_showWaveform3D && !_showMicCompare)
+        if (!_showWaveform && !_showWaveform3D)
         {
             InlineWaveform3DHost.Content = graphHost;
         }
@@ -3900,7 +3960,7 @@ public partial class EqualizerWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if ((_showWaveform3D || !_showWaveform && !_showMicCompare) && StatusText is not null)
+            if ((_showWaveform3D || !_showWaveform) && StatusText is not null)
             {
                 StatusText.Text = status;
             }
@@ -3909,7 +3969,7 @@ public partial class EqualizerWindow : Window
 
     private void RefreshActiveSpectrumWaterfallHosts()
     {
-        var micDspSpectrumActive = IsMicDspTabSelected() && !_showWaveform && !_showWaveform3D && !_showMicCompare;
+        var micDspSpectrumActive = IsMicDspTabSelected() && !_showWaveform && !_showWaveform3D;
         var micDspActive = IsMicDspTabSelected() && _showWaveform3D;
         var podcastActive = IsPodcastTabSelected();
         var karaokeActive = IsKaraokeTabSelected();
@@ -3921,7 +3981,7 @@ public partial class EqualizerWindow : Window
         _isKaraokeSpectrumWaterfallActive = karaokeActive;
         _isMixingMicSpectrumGraphActive = mixingActive;
         _isMixingOutputWaveform3DActive = mixingActive;
-        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicDspTabSelected() && _showMicCompare;
+        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicCompareTabSelected();
 
         if (micDspActive)
         {
@@ -4026,12 +4086,11 @@ public partial class EqualizerWindow : Window
 
     private void UpdateMicCompareUiState()
     {
-        MicAnalysisPanel.Visibility = _showMicCompare ? Visibility.Visible : Visibility.Collapsed;
-        EqBandPanel.IsEnabled = !_showMicCompare;
-        EqBandPanel.Opacity = _showMicCompare ? 0.35d : 1d;
-        EqVoiceZoneGuideCanvas.Opacity = _showMicCompare ? 0.35d : 1d;
+        MicAnalysisPanel.Visibility = Visibility.Collapsed;
+        EqBandPanel.IsEnabled = true;
+        EqBandPanel.Opacity = 1d;
+        EqVoiceZoneGuideCanvas.Opacity = 1d;
         WaterfallLinesPanel.Visibility = _showWaveform3D ? Visibility.Visible : Visibility.Collapsed;
-        WaveformOptionsPanel.Visibility = _showWaveform ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void WaterfallLinesChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -4151,6 +4210,7 @@ public partial class EqualizerWindow : Window
         }
 
         ConfigureLiveMixFromChannels();
+        UpdateMixingMicLegend();
         await RestartSelectedAudioStreamAsync("Listening");
         PersistAppState();
     }
@@ -4170,6 +4230,7 @@ public partial class EqualizerWindow : Window
         }
 
         ConfigureLiveMixFromChannels();
+        UpdateMixingMicLegend();
         await RestartSelectedAudioStreamAsync("Listening");
         PersistAppState();
     }
@@ -4225,6 +4286,7 @@ public partial class EqualizerWindow : Window
             _selectedDeviceFormat = GetSelectedDeviceFormat();
             MicrophoneComboBox.SelectedItem = _selectedDevice;
             RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
+            RefreshMicCompareSelectors();
         }
         finally
         {
@@ -4271,6 +4333,115 @@ public partial class EqualizerWindow : Window
         {
             ConfigureLiveMixFromChannels();
         }
+    }
+
+    private void RefreshMicCompareSelectors()
+    {
+        RefreshMicCompareSelector(FindMicChannel(1), MicCompareMic1DeviceComboBox, MicCompareMic1InputModeComboBox, MicCompareMic1LegendText);
+        RefreshMicCompareSelector(FindMicChannel(2), MicCompareMic2DeviceComboBox, MicCompareMic2InputModeComboBox, MicCompareMic2LegendText);
+    }
+
+    private void RefreshMicCompareSelector(
+        MicChannelStrip? channel,
+        ComboBox deviceComboBox,
+        ComboBox inputModeComboBox,
+        TextBlock legendText)
+    {
+        if (channel is null)
+        {
+            return;
+        }
+
+        deviceComboBox.SelectedItem = channel.SelectedDevice;
+        var options = CreateInputChannelOptions(channel.SelectedDevice, null);
+        inputModeComboBox.ItemsSource = options;
+        inputModeComboBox.SelectedItem = options.FirstOrDefault(option => option.Mode == channel.InputChannelMode)
+            ?? options.FirstOrDefault(option => option.Mode == InputChannelMode.MonoSum)
+            ?? options.FirstOrDefault();
+        legendText.Text = channel.DisplayName;
+    }
+
+    private async void MicCompareMic1DeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        await UpdateMicCompareChannelDeviceAsync(1, MicCompareMic1DeviceComboBox.SelectedItem as AudioInputDevice);
+    }
+
+    private async void MicCompareMic2DeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        await UpdateMicCompareChannelDeviceAsync(2, MicCompareMic2DeviceComboBox.SelectedItem as AudioInputDevice);
+    }
+
+    private async void MicCompareMic1InputModeSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        await UpdateMicCompareChannelModeAsync(1, MicCompareMic1InputModeComboBox.SelectedItem as InputChannelOption);
+    }
+
+    private async void MicCompareMic2InputModeSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        await UpdateMicCompareChannelModeAsync(2, MicCompareMic2InputModeComboBox.SelectedItem as InputChannelOption);
+    }
+
+    private async Task UpdateMicCompareChannelDeviceAsync(int channelNumber, AudioInputDevice? device)
+    {
+        if (_isUpdatingMicChannelUi)
+        {
+            return;
+        }
+
+        var channel = FindMicChannel(channelNumber);
+        if (channel is null)
+        {
+            return;
+        }
+
+        channel.SelectedDevice = device;
+        var selectedDeviceFormat = await GetDeviceFormatAsync(device);
+        channel.InputChannelMode = CoerceInputChannelModeForDevice(device, selectedDeviceFormat, channel.InputChannelMode);
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            RefreshMicCompareSelectors();
+            if (ReferenceEquals(channel, _activeMicChannel))
+            {
+                ApplyActiveMicChannelToUi();
+            }
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
+        ConfigureLiveMixFromChannels();
+        UpdateMixingMicLegend();
+        await RestartSelectedAudioStreamAsync("Listening");
+        PersistAppState();
+    }
+
+    private async Task UpdateMicCompareChannelModeAsync(int channelNumber, InputChannelOption? option)
+    {
+        if (_isUpdatingMicChannelUi || option is null)
+        {
+            return;
+        }
+
+        var channel = FindMicChannel(channelNumber);
+        if (channel is null)
+        {
+            return;
+        }
+
+        channel.InputChannelMode = option.Mode;
+        if (ReferenceEquals(channel, _activeMicChannel))
+        {
+            _selectedInputChannelMode = option.Mode;
+            InputChannelComboBox.SelectedItem = InputChannelComboBox.Items
+                .OfType<InputChannelOption>()
+                .FirstOrDefault(item => item.Mode == option.Mode);
+        }
+
+        ConfigureLiveMixFromChannels();
+        await RestartSelectedAudioStreamAsync("Listening");
+        PersistAppState();
     }
 
     private void OutputDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -4333,6 +4504,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        UpdateMixingMicLegend();
         PersistAppState();
     }
 
@@ -4443,23 +4615,35 @@ public partial class EqualizerWindow : Window
 
     private void ConfigureLiveMixFromChannels()
     {
-        var selectedDevice = _selectedDevice;
-        if (selectedDevice is null)
-        {
-            _spectrumService.ConfigureLiveMix([], CreateMixBusSettings());
-            return;
-        }
-
         var channels = _micChannels
             .Where(channel => channel.SelectedDevice is not null)
-            .Select(channel => new MicrophoneLiveChannelSettings(
-                channel.ChannelNumber,
-                channel.SelectedDevice!.DeviceNumber,
-                channel.InputChannelMode,
-                channel.ProcessorSettings,
-                channel.VolumePercent,
-                channel.IsEnabled,
-                channel.IsMuted))
+            .Select(channel =>
+            {
+                var selectedDeviceFormat = ReferenceEquals(channel, _activeMicChannel)
+                    ? _selectedDeviceFormat
+                    : null;
+                var inputChannelMode = CoerceInputChannelModeForDevice(
+                    channel.SelectedDevice,
+                    selectedDeviceFormat,
+                    channel.InputChannelMode);
+                if (inputChannelMode != channel.InputChannelMode)
+                {
+                    channel.InputChannelMode = inputChannelMode;
+                    if (ReferenceEquals(channel, _activeMicChannel))
+                    {
+                        _selectedInputChannelMode = inputChannelMode;
+                    }
+                }
+
+                return new MicrophoneLiveChannelSettings(
+                    channel.ChannelNumber,
+                    channel.SelectedDevice!.DeviceNumber,
+                    inputChannelMode,
+                    channel.ProcessorSettings,
+                    channel.VolumePercent,
+                    true,
+                    channel.IsMuted);
+            })
             .ToList();
         _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
     }
@@ -4491,8 +4675,8 @@ public partial class EqualizerWindow : Window
 
             _spectrumService.ConfigureProcessedOutput(enabled, _selectedOutputDevice);
             OutputStatusText.Text = enabled
-                ? $"Sending DSP processed mic to selected output: {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
-                : "Output off. Pick a virtual cable input when you want podcast routing.";
+                ? $"Sending program mix to selected output: {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
+                : "Output off. Pick a virtual cable input when you want live or podcast routing.";
             if (KaraokeMonitorStatusText is not null)
             {
                 KaraokeMonitorStatusText.Text = enabled
@@ -4571,18 +4755,54 @@ public partial class EqualizerWindow : Window
             : $"{inputFormat.Value.SampleRate / 1000d:0.#} kHz, 2 ch, 32-bit float";
     }
 
+    private MicChannelStrip? ResolvePrimaryCaptureChannel()
+    {
+        if (_selectedDevice is not null)
+        {
+            if (_activeMicChannel?.SelectedDevice is not null
+                && _activeMicChannel.SelectedDevice.DeviceNumber == _selectedDevice.DeviceNumber)
+            {
+                return _activeMicChannel;
+            }
+
+            return _micChannels.FirstOrDefault(channel =>
+                channel.SelectedDevice is not null
+                && channel.SelectedDevice.DeviceNumber == _selectedDevice.DeviceNumber);
+        }
+
+        return _micChannels.FirstOrDefault(channel => channel.SelectedDevice is not null && !channel.IsMuted)
+            ?? _micChannels.FirstOrDefault(channel => channel.SelectedDevice is not null);
+    }
+
     private void StartSelectedDevice()
     {
-        if (_selectedDevice is null || _isRestartingAudioStream)
+        if (_isRestartingAudioStream)
         {
             UpdateAudioFormatRouteText();
             return;
         }
 
+        var primaryCaptureChannel = ResolvePrimaryCaptureChannel();
+        var selectedDevice = _selectedDevice ?? primaryCaptureChannel?.SelectedDevice;
+        if (selectedDevice is null)
+        {
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
+        _selectedDevice = selectedDevice;
+        if (primaryCaptureChannel is not null)
+        {
+            _selectedInputChannelMode = primaryCaptureChannel.InputChannelMode;
+        }
+
         try
         {
             ConfigureLiveMixFromChannels();
-            _spectrumService.Start(_selectedDevice.DeviceNumber, Settings, _selectedInputChannelMode);
+            _spectrumService.Start(
+                selectedDevice.DeviceNumber,
+                primaryCaptureChannel?.ProcessorSettings ?? Settings,
+                _selectedInputChannelMode);
             StatusText.Text = "Listening";
             _selectedDeviceFormat ??= GetSelectedDeviceFormat();
             RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
@@ -4748,9 +4968,9 @@ public partial class EqualizerWindow : Window
 
     private void StartMicAnalysisClicked(object sender, RoutedEventArgs e)
     {
-        if (!_showMicCompare)
+        if (!IsMicCompareTabSelected())
         {
-            MicCompareViewClicked(sender, e);
+            SelectMainTab("Mic Compare");
         }
 
         if (_latestFrame?.HasStereoInput != true)
@@ -5110,10 +5330,11 @@ public partial class EqualizerWindow : Window
                 frame.MicrophoneLines);
         }
 
-        var rawMagnitudes = selectedInputMagnitudes.Length > 0
-            ? selectedInputMagnitudes
-            : selectedLine.RawMagnitudes.Length > 0
+        // The selected mic graph compares that strip's raw input against that strip's processed output.
+        var rawMagnitudes = selectedLine.RawMagnitudes.Length > 0
             ? selectedLine.RawMagnitudes
+            : selectedInputMagnitudes.Length > 0
+            ? selectedInputMagnitudes
             : frame.RawMagnitudes;
         return new SpectrumFrame(
             selectedLine.Magnitudes,
@@ -5184,6 +5405,14 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        var selectedMicFrame = CreateSelectedMicFrame(_latestFrame);
+        UpdateAudioStability(_latestFrame);
+        UpdateInputCoach(selectedMicFrame.RawPeakLevel);
+        UpdateSignalStatus(selectedMicFrame.PeakLevel);
+        UpdateOutputSignalStatus(_latestFrame.PeakLevel);
+        UpdateMixerChannelMeters(_latestFrame);
+        UpdateMixBusStatus(_latestFrame);
+
         var isMicDspTabSelected = IsMicDspTabSelected();
         var shouldRenderSpectrum = isMicDspTabSelected
             && SpectrumCanvas.IsVisible
@@ -5193,17 +5422,22 @@ public partial class EqualizerWindow : Window
             && WaveformCanvas.IsVisible
             && WaveformCanvas.ActualWidth > 1d
             && WaveformCanvas.ActualHeight > 1d;
+        var isMicCompareTabSelected = IsMicCompareTabSelected();
+        var shouldRenderMicCompare = isMicCompareTabSelected
+            && MicCompareCanvas.IsVisible
+            && MicCompareCanvas.ActualWidth > 1d
+            && MicCompareCanvas.ActualHeight > 1d;
         var isMixingTabSelected = IsMixingTabSelected();
         var shouldRenderMixingSpectrum = isMixingTabSelected
             && MixingMicSpectrumCanvas.IsVisible
             && MixingMicSpectrumCanvas.ActualWidth > 1d
             && MixingMicSpectrumCanvas.ActualHeight > 1d;
-        if (!shouldRenderSpectrum && !shouldRenderWaveform && !shouldRenderMixingSpectrum)
+        if (!shouldRenderSpectrum && !shouldRenderWaveform && !shouldRenderMicCompare && !shouldRenderMixingSpectrum)
         {
             return;
         }
 
-        if (!isMicDspTabSelected)
+        if (!isMicDspTabSelected && !isMicCompareTabSelected)
         {
             if (now - _lastAudioVisualRenderUtc < TimeSpan.FromMilliseconds(16))
             {
@@ -5215,12 +5449,17 @@ public partial class EqualizerWindow : Window
 
         if (shouldRenderSpectrum)
         {
-            RenderSpectrum(CreateSelectedMicFrame(_latestFrame));
+            RenderSpectrum(selectedMicFrame);
         }
 
         if (shouldRenderWaveform)
         {
-            RenderWaveform(CreateSelectedMicFrame(_latestFrame));
+            RenderWaveform(selectedMicFrame);
+        }
+
+        if (shouldRenderMicCompare)
+        {
+            RenderMicCompareSpectrum(_latestFrame);
         }
 
         if (shouldRenderMixingSpectrum)
@@ -10214,39 +10453,16 @@ public partial class EqualizerWindow : Window
         UpdateEqualizerHoverRegion(width, graphTop, graphBottom);
 
         var livePoints = new PointCollection();
-        var rawPoints = new PointCollection();
-        var input1Points = new PointCollection();
-        var input2Points = new PointCollection();
         var frameCeiling = 0.08d;
-        if (_showMicCompare && frame.HasStereoInput)
+        for (var i = 0; i < frame.Magnitudes.Length; i++)
         {
-            for (var i = 0; i < frame.Input1Magnitudes.Length; i++)
-            {
-                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Input1Magnitudes[i]));
-            }
-
-            for (var i = 0; i < frame.Input2Magnitudes.Length; i++)
-            {
-                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Input2Magnitudes[i]));
-            }
-        }
-        else
-        {
-            for (var i = 0; i < frame.Magnitudes.Length; i++)
-            {
-                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Magnitudes[i]));
-            }
-
-            for (var i = 0; i < frame.RawMagnitudes.Length; i++)
-            {
-                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.RawMagnitudes[i]));
-            }
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(frame.Magnitudes[i]));
         }
 
         _visualCeiling = frameCeiling > _visualCeiling
             ? Ease(_visualCeiling, frameCeiling, 0.08d)
             : Ease(_visualCeiling, frameCeiling, 0.015d);
-        EnsureRenderBuffers(frame.Magnitudes.Length, frame.RawMagnitudes.Length);
+        EnsureRenderBuffers(frame.Magnitudes.Length, 0);
         EnsureInputRenderBuffers(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
 
         var analyzerSmoothingCoefficient = GetAnalyzerSmoothingCoefficient();
@@ -10261,52 +10477,99 @@ public partial class EqualizerWindow : Window
             livePoints.Add(new Point(x, graphBottom - usableHeight * _renderedMagnitudes[i]));
         }
 
-        for (var i = 0; i < frame.RawMagnitudes.Length; i++)
-        {
-            var rawShaped = NormalizeForDisplay(ShapeMagnitude(frame.RawMagnitudes[i]));
-            _renderedRawMagnitudes[i] = Ease(_renderedRawMagnitudes[i], rawShaped, analyzerSmoothingCoefficient);
-            var x = frame.RawMagnitudes.Length == 1
-                ? 0d
-                : i / (double)(frame.RawMagnitudes.Length - 1) * width;
-            rawPoints.Add(new Point(x, graphBottom - usableHeight * _renderedRawMagnitudes[i]));
-        }
-
-        if (_showMicCompare && frame.HasStereoInput)
-        {
-            var compareLength = Math.Min(frame.Input1Magnitudes.Length, frame.Input2Magnitudes.Length);
-            for (var i = 0; i < compareLength; i++)
-            {
-                var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input1Magnitudes[i]) + _micAnalysisInput1DisplayOffset, 0d, 1d));
-                var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(frame.Input2Magnitudes[i]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
-                _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, analyzerSmoothingCoefficient);
-                _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, analyzerSmoothingCoefficient);
-
-                var x = compareLength == 1
-                    ? 0d
-                    : i / (double)(compareLength - 1) * width;
-                input1Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput1Magnitudes[i]));
-                input2Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput2Magnitudes[i]));
-            }
-        }
-
-        _input1Trace.Data = CreateSmoothedGeometry(input1Points);
-        _input2Trace.Data = CreateSmoothedGeometry(input2Points);
-        _averageTrace.Visibility = _showMicCompare ? Visibility.Collapsed : Visibility.Visible;
-        _liveTrace.Visibility = _showMicCompare ? Visibility.Collapsed : Visibility.Visible;
-        _input1Trace.Visibility = _showMicCompare && frame.HasStereoInput ? Visibility.Visible : Visibility.Collapsed;
-        _input2Trace.Visibility = _showMicCompare && frame.HasStereoInput ? Visibility.Visible : Visibility.Collapsed;
+        _input1Trace.Data = Geometry.Empty;
+        _input2Trace.Data = Geometry.Empty;
+        _averageTrace.Data = Geometry.Empty;
+        _averageTrace.Visibility = Visibility.Collapsed;
+        _liveTrace.Visibility = Visibility.Visible;
+        _input1Trace.Visibility = Visibility.Collapsed;
+        _input2Trace.Visibility = Visibility.Collapsed;
         _liveTrace.Data = CreateSmoothedGeometry(livePoints);
-        _averageTrace.Data = CreateSmoothedGeometry(rawPoints);
-        UpdateAudioStability(frame);
-        UpdateInputCoach(frame.RawPeakLevel);
-        UpdateSignalStatus(frame.PeakLevel);
+    }
+
+    private void RenderMicCompareSpectrum(SpectrumFrame frame)
+    {
+        var width = Math.Max(1d, MicCompareCanvas.ActualWidth);
+        var height = Math.Max(1d, MicCompareCanvas.ActualHeight);
+        var topInset = 28d;
+        var bottomInset = 28d;
+        var usableHeight = Math.Max(1d, height - topInset - bottomInset);
+        var graphTop = topInset;
+        var graphBottom = graphTop + usableHeight;
+
+        EnsureMicCompareGrid(width, graphTop, graphBottom);
+        var clip = new RectangleGeometry(new Rect(0d, graphTop, width, usableHeight));
+        _micCompareInput1Trace.Clip = clip;
+        _micCompareInput2Trace.Clip = clip;
+
+        var mic1 = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == 1);
+        var mic2 = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == 2);
+        var mic1Magnitudes = ResolveCompareMagnitudes(mic1, frame.Input1Magnitudes);
+        var mic2Magnitudes = ResolveCompareMagnitudes(mic2, frame.Input2Magnitudes);
+        var compareLength = Math.Min(mic1Magnitudes.Length, mic2Magnitudes.Length);
+        if (compareLength <= 0)
+        {
+            _micCompareInput1Trace.Data = Geometry.Empty;
+            _micCompareInput2Trace.Data = Geometry.Empty;
+            return;
+        }
+
+        EnsureInputRenderBuffers(mic1Magnitudes.Length, mic2Magnitudes.Length);
+        var frameCeiling = 0.08d;
+        for (var i = 0; i < compareLength; i++)
+        {
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(mic1Magnitudes[i]));
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(mic2Magnitudes[i]));
+        }
+
+        _visualCeiling = frameCeiling > _visualCeiling
+            ? Ease(_visualCeiling, frameCeiling, 0.08d)
+            : Ease(_visualCeiling, frameCeiling, 0.015d);
+
+        var input1Points = new PointCollection();
+        var input2Points = new PointCollection();
+        var smoothing = GetAnalyzerSmoothingCoefficient();
+        for (var i = 0; i < compareLength; i++)
+        {
+            var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic1Magnitudes[i]) + _micAnalysisInput1DisplayOffset, 0d, 1d));
+            var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic2Magnitudes[i]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
+            _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, smoothing);
+            _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, smoothing);
+
+            var x = compareLength == 1
+                ? 0d
+                : i / (double)(compareLength - 1) * width;
+            input1Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput1Magnitudes[i]));
+            input2Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput2Magnitudes[i]));
+        }
+
+        _micCompareInput1Trace.Data = CreateSmoothedGeometry(input1Points);
+        _micCompareInput2Trace.Data = CreateSmoothedGeometry(input2Points);
+    }
+
+    private static double[] ResolveCompareMagnitudes(MicrophoneSpectrumLine? line, double[] fallbackMagnitudes)
+    {
+        if (line?.RawMagnitudes.Length > 0)
+        {
+            return line.RawMagnitudes;
+        }
+
+        if (line?.Magnitudes.Length > 0)
+        {
+            return line.Magnitudes;
+        }
+
+        return fallbackMagnitudes;
     }
 
     private void RenderMixingMicSpectrum(SpectrumFrame frame)
     {
         var width = Math.Max(1d, MixingMicSpectrumCanvas.ActualWidth);
         var height = Math.Max(1d, MixingMicSpectrumCanvas.ActualHeight);
-        EnsureMixingSpectrumGrid(width, height);
+        var graphTop = 18d;
+        var graphBottom = Math.Max(graphTop + 1d, height - 18d);
+        var usableHeight = Math.Max(1d, graphBottom - graphTop);
+        EnsureMixingSpectrumGrid(width, graphTop, graphBottom);
 
         var lines = frame.MicrophoneLines.Count > 0
             ? frame.MicrophoneLines
@@ -10348,13 +10611,151 @@ public partial class EqualizerWindow : Window
                 var x = line.Magnitudes.Length == 1
                     ? 0d
                     : i / (double)(line.Magnitudes.Length - 1) * width;
-                points.Add(new Point(x, height - height * renderedMagnitudes[i]));
+                points.Add(new Point(x, graphBottom - usableHeight * renderedMagnitudes[i]));
             }
 
             var trace = _mixingMicSpectrumTraces[traceIndex];
             trace.Data = CreateSmoothedGeometry(points);
             trace.Opacity = line.PeakLevel <= 0.0001d ? 0.34d : traceIndex == 0 ? 0.98d : 0.88d;
             trace.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void UpdateMixerChannelMeters(SpectrumFrame frame)
+    {
+        var updatedChannels = new HashSet<int>();
+        foreach (var line in frame.MicrophoneLines)
+        {
+            var channel = FindMicChannel(line.ChannelNumber);
+            if (channel is null)
+            {
+                continue;
+            }
+
+            channel.UpdateLevelMeter(line.RawPeakLevel);
+            updatedChannels.Add(line.ChannelNumber);
+        }
+
+        if (frame.MicrophoneLines.Count == 0 && _activeMicChannel is not null)
+        {
+            _activeMicChannel.UpdateLevelMeter(frame.RawPeakLevel);
+            updatedChannels.Add(_activeMicChannel.ChannelNumber);
+        }
+
+        foreach (var channel in _micChannels)
+        {
+            if (!updatedChannels.Contains(channel.ChannelNumber))
+            {
+                channel.UpdateLevelMeter(0d);
+            }
+        }
+    }
+
+    private void UpdateMixBusStatus(SpectrumFrame frame)
+    {
+        if (MixBusStatusText is null)
+        {
+            return;
+        }
+
+        var enabledChannels = _micChannels
+            .Where(channel => channel.SelectedDevice is not null)
+            .ToList();
+        var audibleChannels = enabledChannels
+            .Where(channel => !channel.IsMuted && channel.VolumePercent > 0.1d)
+            .ToList();
+        var hasInput = frame.MicrophoneLines.Any(line => line.RawPeakLevel > 0.001d)
+            || frame.RawPeakLevel > 0.001d;
+
+        string text;
+        Brush foreground;
+        if (!_spectrumService.IsRunning)
+        {
+            text = "Bus: not listening";
+            foreground = _meterTextMutedBrush;
+        }
+        else if (enabledChannels.Count == 0)
+        {
+            text = "Bus: no mics enabled";
+            foreground = _meterWarnBrush;
+        }
+        else if (!hasInput)
+        {
+            text = "Bus: waiting for mic input";
+            foreground = _meterTextMutedBrush;
+        }
+        else if (audibleChannels.Count == 0)
+        {
+            text = "Bus: input live, program muted";
+            foreground = _meterWarnBrush;
+        }
+        else if (frame.PeakLevel < 0.001d)
+        {
+            text = "Bus: input live, program quiet";
+            foreground = _meterWarnBrush;
+        }
+        else
+        {
+            text = $"Bus: program active ({audibleChannels.Count} mic{(audibleChannels.Count == 1 ? string.Empty : "s")})";
+            foreground = _meterGoodBrush;
+        }
+
+        if (!string.Equals(MixBusStatusText.Text, text, StringComparison.Ordinal))
+        {
+            MixBusStatusText.Text = text;
+        }
+
+        if (!ReferenceEquals(MixBusStatusText.Foreground, foreground))
+        {
+            MixBusStatusText.Foreground = foreground;
+        }
+    }
+
+    private void UpdateMixingMicLegend()
+    {
+        if (MixingMicLegendPanel is null)
+        {
+            return;
+        }
+
+        MixingMicLegendPanel.Children.Clear();
+        foreach (var channel in _micChannels.Where(channel => channel.SelectedDevice is not null))
+        {
+            var color = MixingMicSpectrumColors[(channel.ChannelNumber - 1) % MixingMicSpectrumColors.Length];
+            var item = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            item.Children.Add(new Rectangle
+            {
+                Width = 18,
+                Height = 3,
+                RadiusX = 1.5,
+                RadiusY = 1.5,
+                Fill = new SolidColorBrush(color),
+                Margin = new Thickness(0, 0, 5, 0)
+            });
+            item.Children.Add(new TextBlock
+            {
+                Text = channel.DisplayName,
+                Foreground = new SolidColorBrush(color),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            MixingMicLegendPanel.Children.Add(item);
+        }
+
+        if (MixingMicLegendPanel.Children.Count == 0)
+        {
+            MixingMicLegendPanel.Children.Add(new TextBlock
+            {
+                Text = "No mics assigned",
+                Foreground = _meterTextMutedBrush,
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center
+            });
         }
     }
 
@@ -10390,10 +10791,8 @@ public partial class EqualizerWindow : Window
         EnsureWaveformGrid(width, graphTop, graphBottom, centerY);
 
         var sampleRate = Math.Max(8000, frame.SampleRate);
-        var requestedSamples = Math.Clamp((int)(sampleRate * WaveformTimeSlider.Value / 1000d), 512, sampleRate);
-        var snapshotSamples = WaveformTriggerCheckBox.IsChecked == true
-            ? Math.Min(sampleRate * MaximumWaveformHistorySeconds, requestedSamples * 2)
-            : requestedSamples;
+        var requestedSamples = Math.Clamp((int)(sampleRate * 0.12d), 512, sampleRate);
+        var snapshotSamples = requestedSamples;
         float[] rawSamples;
         float[] processedSamples;
         lock (_waveformLock)
@@ -10402,9 +10801,7 @@ public partial class EqualizerWindow : Window
             processedSamples = CopyLatestWaveformSamples(_processedWaveformHistory, snapshotSamples);
         }
 
-        var startIndex = WaveformTriggerCheckBox.IsChecked == true
-            ? FindTriggeredStart(processedSamples, requestedSamples)
-            : Math.Max(0, processedSamples.Length - requestedSamples);
+        var startIndex = Math.Max(0, processedSamples.Length - requestedSamples);
 
         _rawWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(rawSamples, startIndex, requestedSamples, width, centerY, halfHeight));
         _processedWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(processedSamples, startIndex, requestedSamples, width, centerY, halfHeight));
@@ -10648,6 +11045,94 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void UpdateOutputSignalStatus(double programPeakLevel)
+    {
+        if (OutputSignalText is null || OutputLevelMeter is null)
+        {
+            return;
+        }
+
+        _displayOutputPeak = programPeakLevel > _displayOutputPeak
+            ? Ease(_displayOutputPeak, programPeakLevel, 0.35d)
+            : Ease(_displayOutputPeak, programPeakLevel, 0.06d);
+
+        var now = Stopwatch.GetTimestamp();
+        if (_lastOutputLevelDisplayTimestamp != 0)
+        {
+            var elapsedMs = (now - _lastOutputLevelDisplayTimestamp) * 1000d / Stopwatch.Frequency;
+            if (elapsedMs < 33d)
+            {
+                return;
+            }
+        }
+
+        _lastOutputLevelDisplayTimestamp = now;
+        var peakDb = 20d * Math.Log10(Math.Max(0.000001d, _displayOutputPeak));
+        var meterHostWidth = OutputLevelMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
+            ? meterHost.ActualWidth
+            : 260d;
+        var meterWidth = Math.Clamp((_displayOutputPeak / 0.95d) * meterHostWidth, 0d, meterHostWidth);
+        var routed = IsProcessedOutputRequested() && _spectrumService.IsProcessedOutputEnabled;
+
+        string signalText;
+        Brush signalForeground;
+        Brush meterFill;
+        if (!_spectrumService.IsRunning)
+        {
+            signalText = "Program mix: not listening";
+            signalForeground = _meterTextMutedBrush;
+            meterFill = _meterMutedBrush;
+        }
+        else if (peakDb < -54d)
+        {
+            signalText = routed ? "Program mix: route open, silent" : "Program mix: silent";
+            signalForeground = _meterWarnBrush;
+            meterFill = _meterMutedBrush;
+        }
+        else if (peakDb < -12d)
+        {
+            signalText = routed ? $"Program mix: routing live ({peakDb:0} dB)" : $"Program mix: live ({peakDb:0} dB)";
+            signalForeground = _meterGoodBrush;
+            meterFill = _meterGoodBrush;
+        }
+        else if (peakDb < -3d)
+        {
+            signalText = routed ? $"Program mix: routing hot ({peakDb:0} dB)" : $"Program mix: hot ({peakDb:0} dB)";
+            signalForeground = _meterWarnBrush;
+            meterFill = _meterWarnBrush;
+        }
+        else
+        {
+            signalText = routed ? $"Program mix: routing clipping risk ({peakDb:0} dB)" : $"Program mix: clipping risk ({peakDb:0} dB)";
+            signalForeground = _meterDangerBrush;
+            meterFill = _meterDangerBrush;
+        }
+
+        if (Math.Abs(meterWidth - _lastOutputLevelMeterWidth) >= 0.5d)
+        {
+            _lastOutputLevelMeterWidth = meterWidth;
+            OutputLevelMeter.Width = meterWidth;
+        }
+
+        if (!string.Equals(_lastOutputSignalText, signalText, StringComparison.Ordinal))
+        {
+            _lastOutputSignalText = signalText;
+            OutputSignalText.Text = signalText;
+        }
+
+        if (!ReferenceEquals(_lastOutputSignalForeground, signalForeground))
+        {
+            _lastOutputSignalForeground = signalForeground;
+            OutputSignalText.Foreground = signalForeground;
+        }
+
+        if (!ReferenceEquals(_lastOutputLevelFill, meterFill))
+        {
+            _lastOutputLevelFill = meterFill;
+            OutputLevelMeter.Fill = meterFill;
+        }
+    }
+
     private void UpdateAudioStability(SpectrumFrame frame)
     {
         var now = Stopwatch.GetTimestamp();
@@ -10817,7 +11302,54 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void EnsureMixingSpectrumGrid(double width, double height)
+    private void EnsureMicCompareGrid(double width, double graphTop, double graphBottom)
+    {
+        const int horizontalLineCount = 7;
+        const int verticalLineCount = 9;
+        var desiredLineCount = horizontalLineCount + verticalLineCount;
+        while (_micCompareGridLines.Count < desiredLineCount)
+        {
+            var line = new Line
+            {
+                Stroke = _waveformGridBrush,
+                StrokeThickness = 1d,
+                Opacity = 0.78d,
+                IsHitTestVisible = false
+            };
+            Panel.SetZIndex(line, 0);
+            _micCompareGridLines.Add(line);
+            MicCompareCanvas.Children.Insert(0, line);
+        }
+
+        var lineIndex = 0;
+        for (var i = 0; i < horizontalLineCount; i++)
+        {
+            var y = horizontalLineCount == 1
+                ? graphTop
+                : graphTop + (graphBottom - graphTop) * i / (double)(horizontalLineCount - 1);
+            var line = _micCompareGridLines[lineIndex++];
+            line.X1 = 0d;
+            line.X2 = width;
+            line.Y1 = y;
+            line.Y2 = y;
+            line.StrokeThickness = i == 0 || i == horizontalLineCount - 1 ? 1.4d : 1d;
+        }
+
+        for (var i = 0; i < verticalLineCount; i++)
+        {
+            var x = verticalLineCount == 1
+                ? 0d
+                : i / (double)(verticalLineCount - 1) * width;
+            var line = _micCompareGridLines[lineIndex++];
+            line.X1 = x;
+            line.X2 = x;
+            line.Y1 = graphTop;
+            line.Y2 = graphBottom;
+            line.StrokeThickness = i == 0 || i == verticalLineCount - 1 ? 1.4d : 1d;
+        }
+    }
+
+    private void EnsureMixingSpectrumGrid(double width, double graphTop, double graphBottom)
     {
         const int horizontalLineCount = 5;
         const int verticalLineCount = 9;
@@ -10840,8 +11372,8 @@ public partial class EqualizerWindow : Window
         for (var i = 0; i < horizontalLineCount; i++)
         {
             var y = horizontalLineCount == 1
-                ? 0d
-                : i / (double)(horizontalLineCount - 1) * height;
+                ? graphTop
+                : graphTop + (graphBottom - graphTop) * i / (double)(horizontalLineCount - 1);
             var line = _mixingSpectrumGridLines[lineIndex++];
             line.X1 = 0d;
             line.X2 = width;
@@ -10858,8 +11390,8 @@ public partial class EqualizerWindow : Window
             var line = _mixingSpectrumGridLines[lineIndex++];
             line.X1 = x;
             line.X2 = x;
-            line.Y1 = 0d;
-            line.Y2 = height;
+            line.Y1 = graphTop;
+            line.Y2 = graphBottom;
             line.StrokeThickness = i == 0 || i == verticalLineCount - 1 ? 1.5d : 1d;
         }
     }
@@ -11154,7 +11686,7 @@ public partial class EqualizerWindow : Window
 
     private void UpdateEqualizerHoverRegion(double width, double graphTop, double graphBottom)
     {
-        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D || _showMicCompare)
+        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D)
         {
             _equalizerHoverRegion.Visibility = Visibility.Collapsed;
             return;
@@ -11184,7 +11716,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D || _showMicCompare)
+        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D)
         {
             _selectedMicSpectrumGraphHost.ClearSpectrumHoverRange();
             return;
@@ -12477,7 +13009,7 @@ public partial class EqualizerWindow : Window
                 $"Mic {channelNumber}",
                 CreateDefaultEqualizerBands())
             {
-                IsEnabled = channelNumber == 1,
+                IsEnabled = true,
                 InputChannelMode = channelNumber == 2 ? InputChannelMode.Input2Right : InputChannelMode.MonoSum
             });
         }
@@ -12524,6 +13056,7 @@ public partial class EqualizerWindow : Window
         private bool _activePresetIsUserPreset;
         private string _presetDescription = "Custom channel settings.";
         private double _analyzerSmoothing = 80d;
+        private double _levelMeterScale;
 
         public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
         {
@@ -12636,9 +13169,30 @@ public partial class EqualizerWindow : Window
 
         public string VolumeDisplayText => $"{VolumePercent:0}%";
 
+        public double LevelMeterScale => _levelMeterScale;
+
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public override string ToString() => DisplayName;
+
+        public void UpdateLevelMeter(double peakLevel)
+        {
+            var target = Math.Clamp((double.IsFinite(peakLevel) ? peakLevel : 0d) / 0.85d, 0d, 1d);
+            var amount = target > _levelMeterScale ? 0.42d : 0.14d;
+            var next = _levelMeterScale + (target - _levelMeterScale) * amount;
+            if (Math.Abs(next - _levelMeterScale) < 0.004d)
+            {
+                next = target <= 0.004d ? 0d : next;
+            }
+
+            if (Math.Abs(next - _levelMeterScale) < 0.002d)
+            {
+                return;
+            }
+
+            _levelMeterScale = Math.Clamp(next, 0d, 1d);
+            OnPropertyChanged(nameof(LevelMeterScale));
+        }
 
         private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {

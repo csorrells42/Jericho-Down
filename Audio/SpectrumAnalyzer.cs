@@ -3,7 +3,7 @@ namespace JerichoDown.Audio;
 public sealed class SpectrumAnalyzer
 {
     private const int FftSize = 8192;
-    private const int BarCount = 256;
+    private const int BarCount = 1024;
     private const double MinimumDisplayFrequency = 20d;
     private const double MaximumDisplayFrequency = 20000d;
     private static readonly int[] BitReversedIndices = CreateBitReversedIndices();

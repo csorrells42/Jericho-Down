@@ -25,6 +25,8 @@ var tests = new (string Name, Action Test)[]
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
+    ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
     ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
@@ -307,6 +309,35 @@ static void InputChannelModesMapInterfaceLanes()
     Assert(InputChannelModeInfo.GetChannelMode(9) == InputChannelMode.Input10, "channel index 9 should map back to input 10");
     Assert(InputChannelModeInfo.GetChannelMode(10) is null, "channel index 10 should be outside the supported strip inputs");
     Assert(InputChannelModeInfo.GetDisplayLabel(InputChannelMode.Input2Right).Contains("2", StringComparison.Ordinal), "input 2 label should be stable");
+}
+
+static void InputChannelModeFallsBackForMonoDevices()
+{
+    var method = typeof(EqualizerWindow).GetMethod(
+        "CoerceInputChannelModeForDevice",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "channel coercion helper should be available");
+
+    var headset = new AudioInputDevice(0, "Mono headset", 1);
+    var coerced = (InputChannelMode)method!.Invoke(null, [headset, null, InputChannelMode.Input2Right])!;
+
+    Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
+}
+
+static void SpectrumAnalyzerEmitsHighResolutionBins()
+{
+    var analyzer = new SpectrumAnalyzer(48_000);
+    var samples = new float[8192];
+    for (var i = 0; i < samples.Length; i++)
+    {
+        samples[i] = (float)(Math.Sin(2d * Math.PI * 440d * i / 48_000d) * 0.35d);
+    }
+
+    var analysis = analyzer.AnalyzeSamples(samples);
+
+    Assert(analysis.Magnitudes.Length >= 1000, "spectrum graph should have enough real bins for high-resolution displays");
+    Assert(analysis.Magnitudes.All(double.IsFinite), "spectrum magnitudes should stay finite");
+    Assert(analysis.Magnitudes.Any(value => value > 0d), "a sine input should produce visible spectrum energy");
 }
 
 static void MixBusProcessorScalesAndProtectsOutput()
