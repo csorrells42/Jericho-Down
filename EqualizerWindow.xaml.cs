@@ -168,7 +168,9 @@ public partial class EqualizerWindow : Window
     private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
     private readonly List<Line> _mixingSpectrumGridLines = [];
     private readonly List<Line> _micCompareGridLines = [];
-    private readonly double[][] _renderedMixingMicMagnitudes = new double[1][];
+    private readonly double[][] _renderedMixingMicMagnitudes = new double[2][];
+    private readonly SolidColorBrush _mixingProgramSpectrumBrush = new(Color.FromRgb(0, 190, 230));
+    private readonly SolidColorBrush _mixingRecordingSpectrumBrush = new(Color.FromRgb(167, 176, 188));
     private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
     private readonly SolidColorBrush _waveformGridBrush = new(Color.FromRgb(36, 45, 54));
@@ -406,7 +408,7 @@ public partial class EqualizerWindow : Window
 
     private static ShapePath[] CreateMixingMicSpectrumTraces()
     {
-        var traces = new ShapePath[1];
+        var traces = new ShapePath[2];
         for (var i = 0; i < traces.Length; i++)
         {
             traces[i] = new ShapePath
@@ -470,6 +472,8 @@ public partial class EqualizerWindow : Window
     {
         FreezeBrush(_recordingDspActiveBrush);
         FreezeBrush(_recordingNaturalAudioBrush);
+        FreezeBrush(_mixingProgramSpectrumBrush);
+        FreezeBrush(_mixingRecordingSpectrumBrush);
         FreezeBrush(_waveformGridBrush);
         FreezeBrush(_meterMutedBrush);
         FreezeBrush(_meterTextMutedBrush);
@@ -10667,6 +10671,11 @@ public partial class EqualizerWindow : Window
             frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(magnitude));
         }
 
+        foreach (var magnitude in frame.RawMagnitudes)
+        {
+            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(magnitude));
+        }
+
         _mixingVisualCeiling = frameCeiling > _mixingVisualCeiling
             ? Ease(_mixingVisualCeiling, frameCeiling, 0.1d)
             : Ease(_mixingVisualCeiling, frameCeiling, 0.02d);
@@ -10676,30 +10685,65 @@ public partial class EqualizerWindow : Window
             trace.Visibility = Visibility.Collapsed;
         }
 
-        if (frame.Magnitudes.Length == 0)
+        if (frame.Magnitudes.Length == 0 && frame.RawMagnitudes.Length == 0)
         {
             return;
         }
 
-        EnsureMixingMicRenderBuffer(0, frame.Magnitudes.Length);
-        var renderedMagnitudes = _renderedMixingMicMagnitudes[0];
+        RenderMixingSpectrumTrace(
+            traceIndex: 0,
+            magnitudes: frame.Magnitudes,
+            peakLevel: frame.PeakLevel,
+            stroke: _mixingProgramSpectrumBrush,
+            strokeThickness: 2.6d,
+            width,
+            graphBottom,
+            usableHeight);
+        RenderMixingSpectrumTrace(
+            traceIndex: 1,
+            magnitudes: frame.RawMagnitudes,
+            peakLevel: frame.RawPeakLevel,
+            stroke: _mixingRecordingSpectrumBrush,
+            strokeThickness: 2.1d,
+            width,
+            graphBottom,
+            usableHeight);
+    }
+
+    private void RenderMixingSpectrumTrace(
+        int traceIndex,
+        double[] magnitudes,
+        double peakLevel,
+        Brush stroke,
+        double strokeThickness,
+        double width,
+        double graphBottom,
+        double usableHeight)
+    {
+        if (magnitudes.Length == 0)
+        {
+            return;
+        }
+
+        EnsureMixingMicRenderBuffer(traceIndex, magnitudes.Length);
+        var renderedMagnitudes = _renderedMixingMicMagnitudes[traceIndex];
         var points = new PointCollection();
         var smoothing = GetAnalyzerSmoothingCoefficient();
-        for (var i = 0; i < frame.Magnitudes.Length; i++)
+        for (var i = 0; i < magnitudes.Length; i++)
         {
-            var shaped = NormalizeForDisplay(ShapeMagnitude(frame.Magnitudes[i]), _mixingVisualCeiling);
+            var shaped = NormalizeForDisplay(ShapeMagnitude(magnitudes[i]), _mixingVisualCeiling);
             renderedMagnitudes[i] = Ease(renderedMagnitudes[i], shaped, smoothing);
-            var x = frame.Magnitudes.Length == 1
+            var x = magnitudes.Length == 1
                 ? 0d
-                : i / (double)(frame.Magnitudes.Length - 1) * width;
+                : i / (double)(magnitudes.Length - 1) * width;
             points.Add(new Point(x, graphBottom - usableHeight * renderedMagnitudes[i]));
         }
 
-        var outputTrace = _mixingMicSpectrumTraces[0];
-        outputTrace.Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230));
-        outputTrace.StrokeThickness = 2.6d;
+        var outputTrace = _mixingMicSpectrumTraces[traceIndex];
+        outputTrace.Stroke = stroke;
+        outputTrace.StrokeThickness = strokeThickness;
         outputTrace.Data = CreateSmoothedGeometry(points);
-        outputTrace.Opacity = frame.PeakLevel <= 0.0001d ? 0.34d : 0.98d;
+        outputTrace.Opacity = peakLevel <= 0.0001d ? 0.34d : 0.98d;
         outputTrace.Visibility = Visibility.Visible;
     }
 
@@ -10812,7 +10856,7 @@ public partial class EqualizerWindow : Window
         MixingMicLegendPanel.Children.Clear();
         AddMixingLegendItem(
             "Program mix",
-            new SolidColorBrush(Color.FromRgb(0, 190, 230)));
+            _mixingProgramSpectrumBrush);
         if (_audioRecordingSource == ProcessedRecordingSource.ProgramMix)
         {
             return;
@@ -10820,7 +10864,7 @@ public partial class EqualizerWindow : Window
 
         AddMixingLegendItem(
             $"Recording: {GetAudioRecordingSourceLabel()}",
-            new SolidColorBrush(Color.FromRgb(167, 176, 188)));
+            _mixingRecordingSpectrumBrush);
     }
 
     private void AddMixingLegendItem(string text, Brush brush)
