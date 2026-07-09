@@ -57,6 +57,7 @@ public sealed class VoiceSampleProcessor
     private double _presenceBand;
     private double _presenceGuardGain = 1d;
     private double _presenceWet;
+    private double _saturationWet;
     private double _envelope;
     private double _compressorRmsEnvelope;
     private double _compressorSidechainLow;
@@ -94,6 +95,7 @@ public sealed class VoiceSampleProcessor
     private bool _compressorEnabled;
     private bool _deEsserEnabled;
     private bool _presenceEnhancerEnabled;
+    private bool _saturationEnabled;
     private bool _limiterEnabled;
     private bool _limiterSoftClipEnabled;
     private double _dcBlockerCoefficient;
@@ -124,6 +126,10 @@ public sealed class VoiceSampleProcessor
     private double _lowPassA1;
     private double _lowPassA2;
     private double _lastLowPassFrequencyHz;
+    private double _saturationWetCoefficient;
+    private double _saturationDrive = 1d;
+    private double _saturationDenominator = Math.Tanh(1d);
+    private double _saturationMakeup = 1d;
     private double _dePopperAlpha;
     private double _dePopperWetCoefficient;
     private double _dePopperAttackCoefficient;
@@ -255,6 +261,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyHighPass(sample);
             sample = ApplyHumRemoval(sample);
             sample = ApplyEqualizer(sample);
+            sample = ApplySaturation(sample);
             sample = ApplyNoiseSuppression(sample);
             sample = ApplyExpander(sample);
             sample = ApplyNoiseGate(sample);
@@ -320,6 +327,7 @@ public sealed class VoiceSampleProcessor
         _compressorEnabled = _settings.CompressorEnabled;
         _deEsserEnabled = _settings.DeEsserEnabled && _settings.DeEsserAmountDb > 0d;
         _presenceEnhancerEnabled = _settings.PresenceEnhancerEnabled && _settings.PresenceEnhancerAmountDb > 0d;
+        _saturationEnabled = _settings.SaturationEnabled && _settings.SaturationAmount > 0d;
         _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
         _highPassWetCoefficient = TimeCoefficient(12d);
         _humRemovalWetCoefficient = TimeCoefficient(12d);
@@ -394,6 +402,12 @@ public sealed class VoiceSampleProcessor
         _presenceLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * presenceLowPassHz / _sampleRate);
         _presenceBlend = Math.Clamp(DbToLinear(_settings.PresenceEnhancerAmountDb) - 1d, 0d, 1.5d);
         _presenceWetCoefficient = TimeCoefficient(18d);
+
+        var saturationAmount = Math.Clamp(_settings.SaturationAmount, 0d, 10d) / 10d;
+        _saturationWetCoefficient = TimeCoefficient(18d);
+        _saturationDrive = 1d + saturationAmount * 2.8d;
+        _saturationDenominator = Math.Max(0.000001d, Math.Tanh(_saturationDrive));
+        _saturationMakeup = 1d / (1d + saturationAmount * 0.9d);
 
         var deEsserCutoffHz = Math.Clamp(_settings.DeEsserFrequencyHz, 3500d, 10000d);
         var deEsserRc = 1d / (2d * Math.PI * deEsserCutoffHz);
@@ -886,6 +900,29 @@ public sealed class VoiceSampleProcessor
         }
 
         return sample;
+    }
+
+    private double ApplySaturation(double sample)
+    {
+        if (!_saturationEnabled && _saturationWet <= 0d)
+        {
+            return sample;
+        }
+
+        var driven = Math.Clamp(sample, -1d, 1d) * _saturationDrive;
+        var saturated = Math.Tanh(driven) / _saturationDenominator * _saturationMakeup;
+        var targetWet = _saturationEnabled ? 1d : 0d;
+        _saturationWet = FlushDenormal(_saturationWet + (targetWet - _saturationWet) * _saturationWetCoefficient);
+        if (!_saturationEnabled && _saturationWet < 0.0001d)
+        {
+            _saturationWet = 0d;
+        }
+        else if (_saturationEnabled && _saturationWet > 0.9999d)
+        {
+            _saturationWet = 1d;
+        }
+
+        return sample + (saturated - sample) * _saturationWet;
     }
 
     private double ApplyNoiseGate(double sample)

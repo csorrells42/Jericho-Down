@@ -24,6 +24,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
     ("Voice low-pass filter tames high hiss", VoiceLowPassFilterTamesHighHiss),
     ("Voice hum removal notches mains buzz", VoiceHumRemovalNotchesMainsBuzz),
+    ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
@@ -301,6 +302,27 @@ static void VoiceHumRemovalNotchesMainsBuzz()
     Assert(humFilteredRms < humBypassRms * 0.45d, "hum removal should attenuate 60 Hz mains hum");
     Assert(harmonicFilteredRms < harmonicBypassRms * 0.65d, "hum removal should attenuate the second harmonic");
     Assert(voiceFilteredRms > voiceBypassRms * 0.85d, "hum removal should preserve normal voice-band energy");
+}
+
+static void VoiceSaturationAddsWarmHarmonicsSafely()
+{
+    const int sampleRate = 48_000;
+    const double fundamentalHz = 1_000d;
+    var tone = GenerateSine(sampleRate, fundamentalHz, 0.45d, 2.0d);
+    var bypass = ProcessSaturationTestTone(tone, enabled: false);
+    var warmed = ProcessSaturationTestTone(tone, enabled: true);
+
+    var start = sampleRate;
+    var bypassFundamental = CalculateToneMagnitude(bypass, sampleRate, fundamentalHz, start);
+    var warmedFundamental = CalculateToneMagnitude(warmed, sampleRate, fundamentalHz, start);
+    var bypassThirdHarmonic = CalculateToneMagnitude(bypass, sampleRate, fundamentalHz * 3d, start);
+    var warmedThirdHarmonic = CalculateToneMagnitude(warmed, sampleRate, fundamentalHz * 3d, start);
+    var warmedPeak = warmed.Skip(start).Select(Math.Abs).Max();
+
+    Assert(warmedThirdHarmonic > Math.Max(0.002d, bypassThirdHarmonic * 5d), "saturation should add musical harmonic content");
+    Assert(warmedFundamental > bypassFundamental * 0.45d, "saturation should preserve the main voice tone");
+    Assert(warmedPeak <= 0.98f, "saturation should stay below clipping before the limiter");
+    Assert(warmed.All(float.IsFinite), "saturation output should stay finite");
 }
 
 static void VoiceTelemetrySnapshotIsIndependent()
@@ -1279,6 +1301,47 @@ static float[] ProcessHumRemovalTestTone(float[] samples, bool enabled)
     };
     var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
     return processor.Process(samples);
+}
+
+static float[] ProcessSaturationTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = false,
+        LowPassEnabled = false,
+        SaturationEnabled = enabled,
+        SaturationAmount = 8,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static double CalculateToneMagnitude(IReadOnlyList<float> samples, int sampleRate, double frequencyHz, int startIndex)
+{
+    var start = Math.Clamp(startIndex, 0, samples.Count);
+    var sine = 0d;
+    var cosine = 0d;
+    var count = 0;
+    for (var i = start; i < samples.Count; i++)
+    {
+        var angle = 2d * Math.PI * frequencyHz * i / sampleRate;
+        sine += samples[i] * Math.Sin(angle);
+        cosine += samples[i] * Math.Cos(angle);
+        count++;
+    }
+
+    return count == 0 ? 0d : 2d * Math.Sqrt(sine * sine + cosine * cosine) / count;
 }
 
 static double CalculateTailRms(IReadOnlyList<float> samples, int startIndex)

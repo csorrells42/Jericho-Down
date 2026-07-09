@@ -11712,6 +11712,8 @@ public partial class EqualizerWindow : Window
         Settings.PresenceEnhancerAmountDb = 1.1;
         Settings.PresenceEnhancerFrequencyHz = 2600;
         Settings.PresenceEnhancerWidthHz = 1800;
+        Settings.SaturationEnabled = true;
+        Settings.SaturationAmount = 3.5;
         Settings.LimiterSoftClipDriveDb = 1;
         Settings.LimiterLookaheadMs = 3;
         Settings.LimiterReleaseMs = 85;
@@ -11726,11 +11728,20 @@ public partial class EqualizerWindow : Window
 
     private void LoadWarmRadioPreset()
     {
+        const string description = "Adds body and warmth, gently tames harshness, and uses a slightly stronger compressor for a denser sound.";
+
         ApplyPreset(
             "Warm Radio",
-            "Adds body and warmth, gently tames harshness, and uses a slightly stronger compressor for a denser sound.",
+            description,
             70, 3, -52, 3, 3, -20, 3.5, 3, 3, -1,
             [-5, -3, -1, 0.5, 2, 2.5, 2, 1, 0, -1, -1.5, -1, 0, 1, 1.5, 1, 0, -0.5, -1, -2]);
+
+        Settings.SaturationEnabled = true;
+        Settings.SaturationAmount = 2.5;
+        SetProcessingSliderDefaults(description);
+        _activeMicChannel.PresetDescription = description;
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
     }
 
     private void NoisyRoomPresetClicked(object sender, RoutedEventArgs e)
@@ -11811,6 +11822,8 @@ public partial class EqualizerWindow : Window
         Settings.PresenceEnhancerAmountDb = 2;
         Settings.PresenceEnhancerFrequencyHz = 3000;
         Settings.PresenceEnhancerWidthHz = 2600;
+        Settings.SaturationEnabled = false;
+        Settings.SaturationAmount = 2;
         Settings.MakeupGainDb = makeupGainDb;
         Settings.LimiterEnabled = true;
         Settings.LimiterCeilingDb = limiterCeilingDb;
@@ -12875,6 +12888,7 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(PresenceEnhancerSlider, Settings.PresenceEnhancerAmountDb);
         SetProcessingSliderDefault(PresenceFrequencySlider, Settings.PresenceEnhancerFrequencyHz);
         SetProcessingSliderDefault(PresenceWidthSlider, Settings.PresenceEnhancerWidthHz);
+        SetProcessingSliderDefault(SaturationSlider, Settings.SaturationAmount);
         SetProcessingSliderDefault(MakeupGainSlider, Settings.MakeupGainDb);
         SetProcessingSliderDefault(LimiterCeilingSlider, Settings.LimiterCeilingDb);
         SetProcessingSliderDefault(LimiterDriveSlider, Settings.LimiterSoftClipDriveDb);

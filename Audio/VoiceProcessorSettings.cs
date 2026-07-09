@@ -50,6 +50,8 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _presenceEnhancerAmountDb = 2;
     private double _presenceEnhancerFrequencyHz = 3000;
     private double _presenceEnhancerWidthHz = 2600;
+    private bool _saturationEnabled;
+    private double _saturationAmount = 2;
     private bool _dePopperEnabled = true;
     private double _dePopperAmountDb = 6;
     private double _dePopperFrequencyHz = 180;
@@ -307,6 +309,18 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _presenceEnhancerWidthHz;
         set => SetField(ref _presenceEnhancerWidthHz, value);
+    }
+
+    public bool SaturationEnabled
+    {
+        get => _saturationEnabled;
+        set => SetField(ref _saturationEnabled, value);
+    }
+
+    public double SaturationAmount
+    {
+        get => _saturationAmount;
+        set => SetField(ref _saturationAmount, value);
     }
 
     public bool DePopperEnabled

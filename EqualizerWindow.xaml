@@ -2009,6 +2009,20 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Warmth" IsChecked="{Binding SaturationEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Adds gentle saturation before compression for a thicker, warmer mic tone." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Saturation" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=SaturationSlider, Path=Value, StringFormat={}{0:0.0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="SaturationSlider" Minimum="0" Maximum="10" Value="{Binding SaturationAmount}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <TextBlock Text="Makeup Gain" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
                       <Grid>
                         <TextBlock Text="Makeup dB" Foreground="#B8C7D9" />
