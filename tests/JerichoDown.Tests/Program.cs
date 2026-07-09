@@ -24,6 +24,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
     ("Voice low-pass filter tames high hiss", VoiceLowPassFilterTamesHighHiss),
     ("Voice hum removal notches mains buzz", VoiceHumRemovalNotchesMainsBuzz),
+    ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
@@ -303,6 +304,27 @@ static void VoiceHumRemovalNotchesMainsBuzz()
     Assert(humFilteredRms < humBypassRms * 0.45d, "hum removal should attenuate 60 Hz mains hum");
     Assert(harmonicFilteredRms < harmonicBypassRms * 0.65d, "hum removal should attenuate the second harmonic");
     Assert(voiceFilteredRms > voiceBypassRms * 0.85d, "hum removal should preserve normal voice-band energy");
+}
+
+static void VoiceNotchFilterCutsOneRingingTone()
+{
+    const int sampleRate = 48_000;
+    var ringingTone = GenerateSine(sampleRate, 2_800d, 0.5d, 2.0d);
+    var nearbyTone = GenerateSine(sampleRate, 2_200d, 0.5d, 2.0d);
+    var bypassRing = ProcessNotchFilterTestTone(ringingTone, enabled: false);
+    var notchedRing = ProcessNotchFilterTestTone(ringingTone, enabled: true);
+    var bypassNearby = ProcessNotchFilterTestTone(nearbyTone, enabled: false);
+    var notchedNearby = ProcessNotchFilterTestTone(nearbyTone, enabled: true);
+
+    var start = sampleRate;
+    var bypassRingRms = CalculateTailRms(bypassRing, start);
+    var notchedRingRms = CalculateTailRms(notchedRing, start);
+    var bypassNearbyRms = CalculateTailRms(bypassNearby, start);
+    var notchedNearbyRms = CalculateTailRms(notchedNearby, start);
+
+    Assert(notchedRingRms < bypassRingRms * 0.42d, "notch filter should cut the selected ringing frequency");
+    Assert(notchedNearbyRms > bypassNearbyRms * 0.74d, "notch filter should mostly preserve nearby voice content");
+    Assert(notchedRing.All(float.IsFinite), "notch filter output should stay finite");
 }
 
 static void VoiceSaturationAddsWarmHarmonicsSafely()
@@ -1320,6 +1342,33 @@ static float[] ProcessHumRemovalTestTone(float[] samples, bool enabled)
         CompressorEnabled = false,
         DeEsserEnabled = false,
         PresenceEnhancerEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessNotchFilterTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = false,
+        NotchFilterEnabled = enabled,
+        NotchFilterFrequencyHz = 2_800,
+        NotchFilterDepthDb = 30,
+        NotchFilterQ = 18,
+        LowPassEnabled = false,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        SaturationEnabled = false,
         LimiterEnabled = false,
         MakeupGainDb = 0
     };

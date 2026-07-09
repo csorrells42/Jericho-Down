@@ -16,6 +16,10 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _lowPassFrequencyHz = 16000;
     private bool _humRemovalEnabled;
     private double _humRemovalFrequencyHz = 60;
+    private bool _notchFilterEnabled;
+    private double _notchFilterFrequencyHz = 2800;
+    private double _notchFilterDepthDb = 18;
+    private double _notchFilterQ = 16;
     private bool _noiseGateEnabled = true;
     private double _noiseGateThresholdDb = -48;
     private double _noiseGateAttackMs = 5;
@@ -105,6 +109,30 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _humRemovalFrequencyHz;
         set => SetField(ref _humRemovalFrequencyHz, value);
+    }
+
+    public bool NotchFilterEnabled
+    {
+        get => _notchFilterEnabled;
+        set => SetField(ref _notchFilterEnabled, value);
+    }
+
+    public double NotchFilterFrequencyHz
+    {
+        get => _notchFilterFrequencyHz;
+        set => SetField(ref _notchFilterFrequencyHz, value);
+    }
+
+    public double NotchFilterDepthDb
+    {
+        get => _notchFilterDepthDb;
+        set => SetField(ref _notchFilterDepthDb, value);
+    }
+
+    public double NotchFilterQ
+    {
+        get => _notchFilterQ;
+        set => SetField(ref _notchFilterQ, value);
     }
 
     public bool NoiseGateEnabled

@@ -11864,10 +11864,14 @@ public partial class EqualizerWindow : Window
         Settings.HighPassEnabled = true;
         Settings.LowPassEnabled = false;
         Settings.HumRemovalEnabled = false;
+        Settings.NotchFilterEnabled = false;
         Settings.InputTrimDb = 0;
         Settings.HighPassFrequencyHz = highPassFrequencyHz;
         Settings.LowPassFrequencyHz = 16000;
         Settings.HumRemovalFrequencyHz = 60;
+        Settings.NotchFilterFrequencyHz = 2800;
+        Settings.NotchFilterDepthDb = 18;
+        Settings.NotchFilterQ = 16;
         Settings.DePopperEnabled = true;
         Settings.DePopperAmountDb = dePopperAmountDb;
         Settings.DePopperFrequencyHz = 180;
@@ -12942,6 +12946,9 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(HighPassSlider, Settings.HighPassFrequencyHz);
         SetProcessingSliderDefault(LowPassSlider, Settings.LowPassFrequencyHz);
         SetProcessingSliderDefault(HumRemovalFrequencySlider, Settings.HumRemovalFrequencyHz);
+        SetProcessingSliderDefault(NotchFrequencySlider, Settings.NotchFilterFrequencyHz);
+        SetProcessingSliderDefault(NotchDepthSlider, Settings.NotchFilterDepthDb);
+        SetProcessingSliderDefault(NotchQSlider, Settings.NotchFilterQ);
         SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
         SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
         SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);

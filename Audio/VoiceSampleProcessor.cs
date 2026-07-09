@@ -32,6 +32,11 @@ public sealed class VoiceSampleProcessor
     private double _humHarmonicNotchX2;
     private double _humHarmonicNotchY1;
     private double _humHarmonicNotchY2;
+    private double _manualNotchWet;
+    private double _manualNotchX1;
+    private double _manualNotchX2;
+    private double _manualNotchY1;
+    private double _manualNotchY2;
     private double _lowPassWet;
     private double _lowPassX1;
     private double _lowPassX2;
@@ -86,6 +91,7 @@ public sealed class VoiceSampleProcessor
     private double _levelSmoothingCoefficient;
     private bool _highPassEnabled;
     private bool _humRemovalEnabled;
+    private bool _notchFilterEnabled;
     private bool _lowPassEnabled;
     private bool _dePopperEnabled;
     private bool _noiseGateEnabled;
@@ -119,6 +125,16 @@ public sealed class VoiceSampleProcessor
     private double _humHarmonicNotchA1;
     private double _humHarmonicNotchA2;
     private double _lastHumRemovalFrequencyHz;
+    private double _manualNotchB0 = 1d;
+    private double _manualNotchWetCoefficient;
+    private double _manualNotchB1;
+    private double _manualNotchB2;
+    private double _manualNotchA1;
+    private double _manualNotchA2;
+    private double _manualNotchMix = 1d;
+    private double _lastNotchFilterFrequencyHz;
+    private double _lastNotchFilterDepthDb = double.NaN;
+    private double _lastNotchFilterQ;
     private double _lowPassB0 = 1d;
     private double _lowPassWetCoefficient;
     private double _lowPassB1;
@@ -260,6 +276,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyDePopper(sample);
             sample = ApplyHighPass(sample);
             sample = ApplyHumRemoval(sample);
+            sample = ApplyManualNotch(sample);
             sample = ApplyEqualizer(sample);
             sample = ApplySaturation(sample);
             sample = ApplyNoiseSuppression(sample);
@@ -318,6 +335,7 @@ public sealed class VoiceSampleProcessor
         _levelSmoothingCoefficient = TimeCoefficient(6d);
         _highPassEnabled = _settings.HighPassEnabled;
         _humRemovalEnabled = _settings.HumRemovalEnabled;
+        _notchFilterEnabled = _settings.NotchFilterEnabled && _settings.NotchFilterDepthDb > 0d;
         _lowPassEnabled = _settings.LowPassEnabled;
         _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
         _noiseGateEnabled = _settings.NoiseGateEnabled;
@@ -331,9 +349,11 @@ public sealed class VoiceSampleProcessor
         _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
         _highPassWetCoefficient = TimeCoefficient(12d);
         _humRemovalWetCoefficient = TimeCoefficient(12d);
+        _manualNotchWetCoefficient = TimeCoefficient(12d);
         _lowPassWetCoefficient = TimeCoefficient(12d);
         UpdateHighPassCoefficients();
         UpdateHumRemovalCoefficients();
+        UpdateManualNotchCoefficients();
         UpdateLowPassCoefficients();
 
         var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
@@ -646,6 +666,75 @@ public sealed class VoiceSampleProcessor
         b2 = 1d / a0;
         a1 = -2d * cosine / a0;
         a2 = (1d - alpha) / a0;
+    }
+
+    private double ApplyManualNotch(double sample)
+    {
+        if (!_notchFilterEnabled && _manualNotchWet <= 0d)
+        {
+            ResetManualNotchState();
+            return sample;
+        }
+
+        var notched = ApplyHumNotch(
+            sample,
+            _manualNotchB0,
+            _manualNotchB1,
+            _manualNotchB2,
+            _manualNotchA1,
+            _manualNotchA2,
+            ref _manualNotchX1,
+            ref _manualNotchX2,
+            ref _manualNotchY1,
+            ref _manualNotchY2);
+        var shaped = sample + (notched - sample) * _manualNotchMix;
+        var targetWet = _notchFilterEnabled ? 1d : 0d;
+        _manualNotchWet = FlushDenormal(_manualNotchWet + (targetWet - _manualNotchWet) * _manualNotchWetCoefficient);
+        if (!_notchFilterEnabled && _manualNotchWet < 0.0001d)
+        {
+            _manualNotchWet = 0d;
+            ResetManualNotchState();
+        }
+        else if (_notchFilterEnabled && _manualNotchWet > 0.9999d)
+        {
+            _manualNotchWet = 1d;
+        }
+
+        return sample + (shaped - sample) * _manualNotchWet;
+    }
+
+    private void ResetManualNotchState()
+    {
+        _manualNotchX1 = 0d;
+        _manualNotchX2 = 0d;
+        _manualNotchY1 = 0d;
+        _manualNotchY2 = 0d;
+    }
+
+    private void UpdateManualNotchCoefficients()
+    {
+        var frequencyHz = Math.Clamp(_settings.NotchFilterFrequencyHz, 80d, Math.Min(12000d, _sampleRate * 0.45d));
+        var depthDb = Math.Clamp(_settings.NotchFilterDepthDb, 0d, 36d);
+        var q = Math.Clamp(_settings.NotchFilterQ, 2d, 60d);
+        if (Math.Abs(frequencyHz - _lastNotchFilterFrequencyHz) < 0.01d
+            && Math.Abs(depthDb - _lastNotchFilterDepthDb) < 0.001d
+            && Math.Abs(q - _lastNotchFilterQ) < 0.001d)
+        {
+            return;
+        }
+
+        _lastNotchFilterFrequencyHz = frequencyHz;
+        _lastNotchFilterDepthDb = depthDb;
+        _lastNotchFilterQ = q;
+        _manualNotchMix = Math.Clamp(depthDb / 36d, 0d, 1d);
+        SetNotchCoefficients(
+            frequencyHz,
+            q,
+            out _manualNotchB0,
+            out _manualNotchB1,
+            out _manualNotchB2,
+            out _manualNotchA1,
+            out _manualNotchA2);
     }
 
     private double ApplyLowPass(double sample)

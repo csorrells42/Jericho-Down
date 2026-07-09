@@ -1823,6 +1823,30 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Notch filter" IsChecked="{Binding NotchFilterEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Cuts one narrow ringing frequency. Use this when the mixer feedback warning identifies a trouble tone." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NotchFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NotchFrequencySlider" Minimum="120" Maximum="12000" Value="{Binding NotchFilterFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Depth" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NotchDepthSlider, Path=Value, StringFormat={}{0:0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NotchDepthSlider" Minimum="0" Maximum="36" Value="{Binding NotchFilterDepthDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Width" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NotchQSlider, Path=Value, StringFormat={}{0:0.0} Q}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NotchQSlider" Minimum="2" Maximum="60" Value="{Binding NotchFilterQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />
