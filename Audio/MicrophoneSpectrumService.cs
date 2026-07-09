@@ -1849,72 +1849,66 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         _processedOutputSampleRate = _activeSampleRate;
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
-        var preferWasapiEndpoint = CanUseWasapiProcessedOutput();
         var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
-        if (preferWasapiEndpoint
-            && TryStartWasapiProcessedOutput(floatProvider, out var endpointFloatOutput, out var endpointFloatPlaybackProvider))
+        foreach (var backend in ProcessedOutputRoutePlanner.CreateAttemptOrder(CanUseWaveOutProcessedOutputFallback()))
         {
-            _processedOutputProvider = floatProvider;
-            _processedOutputPlaybackProvider = endpointFloatPlaybackProvider;
-            _processedOutput = endpointFloatOutput;
-            _processedOutputBackendDescription = "low-latency WASAPI endpoint";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (preferWasapiEndpoint
-            && TryStartWasapiProcessedOutput(pcmProvider, out var endpointPcmOutput, out var endpointPcmPlaybackProvider))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutputPlaybackProvider = endpointPcmPlaybackProvider;
-            _processedOutput = endpointPcmOutput;
-            _processedOutputBackendDescription = "low-latency WASAPI endpoint PCM";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (TryStartWaveOutProcessedOutput(floatProvider, out var floatWaveOut))
-        {
-            _processedOutputProvider = floatProvider;
-            _processedOutput = floatWaveOut;
-            _processedOutputBackendDescription = "WaveOut";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (TryStartWaveOutProcessedOutput(pcmProvider, out var pcmWaveOut))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutput = pcmWaveOut;
-            _processedOutputBackendDescription = "WaveOut PCM";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (!preferWasapiEndpoint
-            && TryStartWasapiProcessedOutput(floatProvider, out var defaultFloatOutput, out var defaultFloatPlaybackProvider))
-        {
-            _processedOutputProvider = floatProvider;
-            _processedOutputPlaybackProvider = defaultFloatPlaybackProvider;
-            _processedOutput = defaultFloatOutput;
-            _processedOutputBackendDescription = "default WASAPI";
-            ArmProcessedOutputRecoveryRamp();
-            return;
-        }
-
-        if (!preferWasapiEndpoint
-            && TryStartWasapiProcessedOutput(pcmProvider, out var defaultPcmOutput, out var defaultPcmPlaybackProvider))
-        {
-            _processedOutputProvider = pcmProvider;
-            _processedOutputPlaybackProvider = defaultPcmPlaybackProvider;
-            _processedOutput = defaultPcmOutput;
-            _processedOutputBackendDescription = "default WASAPI PCM";
-            ArmProcessedOutputRecoveryRamp();
-            return;
+            if (TryStartProcessedOutputBackend(
+                backend,
+                floatProvider,
+                pcmProvider,
+                out var provider,
+                out var player,
+                out var playbackProvider))
+            {
+                _processedOutputProvider = provider;
+                _processedOutputPlaybackProvider = playbackProvider;
+                _processedOutput = player;
+                _processedOutputBackendDescription = DescribeProcessedOutputBackend(backend);
+                ArmProcessedOutputRecoveryRamp();
+                return;
+            }
         }
 
         StopProcessedOutput();
         throw new InvalidOperationException("Could not start the selected processed output device.");
+    }
+
+    private bool TryStartProcessedOutputBackend(
+        ProcessedOutputRouteBackend backend,
+        BufferedWaveProvider floatProvider,
+        BufferedWaveProvider pcmProvider,
+        out BufferedWaveProvider provider,
+        out IWavePlayer? player,
+        out IWaveProvider? playbackProvider)
+    {
+        player = null;
+        playbackProvider = null;
+        provider = backend is ProcessedOutputRouteBackend.WasapiPcm or ProcessedOutputRouteBackend.WaveOutPcm
+            ? pcmProvider
+            : floatProvider;
+        return backend switch
+        {
+            ProcessedOutputRouteBackend.WasapiFloat or ProcessedOutputRouteBackend.WasapiPcm
+                => TryStartWasapiProcessedOutput(provider, out player, out playbackProvider),
+            ProcessedOutputRouteBackend.WaveOutFloat or ProcessedOutputRouteBackend.WaveOutPcm
+                => TryStartWaveOutProcessedOutput(provider, out player),
+            _ => false
+        };
+    }
+
+    private string DescribeProcessedOutputBackend(ProcessedOutputRouteBackend backend)
+    {
+        var wasapiName = CanUseWasapiProcessedOutput()
+            ? "low-latency WASAPI endpoint"
+            : "default WASAPI";
+        return backend switch
+        {
+            ProcessedOutputRouteBackend.WasapiFloat => wasapiName,
+            ProcessedOutputRouteBackend.WasapiPcm => $"{wasapiName} PCM",
+            ProcessedOutputRouteBackend.WaveOutFloat => "WaveOut",
+            ProcessedOutputRouteBackend.WaveOutPcm => "WaveOut PCM",
+            _ => "unknown output"
+        };
     }
 
     private bool CanUseWasapiProcessedOutput()

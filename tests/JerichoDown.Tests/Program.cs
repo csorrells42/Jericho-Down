@@ -34,6 +34,7 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
+    ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
@@ -478,6 +479,31 @@ static void ProcessedMonitorUsesLowLatencyBuffering()
     Assert(initialBuffer <= TimeSpan.FromMilliseconds(20), "initial live monitor buffer should stay low");
     Assert(targetBuffer <= TimeSpan.FromMilliseconds(20), "target live monitor buffer should stay low");
     Assert(maximumBuffer <= TimeSpan.FromMilliseconds(70), "maximum live monitor buffer should trim latency buildup");
+}
+
+static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
+{
+    var fullOrder = ProcessedOutputRoutePlanner.CreateAttemptOrder(canUseWaveOutFallback: true);
+    var expectedFullOrder = new[]
+    {
+        ProcessedOutputRouteBackend.WasapiFloat,
+        ProcessedOutputRouteBackend.WasapiPcm,
+        ProcessedOutputRouteBackend.WaveOutFloat,
+        ProcessedOutputRouteBackend.WaveOutPcm
+    };
+    Assert(
+        fullOrder.SequenceEqual(expectedFullOrder),
+        "default and endpoint output routes should try low-latency WASAPI before WaveOut fallback");
+
+    var endpointOnlyOrder = ProcessedOutputRoutePlanner.CreateAttemptOrder(canUseWaveOutFallback: false);
+    var expectedEndpointOnlyOrder = new[]
+    {
+        ProcessedOutputRouteBackend.WasapiFloat,
+        ProcessedOutputRouteBackend.WasapiPcm
+    };
+    Assert(
+        endpointOnlyOrder.SequenceEqual(expectedEndpointOnlyOrder),
+        "endpoint routes without a matching WaveOut device should still try both WASAPI formats");
 }
 
 static void InputChannelModesMapInterfaceLanes()
