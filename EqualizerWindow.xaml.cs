@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
@@ -39,16 +40,18 @@ public partial class EqualizerWindow : Window
     private const int DwmwaTextColor = 36;
     private const uint SeeMaskInvokeIdList = 0x0000000C;
     private const int SwShowNormal = 1;
-    private const double MinimumDisplayFrequency = 40d;
+    private const double MinimumDisplayFrequency = 20d;
     private const double MaximumDisplayFrequency = 20000d;
     private const double EqualizerHoverQ = 1.35d;
     private const int DefaultWaveformSampleRate = 44100;
     private const int MaximumWaveformHistorySeconds = 3;
+    private const int MaximumMicChannelCount = 10;
     private const double MicAnalysisDurationSeconds = 8d;
     private const double SequentialMicAnalysisPhaseSeconds = 5d;
     private const double ExpandedControlRailWidth = 360d;
     private const double CollapsedControlRailWidth = 44d;
     private const double RightControlRailWidth = 360d;
+    private const double DefaultAnalyzerSmoothingPercent = 80d;
     private const double EqualizerFaceplateOuterGap = 18d;
     private const double DenoiseDefaultStrength = 2d;
     private const double DenoiseMaximumStrength = 5d;
@@ -68,6 +71,19 @@ public partial class EqualizerWindow : Window
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
+    private static readonly Color[] MixingMicSpectrumColors =
+    [
+        Color.FromRgb(53, 232, 216),
+        Color.FromRgb(244, 197, 66),
+        Color.FromRgb(120, 196, 255),
+        Color.FromRgb(255, 120, 160),
+        Color.FromRgb(132, 225, 132),
+        Color.FromRgb(208, 157, 255),
+        Color.FromRgb(255, 151, 86),
+        Color.FromRgb(137, 224, 255),
+        Color.FromRgb(255, 235, 128),
+        Color.FromRgb(255, 255, 255)
+    ];
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
     private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
     private static readonly string KaraokeAiToolsFolder = System.IO.Path.Combine(AppStoragePaths.SettingsFolder, "Tools", "KaraokeAi");
@@ -97,6 +113,8 @@ public partial class EqualizerWindow : Window
     private readonly DirectShowCameraControlService _cameraControlService = new();
     private readonly AppSettingsState _appSettings = AppStateStore.LoadSettings();
     private readonly AppStartupRecovery _startupRecovery = AppStateStore.StartupRecovery;
+    private readonly ObservableCollection<MicChannelStrip> _micChannels = CreateDefaultMicChannels();
+    private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
@@ -106,8 +124,6 @@ public partial class EqualizerWindow : Window
     private readonly Queue<float> _rawWaveformHistory = new();
     private readonly Queue<float> _processedWaveformHistory = new();
     private volatile int _waveformSampleRate = DefaultWaveformSampleRate;
-    private readonly List<Border> _zoneBands = [];
-    private readonly List<Border> _zoneLabels = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
     [
         new("Rumble", 40, 80, "Low thumps, desk vibration, plosives"),
@@ -168,6 +184,9 @@ public partial class EqualizerWindow : Window
         StrokeThickness = 2.5,
         StrokeLineJoin = PenLineJoin.Round
     };
+    private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
+    private readonly List<Line> _mixingSpectrumGridLines = [];
+    private readonly double[][] _renderedMixingMicMagnitudes = new double[MaximumMicChannelCount][];
     private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
     private readonly SolidColorBrush _waveformGridBrush = new(Color.FromRgb(36, 45, 54));
@@ -188,6 +207,7 @@ public partial class EqualizerWindow : Window
     private double[] _renderedInput1Magnitudes = [];
     private double[] _renderedInput2Magnitudes = [];
     private double _visualCeiling = 0.25d;
+    private double _mixingVisualCeiling = 0.25d;
     private double _displayInputPeak;
     private long _lastInputLevelDisplayTimestamp;
     private double _lastInputLevelMeterWidth = -1d;
@@ -213,12 +233,18 @@ public partial class EqualizerWindow : Window
     private bool _isRestartingAudioStream;
     private bool _isCheckingAudioDeviceFormat;
     private bool _isClosing;
-    private bool _isRestoringAppState;
+    private bool _isRestoringAppState = true;
     private bool _safeStartCameraRecoveryActive;
     private bool _safeStartDx12Disabled;
     private bool _isUpdatingOutputRoutingUi;
+    private bool _isUpdatingMicChannelUi;
+    private bool _isUpdatingMixerUi;
     private int _audioStreamOperationVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
+    private double _masterMixVolumePercent = 100d;
+    private bool _masterMixNormalizeEnabled = true;
+    private bool _masterMixLimiterEnabled = true;
+    private double _masterMixLimiterCeilingDb = -1d;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "Jericho Down Sessions");
@@ -328,11 +354,18 @@ public partial class EqualizerWindow : Window
     private string? _cameraPumpWarningText;
     private DateTime _cameraPumpWarningExpiresUtc = DateTime.MinValue;
     private Direct3D12AudioGraphHost? _waveform3DGraphHost;
+    private Direct3D12AudioGraphHost? _selectedMicSpectrumGraphHost;
     private Direct3D12AudioGraphHost? _podcastSpectrumWaterfallGraphHost;
     private Direct3D12AudioGraphHost? _karaokeSpectrumWaterfallGraphHost;
+    private Direct3D12AudioGraphHost? _mixingMicSpectrumGraphHost;
+    private Direct3D12AudioGraphHost? _mixingOutputWaveform3DGraphHost;
+    private int _waterfallLinesPerGap = Direct3D12AudioGraphHost.DefaultWaterfallLinesPerGap;
+    private volatile bool _isMicDspSelectedMicSpectrumActive;
     private volatile bool _isMicDspSpectrumWaterfallActive;
     private volatile bool _isPodcastSpectrumWaterfallActive;
     private volatile bool _isKaraokeSpectrumWaterfallActive;
+    private volatile bool _isMixingMicSpectrumGraphActive;
+    private volatile bool _isMixingOutputWaveform3DActive;
     private EqualizerBand? _hoveredEqualizerBand;
     private bool _showWaveform;
     private bool _showWaveform3D = true;
@@ -368,6 +401,25 @@ public partial class EqualizerWindow : Window
     private bool _micAnalysisSequential;
     private bool _micAnalysisNormalizeVolume = true;
 
+    private static ShapePath[] CreateMixingMicSpectrumTraces()
+    {
+        var traces = new ShapePath[MaximumMicChannelCount];
+        for (var i = 0; i < traces.Length; i++)
+        {
+            traces[i] = new ShapePath
+            {
+                Stroke = new SolidColorBrush(MixingMicSpectrumColors[i % MixingMicSpectrumColors.Length]),
+                StrokeThickness = i == 0 ? 2.6d : 2d,
+                Opacity = i == 0 ? 0.98d : 0.88d,
+                StrokeLineJoin = PenLineJoin.Round,
+                IsHitTestVisible = false
+            };
+            Panel.SetZIndex(traces[i], 1);
+        }
+
+        return traces;
+    }
+
     public EqualizerWindow()
     {
         InitializeComponent();
@@ -378,37 +430,11 @@ public partial class EqualizerWindow : Window
         _safeStartDx12Disabled = _startupRecovery.PreviousRunDidNotCloseCleanly;
         FreezeSharedBrushes();
         OrderMainTabs();
+        _activeMicChannel = _micChannels[0];
         DataContext = Settings;
-        Bands =
-        [
-            new EqualizerBand("31", 31),
-            new EqualizerBand("45", 45),
-            new EqualizerBand("63", 63),
-            new EqualizerBand("90", 90),
-            new EqualizerBand("125", 125),
-            new EqualizerBand("180", 180),
-            new EqualizerBand("250", 250),
-            new EqualizerBand("355", 355),
-            new EqualizerBand("500", 500),
-            new EqualizerBand("710", 710),
-            new EqualizerBand("1k", 1000),
-            new EqualizerBand("1.4k", 1400),
-            new EqualizerBand("2k", 2000),
-            new EqualizerBand("2.8k", 2800),
-            new EqualizerBand("4k", 4000),
-            new EqualizerBand("5.6k", 5600),
-            new EqualizerBand("8k", 8000),
-            new EqualizerBand("11k", 11200),
-            new EqualizerBand("16k", 16000),
-            new EqualizerBand("20k", 20000)
-        ];
-
         EqBandPanel.ItemsSource = Bands;
-        foreach (var band in Bands)
-        {
-            band.PropertyChanged += EqualizerBandPropertyChanged;
-        }
-
+        Dispatcher.BeginInvoke(new Action(UpdateEqualizerGuideLayout), DispatcherPriority.Loaded);
+        AttachEqualizerBandHandlers(_activeMicChannel);
         SyncEqualizerSettings();
         SpectrumCanvas.Children.Add(_equalizerHoverRegion);
         SpectrumCanvas.Children.Add(_input1Trace);
@@ -417,6 +443,11 @@ public partial class EqualizerWindow : Window
         SpectrumCanvas.Children.Add(_liveTrace);
         WaveformCanvas.Children.Add(_rawWaveTrace);
         WaveformCanvas.Children.Add(_processedWaveTrace);
+        foreach (var trace in _mixingMicSpectrumTraces)
+        {
+            MixingMicSpectrumCanvas.Children.Add(trace);
+        }
+
         _spectrumService.SpectrumAvailable += SpectrumAvailable;
         _spectrumService.StreamStatusChanged += SpectrumServiceStreamStatusChanged;
         _cameraPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
@@ -464,7 +495,9 @@ public partial class EqualizerWindow : Window
         [
             "Podcast",
             "Mic / DSP",
-            "Karaoke"
+            "Mixing",
+            "Karaoke",
+            "About"
         ];
 
         var tabs = MainTabControl.Items.OfType<TabItem>().ToList();
@@ -482,13 +515,29 @@ public partial class EqualizerWindow : Window
         MainTabControl.SelectedIndex = 0;
     }
 
-    public ObservableCollection<EqualizerBand> Bands { get; }
+    public ObservableCollection<EqualizerBand> Bands => _activeMicChannel.Bands;
 
     public ObservableCollection<string> UserPresetNames { get; } = [];
 
     public ObservableCollection<string> CameraProfileNames { get; } = [];
 
-    public VoiceProcessorSettings Settings { get; } = new();
+    public VoiceProcessorSettings Settings => _activeMicChannel.ProcessorSettings;
+
+    private void AttachEqualizerBandHandlers(MicChannelStrip channel)
+    {
+        foreach (var band in channel.Bands)
+        {
+            band.PropertyChanged += EqualizerBandPropertyChanged;
+        }
+    }
+
+    private void DetachEqualizerBandHandlers(MicChannelStrip channel)
+    {
+        foreach (var band in channel.Bands)
+        {
+            band.PropertyChanged -= EqualizerBandPropertyChanged;
+        }
+    }
 
     private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -500,13 +549,42 @@ public partial class EqualizerWindow : Window
 
     private void SyncEqualizerSettings()
     {
-        var gains = new double[Bands.Count];
-        for (var i = 0; i < Bands.Count; i++)
+        SyncEqualizerSettings(_activeMicChannel);
+    }
+
+    private static void SyncEqualizerSettings(MicChannelStrip channel)
+    {
+        var gains = new double[channel.Bands.Count];
+        for (var i = 0; i < channel.Bands.Count; i++)
         {
-            gains[i] = Bands[i].IsEnabled ? Bands[i].GainDb : 0d;
+            gains[i] = channel.Bands[i].IsEnabled ? channel.Bands[i].GainDb : 0d;
         }
 
-        Settings.SetEqualizerGains(gains);
+        channel.ProcessorSettings.SetEqualizerGains(gains);
+    }
+
+    private static void ApplyEqualizerBandState(MicChannelStrip channel, IReadOnlyList<EqualizerBandSettingsState> bands)
+    {
+        for (var i = 0; i < channel.Bands.Count; i++)
+        {
+            if (i >= bands.Count)
+            {
+                channel.Bands[i].IsEnabled = true;
+                channel.Bands[i].GainDb = 0d;
+                continue;
+            }
+
+            channel.Bands[i].IsEnabled = bands[i].IsEnabled;
+            channel.Bands[i].GainDb = Math.Clamp(bands[i].GainDb, -12d, 12d);
+        }
+    }
+
+    private static void SetProcessorSetting<T>(VoiceProcessorSettings settings, string name, T value)
+    {
+        var property = UserPresetSettingProperties.FirstOrDefault(candidate =>
+            candidate.Name.Equals(name, StringComparison.Ordinal)
+            && candidate.PropertyType == typeof(T));
+        property?.SetValue(settings, value);
     }
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
@@ -527,19 +605,16 @@ public partial class EqualizerWindow : Window
         UpdateMicCompareUiState();
 
         ApplyDarkTitleBar();
-        InputChannelComboBox.ItemsSource = new[]
-        {
-            new InputChannelOption(InputChannelMode.MonoSum, "Sum L+R"),
-            new InputChannelOption(InputChannelMode.Input1Left, "Input 1 L"),
-            new InputChannelOption(InputChannelMode.Input2Right, "Input 2 R")
-        };
-        RestoreInputChannelSelection();
-
         var devices = MicrophoneSpectrumService.GetInputDevices();
         MicrophoneComboBox.ItemsSource = devices;
+        RestoreMicChannelState(devices);
+        MicChannelComboBox.ItemsSource = _micChannels;
+        MixingChannelsItemsControl.ItemsSource = _micChannels;
+        MicChannelComboBox.SelectedItem = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
+        ApplyMixerStateToUi();
         if (devices.Count > 0)
         {
-            MicrophoneComboBox.SelectedItem = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? devices[0];
+            ApplyActiveMicChannelToUi();
         }
         else
         {
@@ -709,15 +784,137 @@ public partial class EqualizerWindow : Window
         UpdateKaraokeTransportControls();
     }
 
-    private void RestoreInputChannelSelection()
+    private static InputChannelOption[] CreateInputChannelOptions(AudioInputDevice? device, AudioDeviceFormat? deviceFormat)
     {
-        var mode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
+        var availableChannels = GetAvailableInputChannelCount(device, deviceFormat);
+        var options = new List<InputChannelOption>
+        {
+            new(InputChannelMode.MonoSum, InputChannelModeInfo.GetDisplayLabel(InputChannelMode.MonoSum))
+        };
+
+        for (var channelIndex = 0; channelIndex < availableChannels; channelIndex++)
+        {
+            var mode = InputChannelModeInfo.GetChannelMode(channelIndex);
+            if (mode is not null)
+            {
+                options.Add(new InputChannelOption(mode.Value, GetInputChannelDisplayLabel(mode.Value, availableChannels)));
+            }
+        }
+
+        return options.ToArray();
+    }
+
+    private static int GetAvailableInputChannelCount(AudioInputDevice? device, AudioDeviceFormat? deviceFormat)
+    {
+        if (device is null)
+        {
+            return 0;
+        }
+
+        var channelCount = deviceFormat?.Channels > 0
+            ? deviceFormat.Value.Channels
+            : device.MaximumInputChannels;
+        return Math.Clamp(channelCount, 0, MaximumMicChannelCount);
+    }
+
+    private static string GetInputChannelDisplayLabel(InputChannelMode mode, int availableChannels)
+    {
+        if (availableChannels <= 1 && mode == InputChannelMode.Input1Left)
+        {
+            return "Input 1";
+        }
+
+        return InputChannelModeInfo.GetDisplayLabel(mode);
+    }
+
+    private void RestoreMicChannelState(IReadOnlyList<AudioInputDevice> devices)
+    {
+        foreach (var channel in _micChannels)
+        {
+            channel.SelectedDevice = null;
+        }
+
+        var persistedChannels = _appSettings.MicChannels ?? [];
+        foreach (var state in persistedChannels)
+        {
+            var channel = FindMicChannel(state.ChannelNumber);
+            if (channel is null)
+            {
+                continue;
+            }
+
+            ApplyMicChannelState(channel, state, devices);
+        }
+
+        if (persistedChannels.Count == 0)
+        {
+            var firstChannel = _micChannels[0];
+            firstChannel.SelectedDevice = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? devices.FirstOrDefault();
+            firstChannel.InputChannelMode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
+                ? parsedMode
+                : InputChannelMode.MonoSum;
+            firstChannel.ActivePresetName = string.IsNullOrWhiteSpace(_appSettings.ActivePresetName)
+                ? firstChannel.ActivePresetName
+                : _appSettings.ActivePresetName;
+            firstChannel.ActivePresetIsUserPreset = _appSettings.ActivePresetIsUserPreset;
+        }
+        else
+        {
+            foreach (var channel in _micChannels.Where(channel => channel.SelectedDevice is null))
+            {
+                channel.SelectedDevice = devices.FirstOrDefault();
+            }
+        }
+
+        _activeMicChannel = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
+    }
+
+    private void ApplyMicChannelState(MicChannelStrip channel, MicChannelSettingsState state, IReadOnlyList<AudioInputDevice> devices)
+    {
+        channel.DisplayName = string.IsNullOrWhiteSpace(state.DisplayName)
+            ? $"Mic {channel.ChannelNumber}"
+            : state.DisplayName.Trim();
+        channel.SelectedDevice = FindAudioInputDevice(devices, state.MicrophoneName) ?? devices.FirstOrDefault();
+        channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
             ? parsedMode
             : InputChannelMode.MonoSum;
-        var option = InputChannelComboBox.Items
-            .OfType<InputChannelOption>()
-            .FirstOrDefault(candidate => candidate.Mode == mode);
-        InputChannelComboBox.SelectedItem = option ?? InputChannelComboBox.Items.OfType<InputChannelOption>().FirstOrDefault();
+        channel.IsEnabled = state.IsEnabled;
+        channel.IsMuted = state.IsMuted;
+        channel.VolumePercent = Math.Clamp(state.VolumePercent ?? 100d, 0d, 150d);
+        channel.ActivePresetName = string.IsNullOrWhiteSpace(state.ActivePresetName)
+            ? channel.ActivePresetName
+            : state.ActivePresetName.Trim();
+        channel.ActivePresetIsUserPreset = state.ActivePresetIsUserPreset;
+        channel.PresetDescription = string.IsNullOrWhiteSpace(state.PresetDescription)
+            ? channel.PresetDescription
+            : state.PresetDescription.Trim();
+        channel.AnalyzerSmoothing = Math.Clamp(state.AnalyzerSmoothing ?? channel.AnalyzerSmoothing, 0d, 100d);
+
+        foreach (var setting in state.BooleanSettings ?? [])
+        {
+            SetProcessorSetting(channel.ProcessorSettings, setting.Key, setting.Value);
+        }
+
+        foreach (var setting in state.NumberSettings ?? [])
+        {
+            if (double.IsFinite(setting.Value))
+            {
+                SetProcessorSetting(channel.ProcessorSettings, setting.Key, setting.Value);
+            }
+        }
+
+        ApplyEqualizerBandState(channel, state.EqualizerBands ?? []);
+        SyncEqualizerSettings(channel);
+    }
+
+    private static MicChannelStrip? FindMicChannel(IEnumerable<MicChannelStrip> channels, int channelNumber)
+    {
+        return channels.FirstOrDefault(channel => channel.ChannelNumber == channelNumber);
+    }
+
+    private MicChannelStrip? FindMicChannel(int channelNumber)
+    {
+        return FindMicChannel(_micChannels, channelNumber);
     }
 
     private static AudioInputDevice? FindAudioInputDevice(
@@ -769,6 +966,12 @@ public partial class EqualizerWindow : Window
 
     private void RestorePersistedPresetOrDefault()
     {
+        if (HasPersistedMicChannelState())
+        {
+            ApplyActiveMicPresetUiState();
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(_appSettings.ActivePresetName))
         {
             try
@@ -794,6 +997,11 @@ public partial class EqualizerWindow : Window
         }
 
         LoadWarmRadioPreset();
+    }
+
+    private bool HasPersistedMicChannelState()
+    {
+        return _appSettings.MicChannels is { Count: > 0 };
     }
 
     private bool ApplyBuiltInPreset(string presetName)
@@ -835,6 +1043,14 @@ public partial class EqualizerWindow : Window
         }
 
         return false;
+    }
+
+    private void ApplyActiveMicPresetUiState()
+    {
+        SetProcessingSliderDefaults(_activeMicChannel.PresetDescription);
+        SetActivePresetButton(_activeMicChannel.ActivePresetIsUserPreset ? null : _activeMicChannel.ActivePresetName);
+        _lastLoadedPresetName = _activeMicChannel.ActivePresetName;
+        _lastLoadedPresetIsUserPreset = _activeMicChannel.ActivePresetIsUserPreset;
     }
 
     private void ApplyDarkTitleBar()
@@ -905,7 +1121,7 @@ public partial class EqualizerWindow : Window
 
     private void PersistAppState()
     {
-        if (_isRestoringAppState || _isClosing)
+        if (_isRestoringAppState || _isClosing || !IsLoaded)
         {
             return;
         }
@@ -923,12 +1139,13 @@ public partial class EqualizerWindow : Window
     {
         var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
         var camera = CameraComboBox?.SelectedItem as CameraDevice;
-        var mode = Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem);
+        var mode = Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox?.SelectedItem);
         var selectedAudioPath = GetSelectedAudioRecordingPath();
         var selectedSessionPath = GetSelectedSessionRecordingPath();
         var selectedKaraokeRecordingPath = GetSelectedKaraokeRecordingPath();
         var karaokeTrackPath = _karaokeTrackPath;
         var karaokeTrackPaths = _karaokeQueue.Select(track => track.Path).ToList();
+        var activeMicChannel = _activeMicChannel ?? _micChannels.FirstOrDefault();
         if (karaokeTrackPaths.Count == 0
             && !_karaokeQueueExplicitlyCleared
             && _appSettings.KaraokeTrackPaths is { Count: > 0 })
@@ -952,8 +1169,14 @@ public partial class EqualizerWindow : Window
             WindowHeight = double.IsFinite(bounds.Height) ? bounds.Height : null,
             WindowMaximized = WindowState == WindowState.Maximized,
             LeftControlRailCollapsed = _isLeftControlRailCollapsed,
-            MicrophoneName = _selectedDevice?.Name,
-            InputChannelMode = _selectedInputChannelMode.ToString(),
+            SelectedMicChannelNumber = activeMicChannel?.ChannelNumber ?? 1,
+            MicChannels = CaptureMicChannelStates(),
+            MicrophoneName = activeMicChannel?.SelectedDevice?.Name,
+            InputChannelMode = activeMicChannel?.InputChannelMode.ToString(),
+            MixerMasterVolumePercent = _masterMixVolumePercent,
+            MixerAutoNormalizeEnabled = _masterMixNormalizeEnabled,
+            MixerLimiterEnabled = _masterMixLimiterEnabled,
+            MixerLimiterCeilingDb = _masterMixLimiterCeilingDb,
             OutputDeviceName = _selectedOutputDevice?.Name,
             OutputEndpointId = _selectedOutputDevice?.EndpointId,
             ProcessedOutputEnabled = ProcessedOutputCheckBox?.IsChecked == true,
@@ -985,6 +1208,54 @@ public partial class EqualizerWindow : Window
             ActivePresetName = _lastLoadedPresetName,
             ActivePresetIsUserPreset = _lastLoadedPresetIsUserPreset
         };
+    }
+
+    private List<MicChannelSettingsState> CaptureMicChannelStates()
+    {
+        return _micChannels.Select(channel =>
+        {
+            var state = new MicChannelSettingsState
+            {
+                ChannelNumber = channel.ChannelNumber,
+                DisplayName = channel.DisplayName,
+                MicrophoneName = channel.SelectedDevice?.Name,
+                InputChannelMode = channel.InputChannelMode.ToString(),
+                IsEnabled = channel.IsEnabled,
+                IsMuted = channel.IsMuted,
+                VolumePercent = channel.VolumePercent,
+                ActivePresetName = channel.ActivePresetName,
+                ActivePresetIsUserPreset = channel.ActivePresetIsUserPreset,
+                PresetDescription = channel.PresetDescription,
+                AnalyzerSmoothing = channel.AnalyzerSmoothing,
+                EqualizerBands = channel.Bands
+                    .Select(band => new EqualizerBandSettingsState
+                    {
+                        Label = band.Label,
+                        FrequencyHz = band.CenterFrequencyHz,
+                        GainDb = band.GainDb,
+                        IsEnabled = band.IsEnabled
+                    })
+                    .ToList()
+            };
+
+            foreach (var property in UserPresetSettingProperties)
+            {
+                if (property.PropertyType == typeof(double))
+                {
+                    var value = (double)(property.GetValue(channel.ProcessorSettings) ?? 0d);
+                    if (double.IsFinite(value))
+                    {
+                        state.NumberSettings[property.Name] = value;
+                    }
+                }
+                else if (property.PropertyType == typeof(bool))
+                {
+                    state.BooleanSettings[property.Name] = (bool)(property.GetValue(channel.ProcessorSettings) ?? false);
+                }
+            }
+
+            return state;
+        }).ToList();
     }
 
     private static int RgbToColorRef(byte red, byte green, byte blue)
@@ -1092,6 +1363,12 @@ public partial class EqualizerWindow : Window
             _waveform3DGraphHost = null;
         }
 
+        if (_selectedMicSpectrumGraphHost is not null)
+        {
+            _selectedMicSpectrumGraphHost.Dispose();
+            _selectedMicSpectrumGraphHost = null;
+        }
+
         if (_podcastSpectrumWaterfallGraphHost is not null)
         {
             _podcastSpectrumWaterfallGraphHost.Dispose();
@@ -1102,6 +1379,18 @@ public partial class EqualizerWindow : Window
         {
             _karaokeSpectrumWaterfallGraphHost.Dispose();
             _karaokeSpectrumWaterfallGraphHost = null;
+        }
+
+        if (_mixingMicSpectrumGraphHost is not null)
+        {
+            _mixingMicSpectrumGraphHost.Dispose();
+            _mixingMicSpectrumGraphHost = null;
+        }
+
+        if (_mixingOutputWaveform3DGraphHost is not null)
+        {
+            _mixingOutputWaveform3DGraphHost.Dispose();
+            _mixingOutputWaveform3DGraphHost = null;
         }
 
         _textureNativeRecordingSession?.Dispose();
@@ -1141,12 +1430,50 @@ public partial class EqualizerWindow : Window
         SpectrumCanvas.Margin = centerMargin;
         WaveformCanvas.Margin = centerMargin;
         AnalyzerToolbar.Margin = centerMargin;
-        InlineWaveform3DHost.Margin = new Thickness(leftWidth, 58, RightControlRailWidth, 280);
         EqualizerFaceplate.Margin = new Thickness(
             leftWidth + EqualizerFaceplateOuterGap,
             0,
             RightControlRailWidth + EqualizerFaceplateOuterGap,
             EqualizerFaceplateOuterGap);
+        UpdateEqualizerGuideLayout(leftWidth);
+    }
+
+    private void UpdateEqualizerGuideLayout()
+    {
+        var leftWidth = _isLeftControlRailCollapsed
+            ? CollapsedControlRailWidth
+            : ExpandedControlRailWidth;
+        UpdateEqualizerGuideLayout(leftWidth);
+    }
+
+    private void UpdateEqualizerGuideLayout(double leftWidth)
+    {
+        if (EqVoiceZoneGuideCanvas is null || EqualizerFaceplate is null)
+        {
+            return;
+        }
+
+        var faceplateHeight = EqualizerFaceplate.ActualHeight;
+        if (faceplateHeight <= 1d)
+        {
+            faceplateHeight = 252d;
+        }
+
+        var guideHeight = EqVoiceZoneGuideCanvas.ActualHeight > 1d
+            ? EqVoiceZoneGuideCanvas.ActualHeight
+            : 30d;
+        var guideBottomMargin = EqualizerFaceplateOuterGap + faceplateHeight + 4d;
+        InlineWaveform3DHost.Margin = new Thickness(
+            leftWidth,
+            58,
+            RightControlRailWidth,
+            guideBottomMargin + guideHeight + 6d);
+        EqVoiceZoneGuideCanvas.Margin = new Thickness(
+            leftWidth + EqualizerFaceplateOuterGap,
+            0,
+            RightControlRailWidth + EqualizerFaceplateOuterGap,
+            guideBottomMargin);
+        Dispatcher.BeginInvoke(new Action(UpdateEqVoiceZoneGuide), DispatcherPriority.Render);
     }
 
     private void BrowseOutputFolderClicked(object sender, RoutedEventArgs e)
@@ -1984,7 +2311,27 @@ public partial class EqualizerWindow : Window
             EnsureInlineWaveform3DView();
             if (_latestFrame is not null)
             {
-                _waveform3DGraphHost?.AcceptFrame(_latestFrame);
+                _waveform3DGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
+            }
+        }
+        else if (IsMicDspTabSelected() && !_showWaveform && !_showMicCompare)
+        {
+            EnsureSelectedMicSpectrumGraphView();
+            InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
+            if (_latestFrame is not null)
+            {
+                _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
+            }
+        }
+
+        if (IsMixingTabSelected())
+        {
+            EnsureMixingMicSpectrumGraphView();
+            EnsureMixingOutputWaveform3DView();
+            if (_latestFrame is not null)
+            {
+                _mixingMicSpectrumGraphHost?.AcceptFrame(_latestFrame);
+                _mixingOutputWaveform3DGraphHost?.AcceptFrame(_latestFrame);
             }
         }
 
@@ -2041,6 +2388,11 @@ public partial class EqualizerWindow : Window
     private bool IsMicDspTabSelected()
     {
         return IsMainTabSelected("Mic / DSP");
+    }
+
+    private bool IsMixingTabSelected()
+    {
+        return IsMainTabSelected("Mixing");
     }
 
     private bool IsMainTabSelected(string header)
@@ -3401,12 +3753,19 @@ public partial class EqualizerWindow : Window
         _showWaveform = false;
         _showWaveform3D = false;
         _showMicCompare = false;
-        _spectrumService.StereoInputAnalysisEnabled = false;
+        _spectrumService.StereoInputAnalysisEnabled = true;
+        EnsureSelectedMicSpectrumGraphView();
+        InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
         MicCompareLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
+
+        if (_latestFrame is not null)
+        {
+            _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
+        }
     }
 
     private void WaveformViewClicked(object sender, RoutedEventArgs e)
@@ -3442,6 +3801,8 @@ public partial class EqualizerWindow : Window
         _showMicCompare = false;
         _spectrumService.StereoInputAnalysisEnabled = false;
         EnsureInlineWaveform3DView();
+        ApplyWaterfallLineDensity();
+        InlineWaveform3DHost.Content = _waveform3DGraphHost;
         UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
@@ -3450,7 +3811,7 @@ public partial class EqualizerWindow : Window
 
         if (_latestFrame is not null)
         {
-            _waveform3DGraphHost?.AcceptFrame(_latestFrame);
+            _waveform3DGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
         }
     }
 
@@ -3461,17 +3822,30 @@ public partial class EqualizerWindow : Window
 
     private void UpdateGraphSurfaceVisibility()
     {
-        SpectrumCanvas.Visibility = _showWaveform || _showWaveform3D
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        var showDx12Spectrum = !_showWaveform && !_showWaveform3D && !_showMicCompare;
+        SpectrumCanvas.Visibility = _showMicCompare
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         WaveformCanvas.Visibility = _showWaveform
             ? Visibility.Visible
             : Visibility.Collapsed;
-        InlineWaveform3DHost.Visibility = _showWaveform3D
+        InlineWaveform3DHost.Visibility = _showWaveform3D || showDx12Spectrum
             ? Visibility.Visible
             : Visibility.Collapsed;
+        if (showDx12Spectrum)
+        {
+            EnsureSelectedMicSpectrumGraphView();
+            InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
+        }
+        else if (_showWaveform3D)
+        {
+            EnsureInlineWaveform3DView();
+            InlineWaveform3DHost.Content = _waveform3DGraphHost;
+        }
+
         UpdateGraphViewButtonStates();
         UpdateEqualizerHoverRegion();
+        UpdateDx12EqualizerHoverRegion();
         RefreshActiveSpectrumWaterfallHosts();
     }
 
@@ -3491,16 +3865,42 @@ public partial class EqualizerWindow : Window
         }
 
         var graphHost = new Direct3D12AudioGraphHost();
+        graphHost.WaterfallLinesPerGap = _waterfallLinesPerGap;
         graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
         InlineWaveform3DHost.Content = graphHost;
         _waveform3DGraphHost = graphHost;
+        if (_showWaveform3D)
+        {
+            InlineWaveform3DHost.Content = graphHost;
+        }
+    }
+
+    private void EnsureSelectedMicSpectrumGraphView()
+    {
+        if (_selectedMicSpectrumGraphHost is not null)
+        {
+            return;
+        }
+
+        var graphHost = new Direct3D12AudioGraphHost
+        {
+            GraphMode = Direct3D12AudioGraphMode.SelectedMicSpectrum
+        };
+        graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
+        InlineWaveform3DHost.Content = graphHost;
+        _selectedMicSpectrumGraphHost = graphHost;
+        if (!_showWaveform && !_showWaveform3D && !_showMicCompare)
+        {
+            InlineWaveform3DHost.Content = graphHost;
+        }
+        UpdateDx12EqualizerHoverRegion();
     }
 
     private void Dx12AudioGraphStatusChanged(object? sender, string status)
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if (_showWaveform3D && StatusText is not null)
+            if ((_showWaveform3D || !_showWaveform && !_showMicCompare) && StatusText is not null)
             {
                 StatusText.Text = status;
             }
@@ -3509,17 +3909,28 @@ public partial class EqualizerWindow : Window
 
     private void RefreshActiveSpectrumWaterfallHosts()
     {
+        var micDspSpectrumActive = IsMicDspTabSelected() && !_showWaveform && !_showWaveform3D && !_showMicCompare;
         var micDspActive = IsMicDspTabSelected() && _showWaveform3D;
         var podcastActive = IsPodcastTabSelected();
         var karaokeActive = IsKaraokeTabSelected();
+        var mixingActive = IsMixingTabSelected();
 
+        _isMicDspSelectedMicSpectrumActive = micDspSpectrumActive;
         _isMicDspSpectrumWaterfallActive = micDspActive;
         _isPodcastSpectrumWaterfallActive = podcastActive;
         _isKaraokeSpectrumWaterfallActive = karaokeActive;
+        _isMixingMicSpectrumGraphActive = mixingActive;
+        _isMixingOutputWaveform3DActive = mixingActive;
+        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicDspTabSelected() && _showMicCompare;
 
         if (micDspActive)
         {
             EnsureInlineWaveform3DView();
+        }
+
+        if (micDspSpectrumActive)
+        {
+            EnsureSelectedMicSpectrumGraphView();
         }
 
         if (podcastActive)
@@ -3530,6 +3941,12 @@ public partial class EqualizerWindow : Window
         if (karaokeActive)
         {
             EnsureKaraokeSpectrumWaterfallView();
+        }
+
+        if (mixingActive)
+        {
+            EnsureMixingMicSpectrumGraphView();
+            EnsureMixingOutputWaveform3DView();
         }
     }
 
@@ -3555,6 +3972,33 @@ public partial class EqualizerWindow : Window
         var graphHost = new Direct3D12AudioGraphHost();
         KaraokeSpectrumWaterfallHost.Content = graphHost;
         _karaokeSpectrumWaterfallGraphHost = graphHost;
+    }
+
+    private void EnsureMixingOutputWaveform3DView()
+    {
+        if (_mixingOutputWaveform3DGraphHost is not null)
+        {
+            return;
+        }
+
+        var graphHost = new Direct3D12AudioGraphHost();
+        MixingOutputWaveform3DHost.Content = graphHost;
+        _mixingOutputWaveform3DGraphHost = graphHost;
+    }
+
+    private void EnsureMixingMicSpectrumGraphView()
+    {
+        if (_mixingMicSpectrumGraphHost is not null)
+        {
+            return;
+        }
+
+        var graphHost = new Direct3D12AudioGraphHost
+        {
+            GraphMode = Direct3D12AudioGraphMode.MicrophoneSpectrumLines
+        };
+        MixingMicSpectrumGraphHost.Content = graphHost;
+        _mixingMicSpectrumGraphHost = graphHost;
     }
 
     private void RecordProcessedAudioChanged(object sender, RoutedEventArgs e)
@@ -3585,8 +4029,40 @@ public partial class EqualizerWindow : Window
         MicAnalysisPanel.Visibility = _showMicCompare ? Visibility.Visible : Visibility.Collapsed;
         EqBandPanel.IsEnabled = !_showMicCompare;
         EqBandPanel.Opacity = _showMicCompare ? 0.35d : 1d;
+        EqVoiceZoneGuideCanvas.Opacity = _showMicCompare ? 0.35d : 1d;
+        WaterfallLinesPanel.Visibility = _showWaveform3D ? Visibility.Visible : Visibility.Collapsed;
         WaveformOptionsPanel.Visibility = _showWaveform ? Visibility.Visible : Visibility.Collapsed;
-        AnalyzerSmoothingPanel.Visibility = _showWaveform || _showWaveform3D ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void WaterfallLinesChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (WaterfallLinesSlider is null)
+        {
+            return;
+        }
+
+        _waterfallLinesPerGap = Math.Clamp(
+            (int)Math.Round(WaterfallLinesSlider.Value),
+            Direct3D12AudioGraphHost.MinimumWaterfallLinesPerGap,
+            Direct3D12AudioGraphHost.MaximumWaterfallLinesPerGap);
+        if (Math.Abs(WaterfallLinesSlider.Value - _waterfallLinesPerGap) > 0.001d)
+        {
+            WaterfallLinesSlider.Value = _waterfallLinesPerGap;
+        }
+
+        ApplyWaterfallLineDensity();
+        if (_showWaveform3D && _latestFrame is not null)
+        {
+            _waveform3DGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
+        }
+    }
+
+    private void ApplyWaterfallLineDensity()
+    {
+        if (_waveform3DGraphHost is not null)
+        {
+            _waveform3DGraphHost.WaterfallLinesPerGap = _waterfallLinesPerGap;
+        }
     }
 
     private void EqSliderLoaded(object sender, RoutedEventArgs e)
@@ -3603,6 +4079,7 @@ public partial class EqualizerWindow : Window
         {
             _hoveredEqualizerBand = band;
             UpdateEqualizerHoverRegion();
+            UpdateDx12EqualizerHoverRegion();
         }
     }
 
@@ -3613,6 +4090,7 @@ public partial class EqualizerWindow : Window
         {
             _hoveredEqualizerBand = null;
             UpdateEqualizerHoverRegion();
+            UpdateDx12EqualizerHoverRegion();
         }
     }
 
@@ -3646,7 +4124,14 @@ public partial class EqualizerWindow : Window
 
     private async void MicrophoneSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isUpdatingMicChannelUi)
+        {
+            return;
+        }
+
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
+        _activeMicChannel.SelectedDevice = _selectedDevice;
+        ClearWaveformHistory();
         var selectedDevice = _selectedDevice;
         var selectedDeviceFormat = await GetDeviceFormatAsync(selectedDevice);
         if (!Equals(_selectedDevice, selectedDevice))
@@ -3655,19 +4140,137 @@ public partial class EqualizerWindow : Window
         }
 
         _selectedDeviceFormat = selectedDeviceFormat;
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            RefreshInputChannelOptionsForActiveDevice(selectedDeviceFormat);
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
+        ConfigureLiveMixFromChannels();
         await RestartSelectedAudioStreamAsync("Listening");
         PersistAppState();
     }
 
     private async void InputChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isUpdatingMicChannelUi)
+        {
+            return;
+        }
+
         if (InputChannelComboBox.SelectedItem is InputChannelOption option)
         {
             _selectedInputChannelMode = option.Mode;
+            _activeMicChannel.InputChannelMode = option.Mode;
+            ClearWaveformHistory();
         }
 
+        ConfigureLiveMixFromChannels();
         await RestartSelectedAudioStreamAsync("Listening");
         PersistAppState();
+    }
+
+    private async void MicChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingMicChannelUi || MicChannelComboBox.SelectedItem is not MicChannelStrip channel)
+        {
+            return;
+        }
+
+        await SetActiveMicChannelAsync(channel, restartAudio: true);
+        PersistAppState();
+    }
+
+    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)
+    {
+        if (ReferenceEquals(_activeMicChannel, channel))
+        {
+            ApplyActiveMicChannelToUi();
+            return;
+        }
+
+        DetachEqualizerBandHandlers(_activeMicChannel);
+        _activeMicChannel = channel;
+        ClearWaveformHistory();
+        AttachEqualizerBandHandlers(_activeMicChannel);
+        DataContext = Settings;
+        EqBandPanel.ItemsSource = Bands;
+        UpdateEqVoiceZoneGuide();
+        SyncEqualizerSettings();
+        ApplyActiveMicChannelToUi();
+        ApplyActiveMicPresetUiState();
+        ConfigureLiveMixFromChannels();
+        if (restartAudio)
+        {
+            await RestartSelectedAudioStreamAsync("Listening");
+        }
+    }
+
+    private void ApplyActiveMicChannelToUi()
+    {
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            if (MicChannelComboBox is not null && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
+            {
+                MicChannelComboBox.SelectedItem = _activeMicChannel;
+            }
+
+            _selectedDevice = _activeMicChannel.SelectedDevice;
+            _selectedInputChannelMode = _activeMicChannel.InputChannelMode;
+            _selectedDeviceFormat = GetSelectedDeviceFormat();
+            MicrophoneComboBox.SelectedItem = _selectedDevice;
+            RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
+        UpdateAudioFormatRouteText();
+    }
+
+    private void RefreshInputChannelOptionsForActiveDevice(AudioDeviceFormat? selectedDeviceFormat)
+    {
+        if (InputChannelComboBox is null || _activeMicChannel is null)
+        {
+            return;
+        }
+
+        var options = CreateInputChannelOptions(_activeMicChannel.SelectedDevice, selectedDeviceFormat);
+        InputChannelComboBox.ItemsSource = options;
+        var selectedOption = options.FirstOrDefault(option => option.Mode == _activeMicChannel.InputChannelMode)
+            ?? options.FirstOrDefault(option => option.Mode == InputChannelMode.MonoSum)
+            ?? options.FirstOrDefault();
+        if (selectedOption is not null)
+        {
+            _activeMicChannel.InputChannelMode = selectedOption.Mode;
+            _selectedInputChannelMode = selectedOption.Mode;
+            InputChannelComboBox.SelectedItem = selectedOption;
+        }
+    }
+
+    private void RefreshInputChannelOptionsWithoutSelectionEvents(AudioDeviceFormat? selectedDeviceFormat)
+    {
+        var previousMode = _selectedInputChannelMode;
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            RefreshInputChannelOptionsForActiveDevice(selectedDeviceFormat);
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
+        if (_selectedInputChannelMode != previousMode)
+        {
+            ConfigureLiveMixFromChannels();
+        }
     }
 
     private void OutputDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3699,6 +4302,95 @@ public partial class EqualizerWindow : Window
 
         UpdateOutputRouting();
         PersistAppState();
+    }
+
+    private void MixerChannelControlChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
+    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
+    private void MixerChannelNameChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        PersistAppState();
+    }
+
+    private void MasterMixControlChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ReadMasterMixControls();
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
+    private void MasterMixControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ReadMasterMixControls();
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
+    private void ApplyMixerStateToUi()
+    {
+        _masterMixVolumePercent = Math.Clamp(_appSettings.MixerMasterVolumePercent ?? 100d, 0d, 150d);
+        _masterMixNormalizeEnabled = !HasPersistedAppState() || _appSettings.MixerAutoNormalizeEnabled;
+        _masterMixLimiterEnabled = !HasPersistedAppState() || _appSettings.MixerLimiterEnabled;
+        _masterMixLimiterCeilingDb = Math.Clamp(_appSettings.MixerLimiterCeilingDb ?? -1d, -12d, 0d);
+
+        _isUpdatingMixerUi = true;
+        try
+        {
+            MasterVolumeSlider.Value = _masterMixVolumePercent;
+            MasterNormalizeToggle.IsChecked = _masterMixNormalizeEnabled;
+            MasterLimiterToggle.IsChecked = _masterMixLimiterEnabled;
+            MasterLimiterCeilingSlider.Value = _masterMixLimiterCeilingDb;
+        }
+        finally
+        {
+            _isUpdatingMixerUi = false;
+        }
+    }
+
+    private void ReadMasterMixControls()
+    {
+        _masterMixVolumePercent = MasterVolumeSlider is null
+            ? _masterMixVolumePercent
+            : Math.Clamp(MasterVolumeSlider.Value, 0d, 150d);
+        _masterMixNormalizeEnabled = MasterNormalizeToggle?.IsChecked == true;
+        _masterMixLimiterEnabled = MasterLimiterToggle?.IsChecked == true;
+        _masterMixLimiterCeilingDb = MasterLimiterCeilingSlider is null
+            ? _masterMixLimiterCeilingDb
+            : Math.Clamp(MasterLimiterCeilingSlider.Value, -12d, 0d);
     }
 
     private void SetSelectedOutputDevice(AudioOutputDevice? selectedDevice)
@@ -3747,6 +4439,38 @@ public partial class EqualizerWindow : Window
     private bool IsProcessedOutputRequested()
     {
         return ProcessedOutputCheckBox?.IsChecked == true || KaraokeMonitorOutputCheckBox?.IsChecked == true;
+    }
+
+    private void ConfigureLiveMixFromChannels()
+    {
+        var selectedDevice = _selectedDevice;
+        if (selectedDevice is null)
+        {
+            _spectrumService.ConfigureLiveMix([], CreateMixBusSettings());
+            return;
+        }
+
+        var channels = _micChannels
+            .Where(channel => channel.SelectedDevice is not null)
+            .Select(channel => new MicrophoneLiveChannelSettings(
+                channel.ChannelNumber,
+                channel.SelectedDevice!.DeviceNumber,
+                channel.InputChannelMode,
+                channel.ProcessorSettings,
+                channel.VolumePercent,
+                channel.IsEnabled,
+                channel.IsMuted))
+            .ToList();
+        _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
+    }
+
+    private MixBusSettings CreateMixBusSettings()
+    {
+        return new MixBusSettings(
+            _masterMixVolumePercent,
+            _masterMixNormalizeEnabled,
+            _masterMixLimiterEnabled,
+            _masterMixLimiterCeilingDb);
     }
 
     private void UpdateOutputRouting()
@@ -3857,9 +4581,11 @@ public partial class EqualizerWindow : Window
 
         try
         {
+            ConfigureLiveMixFromChannels();
             _spectrumService.Start(_selectedDevice.DeviceNumber, Settings, _selectedInputChannelMode);
             StatusText.Text = "Listening";
             _selectedDeviceFormat ??= GetSelectedDeviceFormat();
+            RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             UpdateAudioFormatRouteText();
         }
         catch (Exception ex)
@@ -3877,6 +4603,7 @@ public partial class EqualizerWindow : Window
             if (message.Contains("recovered", StringComparison.OrdinalIgnoreCase))
             {
                 _selectedDeviceFormat = GetSelectedDeviceFormat();
+                RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             }
 
             UpdateAudioFormatRouteText();
@@ -3934,6 +4661,7 @@ public partial class EqualizerWindow : Window
         if (_selectedDeviceFormat is null)
         {
             _selectedDeviceFormat = currentFormat;
+            RefreshInputChannelOptionsWithoutSelectionEvents(currentFormat);
             UpdateAudioFormatRouteText();
             return;
         }
@@ -3946,6 +4674,7 @@ public partial class EqualizerWindow : Window
 
         var previousFormat = _selectedDeviceFormat.Value;
         _selectedDeviceFormat = currentFormat;
+        RefreshInputChannelOptionsWithoutSelectionEvents(currentFormat);
         await RestartSelectedAudioStreamAsync($"Audio device changed from {previousFormat} to {currentFormat.Value}; reopened mic stream.");
     }
 
@@ -3983,6 +4712,7 @@ public partial class EqualizerWindow : Window
                 _spectrumService.PreferWaveInCaptureForCurrentDevice();
             }
 
+            ConfigureLiveMixFromChannels();
             await Task.Run(() =>
             {
                 _spectrumService.RestartCapture(selectedDevice.DeviceNumber, Settings, inputChannelMode, TimeSpan.FromMilliseconds(850));
@@ -3994,6 +4724,7 @@ public partial class EqualizerWindow : Window
 
             StatusText.Text = statusMessage;
             _selectedDeviceFormat ??= await GetDeviceFormatAsync(selectedDevice);
+            RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             UpdateAudioFormatRouteText();
         }
         catch (Exception ex)
@@ -4307,10 +5038,16 @@ public partial class EqualizerWindow : Window
     private void SpectrumAvailable(object? sender, SpectrumFrame frame)
     {
         AcceptSpectrumFrame(frame);
+        var selectedMicFrame = CreateSelectedMicFrame(frame);
+
+        if (_isMicDspSelectedMicSpectrumActive)
+        {
+            _selectedMicSpectrumGraphHost?.AcceptFrame(selectedMicFrame);
+        }
 
         if (_isMicDspSpectrumWaterfallActive)
         {
-            _waveform3DGraphHost?.AcceptFrame(frame);
+            _waveform3DGraphHost?.AcceptFrame(selectedMicFrame);
         }
 
         if (_isPodcastSpectrumWaterfallActive)
@@ -4322,6 +5059,16 @@ public partial class EqualizerWindow : Window
         {
             _karaokeSpectrumWaterfallGraphHost?.AcceptFrame(frame);
         }
+
+        if (_isMixingMicSpectrumGraphActive)
+        {
+            _mixingMicSpectrumGraphHost?.AcceptFrame(frame);
+        }
+
+        if (_isMixingOutputWaveform3DActive)
+        {
+            _mixingOutputWaveform3DGraphHost?.AcceptFrame(frame);
+        }
     }
 
     private void AcceptSpectrumFrame(SpectrumFrame frame)
@@ -4329,7 +5076,79 @@ public partial class EqualizerWindow : Window
         _latestFrame = frame;
         _waveformSampleRate = Math.Max(8000, frame.SampleRate);
         CollectMicAnalysisFrame(frame);
-        AppendWaveformHistory(frame.RawSamples, frame.ProcessedSamples);
+        var selectedMicFrame = CreateSelectedMicFrame(frame);
+        AppendWaveformHistory(selectedMicFrame.RawSamples, selectedMicFrame.ProcessedSamples);
+    }
+
+    private SpectrumFrame CreateSelectedMicFrame(SpectrumFrame frame)
+    {
+        var activeChannelNumber = _activeMicChannel?.ChannelNumber ?? 1;
+        var selectedLine = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == activeChannelNumber);
+        var selectedInputMagnitudes = ResolveActiveInputChannelMagnitudes(frame);
+        if (selectedLine is null)
+        {
+            if (selectedInputMagnitudes.Length == 0)
+            {
+                return frame;
+            }
+
+            return new SpectrumFrame(
+                frame.Magnitudes,
+                selectedInputMagnitudes,
+                frame.ProcessedSamples,
+                frame.RawSamples,
+                frame.PeakLevel,
+                frame.RawPeakLevel,
+                frame.Telemetry,
+                frame.SampleRate,
+                frame.Input1Magnitudes,
+                frame.Input2Magnitudes,
+                frame.Input1PeakLevel,
+                frame.Input2PeakLevel,
+                frame.Input1Samples,
+                frame.Input2Samples,
+                frame.MicrophoneLines);
+        }
+
+        var rawMagnitudes = selectedInputMagnitudes.Length > 0
+            ? selectedInputMagnitudes
+            : selectedLine.RawMagnitudes.Length > 0
+            ? selectedLine.RawMagnitudes
+            : frame.RawMagnitudes;
+        return new SpectrumFrame(
+            selectedLine.Magnitudes,
+            rawMagnitudes,
+            selectedLine.ProcessedSamples,
+            selectedLine.RawSamples,
+            selectedLine.PeakLevel,
+            selectedLine.RawPeakLevel,
+            frame.Telemetry,
+            frame.SampleRate,
+            frame.Input1Magnitudes,
+            frame.Input2Magnitudes,
+            frame.Input1PeakLevel,
+            frame.Input2PeakLevel,
+            frame.Input1Samples,
+            frame.Input2Samples,
+            frame.MicrophoneLines);
+    }
+
+    private double[] ResolveActiveInputChannelMagnitudes(SpectrumFrame frame)
+    {
+        var activeChannel = _activeMicChannel;
+        if (activeChannel?.SelectedDevice is null
+            || _selectedDevice is null
+            || activeChannel.SelectedDevice.DeviceNumber != _selectedDevice.DeviceNumber)
+        {
+            return [];
+        }
+
+        return activeChannel.InputChannelMode switch
+        {
+            InputChannelMode.Input1Left when frame.Input1Magnitudes.Length > 0 => frame.Input1Magnitudes,
+            InputChannelMode.Input2Right when frame.Input2Magnitudes.Length > 0 => frame.Input2Magnitudes,
+            _ => []
+        };
     }
 
     private void CompositionTargetRendering(object? sender, EventArgs e)
@@ -4374,7 +5193,12 @@ public partial class EqualizerWindow : Window
             && WaveformCanvas.IsVisible
             && WaveformCanvas.ActualWidth > 1d
             && WaveformCanvas.ActualHeight > 1d;
-        if (!shouldRenderSpectrum && !shouldRenderWaveform)
+        var isMixingTabSelected = IsMixingTabSelected();
+        var shouldRenderMixingSpectrum = isMixingTabSelected
+            && MixingMicSpectrumCanvas.IsVisible
+            && MixingMicSpectrumCanvas.ActualWidth > 1d
+            && MixingMicSpectrumCanvas.ActualHeight > 1d;
+        if (!shouldRenderSpectrum && !shouldRenderWaveform && !shouldRenderMixingSpectrum)
         {
             return;
         }
@@ -4391,12 +5215,17 @@ public partial class EqualizerWindow : Window
 
         if (shouldRenderSpectrum)
         {
-            RenderSpectrum(_latestFrame);
+            RenderSpectrum(CreateSelectedMicFrame(_latestFrame));
         }
 
         if (shouldRenderWaveform)
         {
-            RenderWaveform(_latestFrame);
+            RenderWaveform(CreateSelectedMicFrame(_latestFrame));
+        }
+
+        if (shouldRenderMixingSpectrum)
+        {
+            RenderMixingMicSpectrum(_latestFrame);
         }
 
     }
@@ -9381,7 +10210,6 @@ public partial class EqualizerWindow : Window
         var graphTop = topInset;
         var graphBottom = graphTop + usableHeight;
 
-        EnsureVoiceZones(width, graphTop, graphBottom);
         EnsureGraphGrid(width, graphTop, graphBottom);
         UpdateEqualizerHoverRegion(width, graphTop, graphBottom);
 
@@ -9474,9 +10302,65 @@ public partial class EqualizerWindow : Window
         UpdateSignalStatus(frame.PeakLevel);
     }
 
+    private void RenderMixingMicSpectrum(SpectrumFrame frame)
+    {
+        var width = Math.Max(1d, MixingMicSpectrumCanvas.ActualWidth);
+        var height = Math.Max(1d, MixingMicSpectrumCanvas.ActualHeight);
+        EnsureMixingSpectrumGrid(width, height);
+
+        var lines = frame.MicrophoneLines.Count > 0
+            ? frame.MicrophoneLines
+            : [new MicrophoneSpectrumLine(1, frame.Magnitudes, frame.PeakLevel)];
+        var frameCeiling = 0.08d;
+        foreach (var line in lines)
+        {
+            foreach (var magnitude in line.Magnitudes)
+            {
+                frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(magnitude));
+            }
+        }
+
+        _mixingVisualCeiling = frameCeiling > _mixingVisualCeiling
+            ? Ease(_mixingVisualCeiling, frameCeiling, 0.1d)
+            : Ease(_mixingVisualCeiling, frameCeiling, 0.02d);
+
+        foreach (var trace in _mixingMicSpectrumTraces)
+        {
+            trace.Visibility = Visibility.Collapsed;
+        }
+
+        var smoothing = GetAnalyzerSmoothingCoefficient();
+        foreach (var line in lines)
+        {
+            var traceIndex = line.ChannelNumber - 1;
+            if (traceIndex < 0 || traceIndex >= _mixingMicSpectrumTraces.Length || line.Magnitudes.Length == 0)
+            {
+                continue;
+            }
+
+            EnsureMixingMicRenderBuffer(traceIndex, line.Magnitudes.Length);
+            var renderedMagnitudes = _renderedMixingMicMagnitudes[traceIndex];
+            var points = new PointCollection();
+            for (var i = 0; i < line.Magnitudes.Length; i++)
+            {
+                var shaped = NormalizeForDisplay(ShapeMagnitude(line.Magnitudes[i]), _mixingVisualCeiling);
+                renderedMagnitudes[i] = Ease(renderedMagnitudes[i], shaped, smoothing);
+                var x = line.Magnitudes.Length == 1
+                    ? 0d
+                    : i / (double)(line.Magnitudes.Length - 1) * width;
+                points.Add(new Point(x, height - height * renderedMagnitudes[i]));
+            }
+
+            var trace = _mixingMicSpectrumTraces[traceIndex];
+            trace.Data = CreateSmoothedGeometry(points);
+            trace.Opacity = line.PeakLevel <= 0.0001d ? 0.34d : traceIndex == 0 ? 0.98d : 0.88d;
+            trace.Visibility = Visibility.Visible;
+        }
+    }
+
     private double GetAnalyzerSmoothingCoefficient()
     {
-        var smoothingPercent = AnalyzerSmoothingSlider?.Value ?? 80d;
+        var smoothingPercent = _activeMicChannel?.AnalyzerSmoothing ?? DefaultAnalyzerSmoothingPercent;
         return Math.Clamp(0.36d - smoothingPercent * 0.0031d, 0.05d, 0.36d);
     }
 
@@ -9547,6 +10431,15 @@ public partial class EqualizerWindow : Window
 
             TrimWaveformHistory(_rawWaveformHistory, _waveformSampleRate);
             TrimWaveformHistory(_processedWaveformHistory, _waveformSampleRate);
+        }
+    }
+
+    private void ClearWaveformHistory()
+    {
+        lock (_waveformLock)
+        {
+            _rawWaveformHistory.Clear();
+            _processedWaveformHistory.Clear();
         }
     }
 
@@ -9881,7 +10774,12 @@ public partial class EqualizerWindow : Window
 
     private double NormalizeForDisplay(double magnitude)
     {
-        return Math.Clamp(magnitude / Math.Max(0.08d, _visualCeiling) * 0.62d, 0d, 0.88d);
+        return NormalizeForDisplay(magnitude, _visualCeiling);
+    }
+
+    private static double NormalizeForDisplay(double magnitude, double visualCeiling)
+    {
+        return Math.Clamp(magnitude / Math.Max(0.08d, visualCeiling) * 0.62d, 0d, 0.88d);
     }
 
     private void EnsureRenderBuffers(int processedLength, int rawLength)
@@ -9907,6 +10805,62 @@ public partial class EqualizerWindow : Window
         if (_renderedInput2Magnitudes.Length != input2Length)
         {
             _renderedInput2Magnitudes = new double[input2Length];
+        }
+    }
+
+    private void EnsureMixingMicRenderBuffer(int traceIndex, int length)
+    {
+        if (_renderedMixingMicMagnitudes[traceIndex] is null
+            || _renderedMixingMicMagnitudes[traceIndex].Length != length)
+        {
+            _renderedMixingMicMagnitudes[traceIndex] = new double[length];
+        }
+    }
+
+    private void EnsureMixingSpectrumGrid(double width, double height)
+    {
+        const int horizontalLineCount = 5;
+        const int verticalLineCount = 9;
+        var desiredLineCount = horizontalLineCount + verticalLineCount;
+        while (_mixingSpectrumGridLines.Count < desiredLineCount)
+        {
+            var line = new Line
+            {
+                Stroke = _waveformGridBrush,
+                StrokeThickness = 1d,
+                Opacity = 0.78d,
+                IsHitTestVisible = false
+            };
+            Panel.SetZIndex(line, 0);
+            _mixingSpectrumGridLines.Add(line);
+            MixingMicSpectrumCanvas.Children.Insert(0, line);
+        }
+
+        var lineIndex = 0;
+        for (var i = 0; i < horizontalLineCount; i++)
+        {
+            var y = horizontalLineCount == 1
+                ? 0d
+                : i / (double)(horizontalLineCount - 1) * height;
+            var line = _mixingSpectrumGridLines[lineIndex++];
+            line.X1 = 0d;
+            line.X2 = width;
+            line.Y1 = y;
+            line.Y2 = y;
+            line.StrokeThickness = i == horizontalLineCount - 1 ? 1.5d : 1d;
+        }
+
+        for (var i = 0; i < verticalLineCount; i++)
+        {
+            var x = verticalLineCount == 1
+                ? 0d
+                : i / (double)(verticalLineCount - 1) * width;
+            var line = _mixingSpectrumGridLines[lineIndex++];
+            line.X1 = x;
+            line.X2 = x;
+            line.Y1 = 0d;
+            line.Y2 = height;
+            line.StrokeThickness = i == 0 || i == verticalLineCount - 1 ? 1.5d : 1d;
         }
     }
 
@@ -10036,59 +10990,155 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void EnsureVoiceZones(double width, double graphTop, double graphBottom)
+    private void EqVoiceZoneGuideCanvasSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        while (_zoneBands.Count < _voiceZones.Count)
-        {
-            var band = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb((byte)(18 + _zoneBands.Count % 2 * 16), 88, 116, 134)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(55, 130, 160, 180)),
-                BorderThickness = new Thickness(0, 0, 1, 0)
-            };
-            _zoneBands.Add(band);
-            SpectrumCanvas.Children.Insert(0, band);
+        Dispatcher.BeginInvoke(new Action(UpdateEqVoiceZoneGuide), DispatcherPriority.Render);
+    }
 
-            var label = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(150, 8, 14, 20)),
-                CornerRadius = new CornerRadius(3),
-                Padding = new Thickness(6, 2, 6, 2),
-                Child = new TextBlock
-                {
-                    Foreground = new SolidColorBrush(Color.FromRgb(184, 199, 217)),
-                    FontSize = 11,
-                    FontWeight = FontWeights.SemiBold,
-                    TextAlignment = TextAlignment.Center
-                }
-            };
-            _zoneLabels.Add(label);
-            SpectrumCanvas.Children.Add(label);
+    private void EqVoiceZoneGuideCanvasLoaded(object sender, RoutedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(UpdateEqualizerGuideLayout), DispatcherPriority.Render);
+    }
+
+    private void EqualizerFaceplateSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(UpdateEqualizerGuideLayout), DispatcherPriority.Render);
+    }
+
+    private void UpdateEqVoiceZoneGuide()
+    {
+        if (EqVoiceZoneGuideCanvas is null)
+        {
+            return;
         }
 
-        for (var i = 0; i < _voiceZones.Count; i++)
+        EqVoiceZoneGuideCanvas.Children.Clear();
+        var width = EqVoiceZoneGuideCanvas.ActualWidth;
+        if (width <= 1d || _activeMicChannel is null || Bands.Count == 0)
         {
-            var zone = _voiceZones[i];
-            var left = FrequencyToX(zone.StartFrequencyHz, width);
-            var right = FrequencyToX(zone.EndFrequencyHz, width);
-            var zoneWidth = Math.Max(24d, right - left);
+            return;
+        }
 
-            _zoneBands[i].Width = zoneWidth;
-            _zoneBands[i].Height = graphBottom - graphTop;
-            Canvas.SetLeft(_zoneBands[i], left);
-            Canvas.SetTop(_zoneBands[i], graphTop);
+        var height = Math.Max(1d, EqVoiceZoneGuideCanvas.ActualHeight);
+        var railY = Math.Round(height * 0.52d) + 0.5d;
+        var capTop = Math.Max(3d, railY - 7d);
+        var capBottom = Math.Min(height - 3d, railY + 7d);
+        var railBrush = new SolidColorBrush(Color.FromArgb(180, 95, 119, 134));
+        var capBrush = new SolidColorBrush(Color.FromArgb(210, 129, 155, 169));
+        var labelBrush = new SolidColorBrush(Color.FromRgb(222, 234, 244));
+        var labelBackground = new SolidColorBrush(Color.FromArgb(232, 7, 13, 18));
+        var labelBorderBrush = new SolidColorBrush(Color.FromArgb(145, 60, 86, 102));
 
-            if (_zoneLabels[i].Child is TextBlock textBlock)
+        foreach (var zone in _voiceZones)
+        {
+            var left = Math.Clamp(FrequencyToEqualizerGuideX(zone.StartFrequencyHz, width), 0d, width);
+            var right = Math.Clamp(FrequencyToEqualizerGuideX(zone.EndFrequencyHz, width), 0d, width);
+            if (right - left < 8d)
             {
-                textBlock.Text = zone.Name;
-                _zoneLabels[i].ToolTip = zone.Description;
+                continue;
             }
 
-            _zoneLabels[i].Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            var labelWidth = _zoneLabels[i].DesiredSize.Width;
-            Canvas.SetLeft(_zoneLabels[i], left + Math.Max(2d, (zoneWidth - labelWidth) / 2d));
-            Canvas.SetTop(_zoneLabels[i], graphTop + 8d);
+            var zoneWidth = right - left;
+            var labelText = new TextBlock
+            {
+                Text = zone.Name,
+                Foreground = labelBrush,
+                FontSize = 11,
+                FontWeight = FontWeights.Bold,
+                TextAlignment = TextAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            var label = new Border
+            {
+                Background = labelBackground,
+                BorderBrush = labelBorderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 1, 6, 2),
+                MaxWidth = Math.Max(22d, zoneWidth - 10d),
+                Child = labelText
+            };
+            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var labelWidth = Math.Min(label.DesiredSize.Width, Math.Max(22d, zoneWidth - 10d));
+            var labelHeight = label.DesiredSize.Height;
+            label.Width = labelWidth;
+
+            var labelLeft = Math.Clamp(
+                left + (zoneWidth - labelWidth) * 0.5d,
+                left + 2d,
+                Math.Max(left + 2d, right - labelWidth - 2d));
+            var labelRight = labelLeft + labelWidth;
+            var labelTop = Math.Clamp(railY - labelHeight * 0.5d, 0d, Math.Max(0d, height - labelHeight));
+
+            EqVoiceZoneGuideCanvas.Children.Add(CreateEqZoneGuideLine(left, capTop, left, capBottom, capBrush, 1.1d));
+            EqVoiceZoneGuideCanvas.Children.Add(CreateEqZoneGuideLine(right, capTop, right, capBottom, capBrush, 1.1d));
+            if (labelLeft > left + 5d)
+            {
+                EqVoiceZoneGuideCanvas.Children.Add(CreateEqZoneGuideLine(left, railY, labelLeft - 5d, railY, railBrush, 1d));
+            }
+
+            if (labelRight + 5d < right)
+            {
+                EqVoiceZoneGuideCanvas.Children.Add(CreateEqZoneGuideLine(labelRight + 5d, railY, right, railY, railBrush, 1d));
+            }
+
+            Canvas.SetLeft(label, labelLeft);
+            Canvas.SetTop(label, labelTop);
+            EqVoiceZoneGuideCanvas.Children.Add(label);
         }
+    }
+
+    private static Line CreateEqZoneGuideLine(double x1, double y1, double x2, double y2, Brush brush, double thickness)
+    {
+        return new Line
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            Stroke = brush,
+            StrokeThickness = thickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            SnapsToDevicePixels = true,
+            IsHitTestVisible = false
+        };
+    }
+
+    private double FrequencyToEqualizerGuideX(double frequency, double width)
+    {
+        var bandCount = Bands.Count;
+        if (bandCount == 0)
+        {
+            return 0d;
+        }
+
+        var slotWidth = width / bandCount;
+        if (bandCount == 1)
+        {
+            return slotWidth * 0.5d;
+        }
+
+        var minimumFrequency = Math.Max(1d, Bands[0].CenterFrequencyHz);
+        var maximumFrequency = Math.Max(minimumFrequency, Bands[bandCount - 1].CenterFrequencyHz);
+        var targetLog = Math.Log(Math.Clamp(frequency, minimumFrequency, maximumFrequency));
+        for (var i = 0; i < bandCount - 1; i++)
+        {
+            var currentLog = Math.Log(Math.Max(1d, Bands[i].CenterFrequencyHz));
+            var nextLog = Math.Log(Math.Max(1d, Bands[i + 1].CenterFrequencyHz));
+            if (nextLog <= currentLog)
+            {
+                continue;
+            }
+
+            if (targetLog <= nextLog || i == bandCount - 2)
+            {
+                var blend = Math.Clamp((targetLog - currentLog) / (nextLog - currentLog), 0d, 1d);
+                return slotWidth * (i + 0.5d + blend);
+            }
+        }
+
+        return width - slotWidth * 0.5d;
     }
 
     private void UpdateEqualizerHoverRegion()
@@ -10127,6 +11177,25 @@ public partial class EqualizerWindow : Window
         _equalizerHoverRegion.Visibility = Visibility.Visible;
     }
 
+    private void UpdateDx12EqualizerHoverRegion()
+    {
+        if (_selectedMicSpectrumGraphHost is null)
+        {
+            return;
+        }
+
+        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D || _showMicCompare)
+        {
+            _selectedMicSpectrumGraphHost.ClearSpectrumHoverRange();
+            return;
+        }
+
+        var (startFrequency, endFrequency) = GetEqualizerBandDisplayRange(_hoveredEqualizerBand);
+        _selectedMicSpectrumGraphHost.SetSpectrumHoverRange(
+            FrequencyToGraphPosition(startFrequency),
+            FrequencyToGraphPosition(endFrequency));
+    }
+
     private static (double StartFrequency, double EndFrequency) GetEqualizerBandDisplayRange(EqualizerBand band)
     {
         var start = band.CenterFrequencyHz / EqualizerHoverHalfPowerRatio;
@@ -10145,9 +11214,13 @@ public partial class EqualizerWindow : Window
 
     private static double FrequencyToX(double frequency, double width)
     {
+        return FrequencyToGraphPosition(frequency) * width;
+    }
+
+    private static double FrequencyToGraphPosition(double frequency)
+    {
         var clamped = Math.Clamp(frequency, MinimumDisplayFrequency, MaximumDisplayFrequency);
-        var position = Math.Log(clamped / MinimumDisplayFrequency) / Math.Log(MaximumDisplayFrequency / MinimumDisplayFrequency);
-        return position * width;
+        return Math.Log(clamped / MinimumDisplayFrequency) / Math.Log(MaximumDisplayFrequency / MinimumDisplayFrequency);
     }
 
     private void FlatPresetClicked(object sender, RoutedEventArgs e)
@@ -10210,7 +11283,11 @@ public partial class EqualizerWindow : Window
         Settings.LimiterReleaseMs = 85;
 
         SetProcessingSliderDefaults(description);
+        _activeMicChannel.PresetDescription = description;
+        _activeMicChannel.AnalyzerSmoothing = DefaultAnalyzerSmoothingPercent;
+        ConfigureLiveMixFromChannels();
         StatusText.Text = "Deep Warm preset loaded";
+        PersistAppState();
     }
 
     private void LoadWarmRadioPreset()
@@ -10322,7 +11399,12 @@ public partial class EqualizerWindow : Window
         SetActivePresetButton(name);
         _lastLoadedPresetName = name;
         _lastLoadedPresetIsUserPreset = false;
+        _activeMicChannel.ActivePresetName = name;
+        _activeMicChannel.ActivePresetIsUserPreset = false;
+        _activeMicChannel.PresetDescription = description;
+        _activeMicChannel.AnalyzerSmoothing = DefaultAnalyzerSmoothingPercent;
         StatusText.Text = $"{name} preset loaded";
+        ConfigureLiveMixFromChannels();
         PersistAppState();
     }
 
@@ -11136,7 +12218,7 @@ public partial class EqualizerWindow : Window
             Description = string.IsNullOrWhiteSpace(PresetDescriptionText.Text)
                 ? $"User preset: {name}"
                 : PresetDescriptionText.Text,
-            AnalyzerSmoothing = AnalyzerSmoothingSlider.Value,
+            AnalyzerSmoothing = _activeMicChannel?.AnalyzerSmoothing ?? DefaultAnalyzerSmoothingPercent,
             Bands = Bands
                 .Select(band => new UserEqualizerBandPreset
                 {
@@ -11213,7 +12295,11 @@ public partial class EqualizerWindow : Window
 
         if (double.IsFinite(preset.AnalyzerSmoothing))
         {
-            AnalyzerSmoothingSlider.Value = Math.Clamp(preset.AnalyzerSmoothing, AnalyzerSmoothingSlider.Minimum, AnalyzerSmoothingSlider.Maximum);
+            _activeMicChannel.AnalyzerSmoothing = Math.Clamp(preset.AnalyzerSmoothing, 0d, 100d);
+        }
+        else
+        {
+            _activeMicChannel.AnalyzerSmoothing = DefaultAnalyzerSmoothingPercent;
         }
 
         var name = string.IsNullOrWhiteSpace(preset.Name) ? "User preset" : preset.Name.Trim();
@@ -11226,7 +12312,13 @@ public partial class EqualizerWindow : Window
         SetActivePresetButton(null);
         _lastLoadedPresetName = name;
         _lastLoadedPresetIsUserPreset = true;
+        _activeMicChannel.ActivePresetName = name;
+        _activeMicChannel.ActivePresetIsUserPreset = true;
+        _activeMicChannel.PresetDescription = string.IsNullOrWhiteSpace(preset.Description)
+            ? $"User preset: {name}"
+            : preset.Description;
         StatusText.Text = $"User preset loaded: {name}";
+        ConfigureLiveMixFromChannels();
         PersistAppState();
     }
 
@@ -11373,6 +12465,196 @@ public partial class EqualizerWindow : Window
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 340
         };
+    }
+
+    private static ObservableCollection<MicChannelStrip> CreateDefaultMicChannels()
+    {
+        var channels = new ObservableCollection<MicChannelStrip>();
+        for (var channelNumber = 1; channelNumber <= MaximumMicChannelCount; channelNumber++)
+        {
+            channels.Add(new MicChannelStrip(
+                channelNumber,
+                $"Mic {channelNumber}",
+                CreateDefaultEqualizerBands())
+            {
+                IsEnabled = channelNumber == 1,
+                InputChannelMode = channelNumber == 2 ? InputChannelMode.Input2Right : InputChannelMode.MonoSum
+            });
+        }
+
+        return channels;
+    }
+
+    private static ObservableCollection<EqualizerBand> CreateDefaultEqualizerBands()
+    {
+        return
+        [
+            new EqualizerBand("31", 31),
+            new EqualizerBand("45", 45),
+            new EqualizerBand("63", 63),
+            new EqualizerBand("90", 90),
+            new EqualizerBand("125", 125),
+            new EqualizerBand("180", 180),
+            new EqualizerBand("250", 250),
+            new EqualizerBand("355", 355),
+            new EqualizerBand("500", 500),
+            new EqualizerBand("710", 710),
+            new EqualizerBand("1k", 1000),
+            new EqualizerBand("1.4k", 1400),
+            new EqualizerBand("2k", 2000),
+            new EqualizerBand("2.8k", 2800),
+            new EqualizerBand("4k", 4000),
+            new EqualizerBand("5.6k", 5600),
+            new EqualizerBand("8k", 8000),
+            new EqualizerBand("11k", 11200),
+            new EqualizerBand("16k", 16000),
+            new EqualizerBand("20k", 20000)
+        ];
+    }
+
+    private sealed class MicChannelStrip : INotifyPropertyChanged
+    {
+        private string _displayName;
+        private AudioInputDevice? _selectedDevice;
+        private InputChannelMode _inputChannelMode = InputChannelMode.MonoSum;
+        private bool _isEnabled = true;
+        private bool _isMuted;
+        private double _volumePercent = 100d;
+        private string _activePresetName = "Custom";
+        private bool _activePresetIsUserPreset;
+        private string _presetDescription = "Custom channel settings.";
+        private double _analyzerSmoothing = 80d;
+
+        public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
+        {
+            ChannelNumber = channelNumber;
+            _displayName = displayName;
+            Bands = bands;
+            ProcessorSettings = new VoiceProcessorSettings();
+        }
+
+        public int ChannelNumber { get; }
+
+        public ObservableCollection<EqualizerBand> Bands { get; }
+
+        public VoiceProcessorSettings ProcessorSettings { get; }
+
+        public string DisplayName
+        {
+            get => _displayName;
+            set => SetField(ref _displayName, string.IsNullOrWhiteSpace(value) ? $"Mic {ChannelNumber}" : value.Trim());
+        }
+
+        public AudioInputDevice? SelectedDevice
+        {
+            get => _selectedDevice;
+            set
+            {
+                if (Equals(_selectedDevice, value))
+                {
+                    return;
+                }
+
+                _selectedDevice = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RouteText));
+            }
+        }
+
+        public InputChannelMode InputChannelMode
+        {
+            get => _inputChannelMode;
+            set
+            {
+                if (_inputChannelMode == value)
+                {
+                    return;
+                }
+
+                _inputChannelMode = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RouteText));
+            }
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set => SetField(ref _isEnabled, value);
+        }
+
+        public bool IsMuted
+        {
+            get => _isMuted;
+            set => SetField(ref _isMuted, value);
+        }
+
+        public double VolumePercent
+        {
+            get => _volumePercent;
+            set
+            {
+                var normalized = Math.Clamp(double.IsFinite(value) ? value : 100d, 0d, 150d);
+                if (Math.Abs(_volumePercent - normalized) < 0.01d)
+                {
+                    return;
+                }
+
+                _volumePercent = normalized;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(VolumeDisplayText));
+            }
+        }
+
+        public string ActivePresetName
+        {
+            get => _activePresetName;
+            set => SetField(ref _activePresetName, string.IsNullOrWhiteSpace(value) ? "Custom" : value.Trim());
+        }
+
+        public bool ActivePresetIsUserPreset
+        {
+            get => _activePresetIsUserPreset;
+            set => SetField(ref _activePresetIsUserPreset, value);
+        }
+
+        public string PresetDescription
+        {
+            get => _presetDescription;
+            set => SetField(ref _presetDescription, string.IsNullOrWhiteSpace(value) ? $"Mic {ChannelNumber} preset" : value.Trim());
+        }
+
+        public double AnalyzerSmoothing
+        {
+            get => _analyzerSmoothing;
+            set => SetField(ref _analyzerSmoothing, Math.Clamp(double.IsFinite(value) ? value : 80d, 0d, 100d));
+        }
+
+        public string RouteText => SelectedDevice is null
+            ? $"{InputChannelModeInfo.GetDisplayLabel(InputChannelMode)} | no source"
+            : $"{SelectedDevice.Name} | {InputChannelModeInfo.GetDisplayLabel(InputChannelMode)}";
+
+        public string VolumeDisplayText => $"{VolumePercent:0}%";
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public override string ToString() => DisplayName;
+
+        private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value))
+            {
+                return;
+            }
+
+            field = value;
+            OnPropertyChanged(propertyName);
+        }
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
     }
 
     private sealed class UserVoicePreset

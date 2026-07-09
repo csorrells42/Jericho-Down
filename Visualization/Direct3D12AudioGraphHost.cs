@@ -15,8 +15,19 @@ using static Vortice.DXGI.DXGI;
 
 namespace JerichoDown.Visualization;
 
+public enum Direct3D12AudioGraphMode
+{
+    Waterfall,
+    SelectedMicSpectrum,
+    MicrophoneSpectrumLines
+}
+
 public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 {
+    public const int DefaultWaterfallLinesPerGap = 8;
+    public const int MinimumWaterfallLinesPerGap = 0;
+    public const int MaximumWaterfallLinesPerGap = 16;
+
     private const int WsChild = 0x40000000;
     private const int WsVisible = 0x10000000;
     private const int WsClipChildren = 0x02000000;
@@ -27,11 +38,16 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
     private readonly object _rendererLock = new();
     private readonly object _renderWorkerLock = new();
+    private readonly object _spectrumHoverLock = new();
     private readonly AutoResetEvent _renderFrameReady = new(false);
     private Thread? _renderThread;
     private SpectrumFrame? _pendingFrame;
     private Direct3D12AudioGraphRenderer? _renderer;
     private IntPtr _hwnd;
+    private int _graphMode;
+    private int _waterfallLinesPerGap = DefaultWaterfallLinesPerGap;
+    private float _spectrumHoverStart = float.NaN;
+    private float _spectrumHoverEnd = float.NaN;
     private bool _renderWorkerStopping;
     private bool _disposed;
 
@@ -50,6 +66,40 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
     public bool IsReady => _renderer is not null;
 
     public string DeviceDescription => _renderer?.DeviceDescription ?? "DX12 audio graph not initialized";
+
+    public Direct3D12AudioGraphMode GraphMode
+    {
+        get => (Direct3D12AudioGraphMode)System.Threading.Volatile.Read(ref _graphMode);
+        set => System.Threading.Volatile.Write(ref _graphMode, (int)value);
+    }
+
+    public int WaterfallLinesPerGap
+    {
+        get => System.Threading.Volatile.Read(ref _waterfallLinesPerGap);
+        set => System.Threading.Volatile.Write(
+            ref _waterfallLinesPerGap,
+            Math.Clamp(value, MinimumWaterfallLinesPerGap, MaximumWaterfallLinesPerGap));
+    }
+
+    public void SetSpectrumHoverRange(double startPosition, double endPosition)
+    {
+        var start = (float)Math.Clamp(Math.Min(startPosition, endPosition), 0d, 1d);
+        var end = (float)Math.Clamp(Math.Max(startPosition, endPosition), 0d, 1d);
+        lock (_spectrumHoverLock)
+        {
+            _spectrumHoverStart = start;
+            _spectrumHoverEnd = end;
+        }
+    }
+
+    public void ClearSpectrumHoverRange()
+    {
+        lock (_spectrumHoverLock)
+        {
+            _spectrumHoverStart = float.NaN;
+            _spectrumHoverEnd = float.NaN;
+        }
+    }
 
     public void AcceptFrame(SpectrumFrame frame)
     {
@@ -106,9 +156,17 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
                     try
                     {
+                        float spectrumHoverStart;
+                        float spectrumHoverEnd;
+                        lock (_spectrumHoverLock)
+                        {
+                            spectrumHoverStart = _spectrumHoverStart;
+                            spectrumHoverEnd = _spectrumHoverEnd;
+                        }
+
                         lock (_rendererLock)
                         {
-                            _renderer?.RenderFrame(frame);
+                            _renderer?.RenderFrame(frame, GraphMode, WaterfallLinesPerGap, spectrumHoverStart, spectrumHoverEnd);
                         }
                     }
                     catch (Exception ex)
@@ -154,7 +212,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                     _hwnd,
                     Math.Max(1, (int)ActualWidth),
                     Math.Max(1, (int)ActualHeight));
-                _renderer.RenderProofFrame();
+                _renderer.RenderProofFrame(GraphMode, WaterfallLinesPerGap);
             }
 
             StatusChanged?.Invoke(this, $"{_renderer.DeviceDescription} audio graph ready. {_renderer.StartupStatus}");
@@ -193,7 +251,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         {
             lock (_rendererLock)
             {
-                _renderer?.Resize(width, height);
+                _renderer?.Resize(width, height, GraphMode, WaterfallLinesPerGap);
             }
         }
         catch (Exception ex)
@@ -267,10 +325,13 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
     {
         private const int FrameCount = 3;
         private const int HistoryDepth = 64;
-        private const int PointCount = 160;
+        private const int PointCount = 384;
+        private const int DetailedSpectrumPointCount = 2048;
+        private const double DetailedSpectrumSmoothingAmount = 0.112d;
         private const int SegmentLayers = 2;
-        private const int InterpolatedRowsPerGap = 12;
-        private const int MaxRenderedWaveRows = HistoryDepth + (HistoryDepth - 1) * InterpolatedRowsPerGap;
+        private const int MaximumInterpolatedRowsPerGap = MaximumWaterfallLinesPerGap;
+        private const int MaximumMicrophoneSpectrumLines = 10;
+        private const int MaxRenderedWaveRows = HistoryDepth + (HistoryDepth - 1) * MaximumInterpolatedRowsPerGap;
         private const int GridLineCount = 21;
         private const int MaxGraphSegments = MaxRenderedWaveRows * (PointCount - 1) * SegmentLayers;
         private const int MaxSegments = MaxGraphSegments + GridLineCount;
@@ -289,6 +350,10 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private readonly FrameResource[] _frameResources = new FrameResource[FrameCount];
         private readonly float[] _history = new float[HistoryDepth * PointCount];
         private readonly float[] _sliceScratch = new float[PointCount];
+        private readonly float[] _detailedRawTarget = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedProcessedTarget = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedRawTrace = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedProcessedTrace = new float[DetailedSpectrumPointCount];
         private IDXGISwapChain3 _swapChain;
         private ID3D12RootSignature? _rootSignature;
         private ID3D12PipelineState? _linePipelineState;
@@ -298,6 +363,8 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private int _height;
         private int _historyStart;
         private int _historyCount;
+        private float _detailedVisualCeiling = 0.25f;
+        private bool _hasDetailedSpectrumTrace;
         private bool _disposed;
 
         public Direct3D12AudioGraphRenderer(IntPtr hwnd, int width, int height)
@@ -361,23 +428,12 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             ? $"Graph shader unavailable: {_pipelineFailureReason ?? "unknown pipeline failure"}"
             : "Graph shader online.";
 
-        public unsafe void RenderFrame(SpectrumFrame frame)
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            BuildSlice(frame, _sliceScratch);
-            PushHistorySlice(_sliceScratch);
-
-            var frameResource = BeginFrame(out var frameIndex);
-            var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 audio graph render target is not ready.");
-            var segmentCount = WriteGraphSegments(frameResource.UploadPointer, MaxSegments);
-            DrawSegments(frameResource, renderTarget, frameIndex, segmentCount);
-        }
-
-        public unsafe void RenderProofFrame()
+        public unsafe void RenderFrame(
+            SpectrumFrame frame,
+            Direct3D12AudioGraphMode graphMode,
+            int waterfallLinesPerGap,
+            float spectrumHoverStart,
+            float spectrumHoverEnd)
         {
             if (_disposed)
             {
@@ -386,11 +442,31 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
             var frameResource = BeginFrame(out var frameIndex);
             var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 audio graph render target is not ready.");
-            var segmentCount = WriteGraphSegments(frameResource.UploadPointer, MaxSegments);
+            var segmentCount = graphMode switch
+            {
+                Direct3D12AudioGraphMode.SelectedMicSpectrum => WriteSelectedMicSpectrumSegments(frameResource.UploadPointer, MaxSegments, frame, spectrumHoverStart, spectrumHoverEnd),
+                Direct3D12AudioGraphMode.MicrophoneSpectrumLines => WriteMicrophoneSpectrumSegments(frameResource.UploadPointer, MaxSegments, frame),
+                _ => WriteWaterfallFrameSegments(frameResource.UploadPointer, MaxSegments, frame, waterfallLinesPerGap)
+            };
             DrawSegments(frameResource, renderTarget, frameIndex, segmentCount);
         }
 
-        public void Resize(int width, int height)
+        public unsafe void RenderProofFrame(
+            Direct3D12AudioGraphMode graphMode = Direct3D12AudioGraphMode.Waterfall,
+            int waterfallLinesPerGap = DefaultWaterfallLinesPerGap)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var frameResource = BeginFrame(out var frameIndex);
+            var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 audio graph render target is not ready.");
+            var segmentCount = WriteProofSegments(frameResource.UploadPointer, MaxSegments, graphMode, waterfallLinesPerGap);
+            DrawSegments(frameResource, renderTarget, frameIndex, segmentCount);
+        }
+
+        public void Resize(int width, int height, Direct3D12AudioGraphMode graphMode, int waterfallLinesPerGap)
         {
             if (_disposed || width == _width && height == _height)
             {
@@ -403,7 +479,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             _width = width;
             _height = height;
             CreateRenderTargetViews();
-            RenderProofFrame();
+            RenderProofFrame(graphMode, waterfallLinesPerGap);
         }
 
         public void Dispose()
@@ -433,14 +509,226 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             _device.Dispose();
         }
 
-        private unsafe int WriteGraphSegments(IntPtr destination, int maxSegments)
+        private unsafe int WriteWaterfallFrameSegments(
+            IntPtr destination,
+            int maxSegments,
+            SpectrumFrame frame,
+            int waterfallLinesPerGap)
+        {
+            BuildSlice(frame, _sliceScratch);
+            PushHistorySlice(_sliceScratch);
+            return WriteGraphSegments(destination, maxSegments, waterfallLinesPerGap);
+        }
+
+        private unsafe int WriteProofSegments(
+            IntPtr destination,
+            int maxSegments,
+            Direct3D12AudioGraphMode graphMode,
+            int waterfallLinesPerGap)
+        {
+            var segments = (GraphSegment*)destination;
+            return graphMode switch
+            {
+                Direct3D12AudioGraphMode.SelectedMicSpectrum => WriteDetailedSpectrumGridSegments(segments, maxSegments, float.NaN, float.NaN),
+                Direct3D12AudioGraphMode.MicrophoneSpectrumLines => WriteFlatSpectrumGridSegments(segments, maxSegments),
+                _ => WriteGraphSegments(destination, maxSegments, waterfallLinesPerGap)
+            };
+        }
+
+        private unsafe int WriteSelectedMicSpectrumSegments(
+            IntPtr destination,
+            int maxSegments,
+            SpectrumFrame frame,
+            float spectrumHoverStart,
+            float spectrumHoverEnd)
+        {
+            var segments = (GraphSegment*)destination;
+            var count = WriteDetailedSpectrumGridSegments(segments, maxSegments, spectrumHoverStart, spectrumHoverEnd);
+            PrepareDetailedSpectrumTrace(frame);
+            count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedRawTrace, processed: false);
+            count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedProcessedTrace, processed: true);
+            return count;
+        }
+
+        private unsafe int WriteMicrophoneSpectrumSegments(IntPtr destination, int maxSegments, SpectrumFrame frame)
+        {
+            var segments = (GraphSegment*)destination;
+            var count = WriteFlatSpectrumGridSegments(segments, maxSegments);
+            var renderedLineIndex = 0;
+            if (frame.MicrophoneLines.Count == 0)
+            {
+                return WriteMicrophoneLineSegments(segments, count, maxSegments, renderedLineIndex, frame.Magnitudes);
+            }
+
+            foreach (var line in frame.MicrophoneLines.OrderBy(line => line.ChannelNumber))
+            {
+                if (renderedLineIndex >= MaximumMicrophoneSpectrumLines)
+                {
+                    break;
+                }
+
+                if (line.Magnitudes.Length == 0)
+                {
+                    continue;
+                }
+
+                count = WriteMicrophoneLineSegments(
+                    segments,
+                    count,
+                    maxSegments,
+                    renderedLineIndex,
+                    line.Magnitudes);
+                renderedLineIndex++;
+            }
+
+            return count;
+        }
+
+        private unsafe int WriteMicrophoneLineSegments(
+            GraphSegment* segments,
+            int count,
+            int maxSegments,
+            int lineIndex,
+            double[] magnitudes)
+        {
+            if (magnitudes.Length == 0)
+            {
+                return count;
+            }
+
+            const float xMin = -0.96f;
+            const float xMax = 0.96f;
+            const float yBottom = -0.80f;
+            const float yTop = 0.82f;
+            BuildSpectrumSlice(magnitudes, _sliceScratch);
+            for (var point = 0; point < PointCount - 1 && count + SegmentLayers <= maxSegments; point++)
+            {
+                var xA = Lerp(xMin, xMax, point / (double)(PointCount - 1));
+                var xB = Lerp(xMin, xMax, (point + 1) / (double)(PointCount - 1));
+                var yA = Lerp(yBottom, yTop, Math.Clamp(_sliceScratch[point], 0f, 1f));
+                var yB = Lerp(yBottom, yTop, Math.Clamp(_sliceScratch[point + 1], 0f, 1f));
+                var layer = 4f + lineIndex;
+                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 0f);
+                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 1f);
+            }
+
+            return count;
+        }
+
+        private static unsafe int WriteFlatSpectrumGridSegments(GraphSegment* segments, int maxSegments)
+        {
+            const int horizontalLineCount = 5;
+            const int verticalLineCount = 9;
+            const float xMin = -0.96f;
+            const float xMax = 0.96f;
+            const float yBottom = -0.80f;
+            const float yTop = 0.82f;
+            var count = 0;
+
+            for (var i = 0; i < horizontalLineCount && count < maxSegments; i++)
+            {
+                var y = Lerp(yBottom, yTop, i / (double)(horizontalLineCount - 1));
+                var layer = i == 0 ? 22f : 21f;
+                segments[count++] = new GraphSegment(xMin, y, xMax, y, layer);
+            }
+
+            for (var i = 0; i < verticalLineCount && count < maxSegments; i++)
+            {
+                var x = Lerp(xMin, xMax, i / (double)(verticalLineCount - 1));
+                var layer = i == 0 || i == verticalLineCount - 1 ? 22f : 21f;
+                segments[count++] = new GraphSegment(x, yBottom, x, yTop, layer);
+            }
+
+            return count;
+        }
+
+        private static unsafe int WriteDetailedSpectrumGridSegments(
+            GraphSegment* segments,
+            int maxSegments,
+            float spectrumHoverStart,
+            float spectrumHoverEnd)
+        {
+            const int horizontalLineCount = 9;
+            const int verticalLineCount = 17;
+            const float xMin = -0.97f;
+            const float xMax = 0.97f;
+            const float yBottom = -0.82f;
+            const float yTop = 0.84f;
+            var count = 0;
+            if (float.IsFinite(spectrumHoverStart)
+                && float.IsFinite(spectrumHoverEnd)
+                && spectrumHoverEnd - spectrumHoverStart > 0.001f
+                && count + 3 <= maxSegments)
+            {
+                var left = Lerp(xMin, xMax, spectrumHoverStart);
+                var right = Lerp(xMin, xMax, spectrumHoverEnd);
+                var center = (yBottom + yTop) * 0.5f;
+                segments[count++] = new GraphSegment(left, center, right, center, 35f);
+                segments[count++] = new GraphSegment(left, yBottom, left, yTop, 36f);
+                segments[count++] = new GraphSegment(right, yBottom, right, yTop, 36f);
+            }
+
+            for (var i = 0; i < horizontalLineCount && count < maxSegments; i++)
+            {
+                var y = Lerp(yBottom, yTop, i / (double)(horizontalLineCount - 1));
+                var layer = i == 0 || i == horizontalLineCount - 1 || i == horizontalLineCount / 2 ? 32f : 31f;
+                segments[count++] = new GraphSegment(xMin, y, xMax, y, layer);
+            }
+
+            for (var i = 0; i < verticalLineCount && count < maxSegments; i++)
+            {
+                var x = Lerp(xMin, xMax, i / (double)(verticalLineCount - 1));
+                var layer = i == 0 || i == verticalLineCount - 1 || i == verticalLineCount / 2 ? 32f : 31f;
+                segments[count++] = new GraphSegment(x, yBottom, x, yTop, layer);
+            }
+
+            return count;
+        }
+
+        private unsafe int WriteDetailedSpectrumLineSegments(
+            GraphSegment* segments,
+            int count,
+            int maxSegments,
+            float[] trace,
+            bool processed)
+        {
+            if (trace.Length == 0)
+            {
+                return count;
+            }
+
+            const float xMin = -0.97f;
+            const float xMax = 0.97f;
+            const float yBottom = -0.82f;
+            const float yTop = 0.84f;
+            var layer = processed ? 41f : 40f;
+            var pointCount = Math.Min(trace.Length, DetailedSpectrumPointCount);
+            for (var point = 0; point < pointCount - 1 && count + 3 <= maxSegments; point++)
+            {
+                var xA = Lerp(xMin, xMax, point / (double)(pointCount - 1));
+                var xB = Lerp(xMin, xMax, (point + 1) / (double)(pointCount - 1));
+                var yA = Lerp(yBottom, yTop, Math.Clamp(trace[point], 0f, 1f));
+                var yB = Lerp(yBottom, yTop, Math.Clamp(trace[point + 1], 0f, 1f));
+                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 0f);
+                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 1f);
+                segments[count++] = new GraphSegment(xA, yA, xB, yB, layer, 2f);
+            }
+
+            return count;
+        }
+
+        private unsafe int WriteGraphSegments(IntPtr destination, int maxSegments, int waterfallLinesPerGap = DefaultWaterfallLinesPerGap)
         {
             var segments = (GraphSegment*)destination;
             var count = WriteGridSegments(segments, maxSegments);
             var rows = Math.Min(_historyCount, HistoryDepth);
+            var interpolatedRowsPerGap = Math.Clamp(
+                waterfallLinesPerGap,
+                MinimumWaterfallLinesPerGap,
+                MaximumWaterfallLinesPerGap);
             var renderedRows = rows <= 1
                 ? rows
-                : rows + (rows - 1) * InterpolatedRowsPerGap;
+                : rows + (rows - 1) * interpolatedRowsPerGap;
             for (var renderedRow = 0; renderedRow < renderedRows && count + (PointCount - 1) * SegmentLayers <= maxSegments; renderedRow++)
             {
                 var age = renderedRows <= 1
@@ -627,6 +915,121 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             SmoothSlice(destination);
         }
 
+        private static void BuildDetailedSpectrumSlice(double[] magnitudes, float[] destination)
+        {
+            if (magnitudes.Length == 0)
+            {
+                Array.Clear(destination);
+                return;
+            }
+
+            for (var point = 0; point < destination.Length; point++)
+            {
+                var sourcePosition = point / (double)Math.Max(1, destination.Length - 1) * (magnitudes.Length - 1);
+                var sourceIndexA = Math.Clamp((int)Math.Floor(sourcePosition), 0, magnitudes.Length - 1);
+                var sourceIndexB = Math.Clamp(sourceIndexA + 1, 0, magnitudes.Length - 1);
+                var blend = sourcePosition - sourceIndexA;
+                var magnitude = (double)Lerp((float)magnitudes[sourceIndexA], (float)magnitudes[sourceIndexB], blend);
+                destination[point] = (float)Math.Clamp(Math.Pow(Math.Clamp(magnitude, 0d, 1d), 0.82d) * 0.82d, 0d, 0.94d);
+            }
+
+            SmoothSlice(destination);
+        }
+
+        private void PrepareDetailedSpectrumTrace(SpectrumFrame frame)
+        {
+            BuildDetailedSpectrumTarget(frame.RawMagnitudes, _detailedRawTarget);
+            BuildDetailedSpectrumTarget(frame.Magnitudes, _detailedProcessedTarget);
+
+            var frameCeiling = 0.08f;
+            for (var i = 0; i < DetailedSpectrumPointCount; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, _detailedRawTarget[i]);
+                frameCeiling = Math.Max(frameCeiling, _detailedProcessedTarget[i]);
+            }
+
+            IncludeDetailedSpectrumCeiling(frame.Input1Magnitudes, ref frameCeiling);
+            IncludeDetailedSpectrumCeiling(frame.Input2Magnitudes, ref frameCeiling);
+
+            _detailedVisualCeiling = frameCeiling > _detailedVisualCeiling
+                ? Lerp(_detailedVisualCeiling, frameCeiling, 0.08d)
+                : Lerp(_detailedVisualCeiling, frameCeiling, 0.015d);
+
+            NormalizeDetailedSpectrumTarget(_detailedRawTarget, _detailedVisualCeiling);
+            NormalizeDetailedSpectrumTarget(_detailedProcessedTarget, _detailedVisualCeiling);
+            EaseDetailedSpectrumTrace(_detailedRawTarget, _detailedRawTrace);
+            EaseDetailedSpectrumTrace(_detailedProcessedTarget, _detailedProcessedTrace);
+            _hasDetailedSpectrumTrace = true;
+        }
+
+        private static void BuildDetailedSpectrumTarget(double[] magnitudes, float[] destination)
+        {
+            if (magnitudes.Length == 0)
+            {
+                Array.Clear(destination);
+                return;
+            }
+
+            for (var point = 0; point < destination.Length; point++)
+            {
+                var sourcePosition = point / (double)Math.Max(1, destination.Length - 1) * (magnitudes.Length - 1);
+                var sourceIndex = (int)Math.Floor(sourcePosition);
+                var blend = sourcePosition - sourceIndex;
+                var p0 = ShapeDetailedMagnitude(magnitudes[Math.Clamp(sourceIndex - 1, 0, magnitudes.Length - 1)]);
+                var p1 = ShapeDetailedMagnitude(magnitudes[Math.Clamp(sourceIndex, 0, magnitudes.Length - 1)]);
+                var p2 = ShapeDetailedMagnitude(magnitudes[Math.Clamp(sourceIndex + 1, 0, magnitudes.Length - 1)]);
+                var p3 = ShapeDetailedMagnitude(magnitudes[Math.Clamp(sourceIndex + 2, 0, magnitudes.Length - 1)]);
+                destination[point] = (float)Math.Clamp(CatmullRom(p0, p1, p2, p3, blend), 0d, 1d);
+            }
+        }
+
+        private static void IncludeDetailedSpectrumCeiling(double[] magnitudes, ref float frameCeiling)
+        {
+            for (var i = 0; i < magnitudes.Length; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, (float)ShapeDetailedMagnitude(magnitudes[i]));
+            }
+        }
+
+        private static double ShapeDetailedMagnitude(double magnitude)
+        {
+            var lifted = Math.Max(0d, magnitude - 0.01d);
+            return Math.Clamp(Math.Pow(lifted, 0.9d), 0d, 1d);
+        }
+
+        private static double CatmullRom(double p0, double p1, double p2, double p3, double t)
+        {
+            var t2 = t * t;
+            var t3 = t2 * t;
+            return 0.5d * ((2d * p1)
+                + (-p0 + p2) * t
+                + (2d * p0 - 5d * p1 + 4d * p2 - p3) * t2
+                + (-p0 + 3d * p1 - 3d * p2 + p3) * t3);
+        }
+
+        private static void NormalizeDetailedSpectrumTarget(float[] target, float visualCeiling)
+        {
+            var ceiling = Math.Max(0.08f, visualCeiling);
+            for (var i = 0; i < target.Length; i++)
+            {
+                target[i] = Math.Clamp(target[i] / ceiling * 0.62f, 0f, 0.88f);
+            }
+        }
+
+        private void EaseDetailedSpectrumTrace(float[] target, float[] trace)
+        {
+            if (!_hasDetailedSpectrumTrace)
+            {
+                Array.Copy(target, trace, target.Length);
+                return;
+            }
+
+            for (var i = 0; i < target.Length; i++)
+            {
+                trace[i] = Lerp(trace[i], target[i], DetailedSpectrumSmoothingAmount);
+            }
+        }
+
         private void DrawSegments(FrameResource frameResource, ID3D12Resource renderTarget, int frameIndex, int segmentCount)
         {
             var toRenderTarget = ResourceBarrier.BarrierTransition(
@@ -642,6 +1045,14 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             {
                 _commandList.SetGraphicsRootSignature(_rootSignature);
                 _commandList.SetPipelineState(_linePipelineState);
+                _commandList.SetGraphicsRoot32BitConstant(
+                    0,
+                    BitConverter.SingleToUInt32Bits(Math.Max(1f, _width * 0.5f)),
+                    0);
+                _commandList.SetGraphicsRoot32BitConstant(
+                    0,
+                    BitConverter.SingleToUInt32Bits(Math.Max(1f, _height * 0.5f)),
+                    1);
                 _commandList.RSSetViewport(new Viewport(0, 0, _width, _height));
                 _commandList.RSSetScissorRect(new Vortice.Mathematics.RectI(0, 0, _width, _height));
                 _commandList.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
@@ -678,8 +1089,14 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         {
             var vertexShader = CompileShader("VSMain", "vs_5_0");
             var pixelShader = CompileShader("PSMain", "ps_5_0");
+            var parameters = new[]
+            {
+                new RootParameter(new RootConstants(0, 0, 2), ShaderVisibility.Vertex)
+            };
             var rootDescription = new RootSignatureDescription(
-                RootSignatureFlags.AllowInputAssemblerInputLayout);
+                RootSignatureFlags.AllowInputAssemblerInputLayout,
+                parameters,
+                Array.Empty<StaticSamplerDescription>());
             _rootSignature = _device.CreateRootSignature(in rootDescription, RootSignatureVersion.Version1);
             var inputElements = new[]
             {
@@ -826,6 +1243,12 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             {
                 float4 Position : SV_POSITION;
                 float4 Color : COLOR;
+                float LineSide : TEXCOORD0;
+            };
+
+            cbuffer GraphViewport : register(b0)
+            {
+                float2 ViewportHalfSize;
             };
 
             float Smooth01(float value)
@@ -851,6 +1274,13 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                 return saturate(c);
             }
 
+            float3 MicrophoneLineColor(float index)
+            {
+                float hue = frac(index * 0.61803398875);
+                float3 phase = float3(0.00, 0.33, 0.67);
+                return saturate(0.58 + 0.42 * cos(6.2831853 * (hue + phase)));
+            }
+
             float2 ProjectFloor(float x, float frontness)
             {
                 float front = saturate(frontness);
@@ -865,11 +1295,12 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             {
                 float front = saturate(frontness);
                 float depth = Smooth01(front);
-                float x = (pointIndex / 159.0) * 2.0 - 1.0;
+                float x = (pointIndex / 383.0) * 2.0 - 1.0;
                 float2 floorPoint = ProjectFloor(x, front);
                 float edgeFade = saturate(1.0 - pow(abs(x), 2.15) * 0.58);
-                float amplitude = (0.12 + depth * 0.47) * edgeFade;
-                float contourLift = value * value * (0.04 + depth * 0.05) * edgeFade;
+                float waveHeight = 2.0;
+                float amplitude = (0.12 + depth * 0.47) * edgeFade * waveHeight;
+                float contourLift = value * value * (0.04 + depth * 0.05) * edgeFade * waveHeight;
                 return floorPoint + float2(0.0, value * amplitude + contourLift);
             }
 
@@ -880,7 +1311,79 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                 float2 p2;
                 float thickness;
                 float4 color;
-                if (rawLayer > 1.5)
+                if (rawLayer > 39.5)
+                {
+                    p1 = float2(clamp(input.Segment0.x, -0.99, 0.99), clamp(input.Segment0.y, -0.92, 0.92));
+                    p2 = float2(clamp(input.Segment0.z, -0.99, 0.99), clamp(input.Segment0.w, -0.92, 0.92));
+                    float processedLine = rawLayer > 40.5 ? 1.0 : 0.0;
+                    float detailLayer = input.Segment1.y;
+                    float valueA = saturate((input.Segment0.y + 0.82) / 1.66);
+                    float valueB = saturate((input.Segment0.w + 0.82) / 1.66);
+                    float loudness = saturate(max(valueA, valueB));
+                    float useCore = detailLayer > 1.5 ? 1.0 : 0.0;
+                    float useBody = detailLayer > 0.5 ? 1.0 : 0.0;
+                    float3 rawColor = float3(0.64, 0.69, 0.75);
+                    float3 processedColor = float3(0.00, 0.78, 0.96);
+                    float3 traceColor = lerp(rawColor, processedColor, processedLine);
+                    thickness = lerp(
+                        4.6 + loudness * 1.2,
+                        1.24 + loudness * 0.32,
+                        useBody);
+                    thickness = lerp(thickness, 0.68 + loudness * 0.22, useCore);
+                    float alpha = lerp(0.020 + loudness * 0.026, 0.18 + loudness * 0.13, useBody);
+                    alpha = lerp(alpha, 0.68 + loudness * 0.20, useCore);
+                    color = float4(saturate(traceColor * (0.72 + useCore * 0.55 + loudness * 0.24)), saturate(alpha));
+                }
+                else if (rawLayer > 34.5)
+                {
+                    p1 = float2(clamp(input.Segment0.x, -0.99, 0.99), clamp(input.Segment0.y, -0.92, 0.92));
+                    p2 = float2(clamp(input.Segment0.z, -0.99, 0.99), clamp(input.Segment0.w, -0.92, 0.92));
+                    float isBorder = rawLayer > 35.5 ? 1.0 : 0.0;
+                    thickness = lerp(880.0, 2.2, isBorder);
+                    color = lerp(
+                        float4(0.00, 0.62, 0.70, 0.050),
+                        float4(0.18, 0.82, 0.78, 0.30),
+                        isBorder);
+                }
+                else if (rawLayer > 30.5)
+                {
+                    p1 = float2(clamp(input.Segment0.x, -0.99, 0.99), clamp(input.Segment0.y, -0.92, 0.92));
+                    p2 = float2(clamp(input.Segment0.z, -0.99, 0.99), clamp(input.Segment0.w, -0.92, 0.92));
+                    float isMajorLine = rawLayer > 31.5 ? 1.0 : 0.0;
+                    thickness = lerp(0.52, 1.05, isMajorLine);
+                    color = lerp(
+                        float4(0.04, 0.14, 0.18, 0.18),
+                        float4(0.08, 0.40, 0.46, 0.34),
+                        isMajorLine);
+                }
+                else if (rawLayer > 20.5)
+                {
+                    p1 = float2(clamp(input.Segment0.x, -0.98, 0.98), clamp(input.Segment0.y, -0.90, 0.90));
+                    p2 = float2(clamp(input.Segment0.z, -0.98, 0.98), clamp(input.Segment0.w, -0.90, 0.90));
+                    float isMajorLine = rawLayer > 21.5 ? 1.0 : 0.0;
+                    thickness = lerp(0.75, 1.35, isMajorLine);
+                    color = lerp(
+                        float4(0.05, 0.22, 0.27, 0.22),
+                        float4(0.08, 0.68, 0.62, 0.38),
+                        isMajorLine);
+                }
+                else if (rawLayer > 3.5)
+                {
+                    p1 = float2(clamp(input.Segment0.x, -0.98, 0.98), clamp(input.Segment0.y, -0.90, 0.90));
+                    p2 = float2(clamp(input.Segment0.z, -0.98, 0.98), clamp(input.Segment0.w, -0.90, 0.90));
+                    float micIndex = floor(rawLayer - 4.0);
+                    float useCore = input.Segment1.y > 0.5 ? 1.0 : 0.0;
+                    float valueA = saturate((input.Segment0.y + 0.80) / 1.62);
+                    float valueB = saturate((input.Segment0.w + 0.80) / 1.62);
+                    float loudness = saturate(max(valueA, valueB));
+                    float3 micColor = MicrophoneLineColor(micIndex);
+                    thickness = lerp(5.8 + loudness * 2.2, 1.55 + loudness * 0.6, useCore);
+                    color = lerp(
+                        float4(micColor * 0.42, 0.040 + loudness * 0.060),
+                        float4(saturate(micColor * 1.35), 0.50 + loudness * 0.32),
+                        useCore);
+                }
+                else if (rawLayer > 1.5)
                 {
                     float frontness = saturate(max(input.Segment0.y, input.Segment0.w));
                     p1 = ProjectFloor(clamp(input.Segment0.x, -1.0, 1.0), input.Segment0.y);
@@ -896,7 +1399,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                 }
                 else
                 {
-                    float pointIndex = clamp(input.Segment0.x, 0.0, 158.0);
+                    float pointIndex = clamp(input.Segment0.x, 0.0, 382.0);
                     float frontness = saturate(input.Segment0.y);
                     float valueA = clamp(input.Segment0.z, -0.85, 0.85);
                     float valueB = clamp(input.Segment0.w, -0.85, 0.85);
@@ -907,7 +1410,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                     p1 = clamp(p1, float2(-1.05, -0.95), float2(1.05, 0.95));
                     p2 = clamp(p2, float2(-1.05, -0.95), float2(1.05, 0.95));
                     float loudness = saturate(max(abs(valueA), abs(valueB)) * 1.40);
-                    float frequencyPosition = pow(pointIndex / 159.0, 0.82);
+                    float frequencyPosition = pow(pointIndex / 383.0, 0.82);
                     float3 neon = FrequencyColor(frequencyPosition);
                     float xForFade = frequencyPosition * 2.0 - 1.0;
                     float edgeAlpha = saturate(1.0 - pow(abs(xForFade), 2.05) * 0.52);
@@ -915,10 +1418,11 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                     float r = saturate(neon.r * brightness);
                     float g = saturate(neon.g * brightness);
                     float b = saturate(neon.b * brightness);
-                    float glowAlpha = (0.0015 + depth * 0.015 + loudness * 0.006) * edgeAlpha;
-                    float coreAlpha = (0.010 + depth * 0.135 + loudness * 0.035) * edgeAlpha;
-                    float glowPixels = (0.45 + depth * 2.1) * (0.70 + loudness * 0.32);
-                    float corePixels = (0.42 + depth * 1.0) * (0.90 + loudness * 0.18);
+                    float idleFill = 1.0 - loudness;
+                    float glowAlpha = (0.010 + depth * 0.026 + idleFill * 0.012 + loudness * 0.010) * edgeAlpha;
+                    float coreAlpha = (0.026 + depth * 0.160 + idleFill * 0.020 + loudness * 0.040) * edgeAlpha;
+                    float glowPixels = (1.35 + depth * 3.4) * (0.92 + loudness * 0.34);
+                    float corePixels = (0.95 + depth * 1.75) * (0.98 + loudness * 0.18);
                     float useCore = layer > 0.5 ? 1.0 : 0.0;
                     thickness = lerp(glowPixels, corePixels, useCore);
                     color = lerp(
@@ -927,39 +1431,48 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
                         useCore);
                 }
 
-                float2 deltaPixels = (p2 - p1) * float2(960.0, 540.0);
+                float2 viewportHalfSize = max(ViewportHalfSize, float2(1.0, 1.0));
+                float2 deltaPixels = (p2 - p1) * viewportHalfSize;
                 float lengthPixels = max(length(deltaPixels), 0.001);
                 float2 normal = float2(-deltaPixels.y, deltaPixels.x) / lengthPixels;
                 float halfThickness = max(thickness * 0.5, 0.25);
-                float2 offset = normal * halfThickness / float2(960.0, 540.0);
+                float2 offset = normal * halfThickness / viewportHalfSize;
                 float2 position = p1 + offset;
+                float lineSide = 1.0;
                 if (vertexId == 1)
                 {
                     position = p1 - offset;
+                    lineSide = -1.0;
                 }
                 else if (vertexId == 2 || vertexId == 3)
                 {
                     position = p2 + offset;
+                    lineSide = 1.0;
                 }
                 else if (vertexId == 4)
                 {
                     position = p1 - offset;
+                    lineSide = -1.0;
                 }
                 else if (vertexId == 5)
                 {
                     position = p2 - offset;
+                    lineSide = -1.0;
                 }
                 position = clamp(position, float2(-1.08, -0.98), float2(1.08, 0.98));
 
                 VertexOutput output;
                 output.Position = float4(position, 0.0, 1.0);
                 output.Color = color;
+                output.LineSide = lineSide;
                 return output;
             }
 
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
-                return input.Color;
+                float4 color = input.Color;
+                color.a *= 1.0 - smoothstep(0.70, 1.0, abs(input.LineSide));
+                return color;
             }
             """;
 

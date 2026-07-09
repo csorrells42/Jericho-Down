@@ -1,5 +1,40 @@
 namespace JerichoDown.Audio;
 
+public sealed class MicrophoneSpectrumLine
+{
+    public MicrophoneSpectrumLine(
+        int channelNumber,
+        double[] magnitudes,
+        double peakLevel,
+        double[]? rawMagnitudes = null,
+        double rawPeakLevel = 0d,
+        float[]? processedSamples = null,
+        float[]? rawSamples = null)
+    {
+        ChannelNumber = channelNumber;
+        Magnitudes = magnitudes;
+        PeakLevel = peakLevel;
+        RawMagnitudes = rawMagnitudes ?? [];
+        RawPeakLevel = rawPeakLevel;
+        ProcessedSamples = processedSamples ?? [];
+        RawSamples = rawSamples ?? [];
+    }
+
+    public int ChannelNumber { get; }
+
+    public double[] Magnitudes { get; }
+
+    public double PeakLevel { get; }
+
+    public double[] RawMagnitudes { get; }
+
+    public double RawPeakLevel { get; }
+
+    public float[] ProcessedSamples { get; }
+
+    public float[] RawSamples { get; }
+}
+
 public sealed class SpectrumFrame
 {
     public SpectrumFrame(double[] magnitudes, double peakLevel)
@@ -21,7 +56,8 @@ public sealed class SpectrumFrame
         double input1PeakLevel = 0d,
         double input2PeakLevel = 0d,
         float[]? input1Samples = null,
-        float[]? input2Samples = null)
+        float[]? input2Samples = null,
+        IReadOnlyList<MicrophoneSpectrumLine>? microphoneLines = null)
     {
         Magnitudes = magnitudes;
         RawMagnitudes = rawMagnitudes;
@@ -37,6 +73,7 @@ public sealed class SpectrumFrame
         Input2PeakLevel = input2PeakLevel;
         Input1Samples = input1Samples ?? [];
         Input2Samples = input2Samples ?? [];
+        MicrophoneLines = microphoneLines ?? [];
     }
 
     public double[] Magnitudes { get; }
@@ -66,6 +103,8 @@ public sealed class SpectrumFrame
     public float[] Input1Samples { get; }
 
     public float[] Input2Samples { get; }
+
+    public IReadOnlyList<MicrophoneSpectrumLine> MicrophoneLines { get; }
 
     public bool HasStereoInput => Input1Magnitudes.Length > 0 && Input2Magnitudes.Length > 0;
 }

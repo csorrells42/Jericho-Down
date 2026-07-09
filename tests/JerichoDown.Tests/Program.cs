@@ -24,6 +24,10 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
+    ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
+    ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
+    ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
+    ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
     ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
     ("Enhanced karaoke LRC parses inline timings", EnhancedKaraokeLrcParsesInlineTimings),
     ("Timed karaoke word selection waits for first timestamp", TimedKaraokeWordSelectionWaitsForFirstTimestamp),
@@ -291,6 +295,69 @@ static void ProcessedMonitorUsesLowLatencyBuffering()
     Assert(initialBuffer <= TimeSpan.FromMilliseconds(20), "initial live monitor buffer should stay low");
     Assert(targetBuffer <= TimeSpan.FromMilliseconds(20), "target live monitor buffer should stay low");
     Assert(maximumBuffer <= TimeSpan.FromMilliseconds(70), "maximum live monitor buffer should trim latency buildup");
+}
+
+static void InputChannelModesMapInterfaceLanes()
+{
+    Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.Input1Left) == 0, "input 1 should map to channel index 0");
+    Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.Input2Right) == 1, "input 2 should map to channel index 1");
+    Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.Input10) == 9, "input 10 should map to channel index 9");
+    Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.MonoSum) is null, "mono sum should not pick one channel");
+    Assert(InputChannelModeInfo.GetChannelMode(0) == InputChannelMode.Input1Left, "channel index 0 should map back to input 1");
+    Assert(InputChannelModeInfo.GetChannelMode(9) == InputChannelMode.Input10, "channel index 9 should map back to input 10");
+    Assert(InputChannelModeInfo.GetChannelMode(10) is null, "channel index 10 should be outside the supported strip inputs");
+    Assert(InputChannelModeInfo.GetDisplayLabel(InputChannelMode.Input2Right).Contains("2", StringComparison.Ordinal), "input 2 label should be stable");
+}
+
+static void MixBusProcessorScalesAndProtectsOutput()
+{
+    var processor = new MixBusProcessor();
+    var input = new[] { 0.5f, -0.5f, 0.25f };
+    var output = new float[input.Length];
+
+    processor.Process(input, output, new MixBusSettings(50d, false, false, -1d));
+
+    Assert(Math.Abs(output[0] - 0.25f) < 0.0001f, "master volume should scale positive samples");
+    Assert(Math.Abs(output[1] + 0.25f) < 0.0001f, "master volume should scale negative samples");
+
+    processor.Process([1f, -1f, float.NaN], output, new MixBusSettings(200d, true, true, -1d));
+    Assert(output.All(float.IsFinite), "mix bus output should stay finite");
+    Assert(output.All(sample => Math.Abs(sample) <= 1f), "mix bus output should stay in audio range");
+}
+
+static void AudioSyncBufferHoldsTargetLatency()
+{
+    var buffer = new AudioSyncBuffer(48_000, TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(40));
+    var output = new float[4];
+
+    buffer.Write([0.1f, 0.2f, 0.3f, 0.4f], 48_000);
+    Assert(!buffer.ReadAligned(output), "buffer should wait until target latency is accumulated");
+    Assert(output.All(sample => sample == 0f), "latency holdoff should output silence");
+
+    buffer.Write(Enumerable.Repeat(0.5f, 500).ToArray(), 48_000);
+    Assert(buffer.ReadAligned(output), "buffer should read after target latency is available");
+    Assert(Math.Abs(output[0] - 0.1f) < 0.0001f, "first delayed sample should be preserved");
+    Assert(buffer.UnderflowCount == 1, "underflow should be counted once");
+}
+
+static void AudioSyncBufferResamplesAndTrimsDrift()
+{
+    var resampleBuffer = new AudioSyncBuffer(48_000, TimeSpan.Zero, TimeSpan.FromMilliseconds(30));
+    var source = Enumerable.Range(0, 441).Select(index => index / 440f).ToArray();
+    var output = new float[480];
+
+    resampleBuffer.Write(source, 44_100);
+    Assert(resampleBuffer.ReadAligned(output), "resampled buffer should provide the requested output");
+    Assert(Math.Abs(output[0]) < 0.0001f, "resampled output should start at the first source sample");
+    Assert(output[^1] > 0.99f, "resampled output should reach the end of the source ramp");
+    Assert(output.All(float.IsFinite), "resampled output should stay finite");
+
+    var driftBuffer = new AudioSyncBuffer(1_000, TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(20));
+    driftBuffer.Write(Enumerable.Repeat(0.25f, 100).ToArray(), 1_000);
+    var beforeTrimCount = driftBuffer.BufferedSamples;
+    Assert(driftBuffer.ReadAligned(new float[5]), "drift buffer should still produce output after trimming");
+    Assert(driftBuffer.DriftTrimCount > 0, "excess buffered audio should be trimmed as drift");
+    Assert(driftBuffer.BufferedSamples < beforeTrimCount, "drift trim should reduce buffered audio");
 }
 
 static void CameraModeAutoDisplayText()

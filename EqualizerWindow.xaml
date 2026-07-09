@@ -372,6 +372,64 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="MixerFaderSlider" TargetType="Slider">
+      <Setter Property="Orientation" Value="Vertical" />
+      <Setter Property="Width" Value="58" />
+      <Setter Property="Height" Value="300" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid Width="58" Height="{TemplateBinding Height}" SnapsToDevicePixels="True">
+              <Border Width="28" HorizontalAlignment="Center" Background="#05090C" BorderBrush="#24394A" BorderThickness="1" CornerRadius="6" />
+              <Border Width="18" HorizontalAlignment="Center" Margin="0,10" CornerRadius="5" Opacity="0.96">
+                <Border.Background>
+                  <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#061017" Offset="0" />
+                    <GradientStop Color="#0C2638" Offset="0.44" />
+                    <GradientStop Color="#164961" Offset="0.5" />
+                    <GradientStop Color="#0C2638" Offset="0.56" />
+                    <GradientStop Color="#061017" Offset="1" />
+                  </LinearGradientBrush>
+                </Border.Background>
+              </Border>
+              <Rectangle Width="4" Fill="#25E0D0" HorizontalAlignment="Center" Margin="0,14" Opacity="0.34" RadiusX="2" RadiusY="2" />
+              <Rectangle Width="1" Fill="#9CFDF4" HorizontalAlignment="Center" Margin="0,14" Opacity="0.9" />
+              <Track x:Name="PART_Track" IsDirectionReversed="True" Margin="0,11">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="Slider.DecreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" Focusable="False" />
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" IsTabStop="False" Focusable="False" />
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="48" Height="16">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border Width="48" Height="16" BorderBrush="#A7FFF8" BorderThickness="1" CornerRadius="3" SnapsToDevicePixels="True">
+                          <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                              <GradientStop Color="#0E4F4A" Offset="0" />
+                              <GradientStop Color="#35E8D8" Offset="0.48" />
+                              <GradientStop Color="#0E4F4A" Offset="1" />
+                            </LinearGradientBrush>
+                          </Border.Background>
+                        </Border>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+              <Rectangle Height="2" Fill="#F4C542" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="5,0" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="ProcessedOutputToggle" TargetType="ToggleButton">
       <Setter Property="Content" Value="SEND PROCESSED MIC" />
       <Setter Property="Background" Value="#7F1D1D" />
@@ -764,10 +822,6 @@
               <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Enable or disable webcam capture for this podcast session. The selected camera stays remembered while disabled." />
             </ToggleButton.ToolTip>
           </ToggleButton>
-          <TextBlock Text="Mic" Foreground="#F8FAFC" VerticalAlignment="Center" Margin="0,0,8,0" />
-          <ComboBox x:Name="MicrophoneComboBox" Width="220" SelectionChanged="MicrophoneSelectionChanged" />
-          <TextBlock Text="Channel" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
-          <ComboBox x:Name="InputChannelComboBox" Width="112" SelectionChanged="InputChannelSelectionChanged" />
           <TextBlock x:Name="StatusText" Text="Ready" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,0,0" />
         </StackPanel>
       </Grid>
@@ -1466,7 +1520,11 @@
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
+                <TextBlock Text="Strip" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <ComboBox x:Name="MicChannelComboBox" Width="104" SelectionChanged="MicChannelSelectionChanged" Margin="0,0,10,0" />
+                <ComboBox x:Name="MicrophoneComboBox" Width="220" SelectionChanged="MicrophoneSelectionChanged" Margin="0,0,10,0" />
+                <ComboBox x:Name="InputChannelComboBox" Width="120" SelectionChanged="InputChannelSelectionChanged" Margin="0,0,12,0" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,0,0">
                   <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
                   <ToggleButton x:Name="WaveformViewButton" Style="{StaticResource PresetConsoleButton}" Content="Waveform" Click="WaveformViewClicked" Padding="10,4" Margin="0,0,6,0">
                     <ToggleButton.ToolTip>
@@ -1478,6 +1536,15 @@
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows a GPU-backed 3D rolling waveform using the current processed sound." />
                     </ToggleButton.ToolTip>
                   </ToggleButton>
+                  <StackPanel x:Name="WaterfallLinesPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="2,0,8,0">
+                    <TextBlock Text="Lines" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <Slider x:Name="WaterfallLinesSlider" Width="78" Minimum="0" Maximum="16" Value="8" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" ValueChanged="WaterfallLinesChanged">
+                      <Slider.ToolTip>
+                        <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Adjusts how many interpolated waterfall lines are drawn between each captured 3D history row." />
+                      </Slider.ToolTip>
+                    </Slider>
+                    <TextBlock Text="{Binding ElementName=WaterfallLinesSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" Width="18" VerticalAlignment="Center" Margin="6,0,0,0" />
+                  </StackPanel>
                   <ToggleButton x:Name="MicCompareViewButton" Style="{StaticResource PresetConsoleButton}" Content="Mic Compare" Click="MicCompareViewClicked" Padding="10,4">
                     <ToggleButton.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Shows input 1 and input 2 as raw, unprocessed spectrum lines so two microphones can be compared directly." />
@@ -1498,15 +1565,6 @@
                     </CheckBox.ToolTip>
                   </CheckBox>
                 </StackPanel>
-                <StackPanel x:Name="AnalyzerSmoothingPanel" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
-                  <TextBlock Text="Smooth" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,6,0" />
-                  <Slider x:Name="AnalyzerSmoothingSlider" Width="90" Minimum="0" Maximum="100" Value="80" TickFrequency="10" VerticalAlignment="Center">
-                    <Slider.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Controls how much the spectrum analyzer display is smoothed. Lower values react faster; higher values look calmer." />
-                    </Slider.ToolTip>
-                  </Slider>
-                  <TextBlock Text="{Binding ElementName=AnalyzerSmoothingSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="38" VerticalAlignment="Center" Margin="6,0,0,0" />
-                </StackPanel>
               </StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                 <StackPanel x:Name="NormalSpectrumLegendPanel" Orientation="Horizontal" VerticalAlignment="Center">
@@ -1524,7 +1582,8 @@
               </StackPanel>
             </Grid>
           </Border>
-          <Border x:Name="EqualizerFaceplate" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" BorderBrush="#445D6F7F" BorderThickness="1" CornerRadius="7" Padding="10" Margin="378,0,378,18">
+          <Canvas x:Name="EqVoiceZoneGuideCanvas" Height="30" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" Margin="378,0,378,286" ClipToBounds="True" IsHitTestVisible="False" Loaded="EqVoiceZoneGuideCanvasLoaded" SizeChanged="EqVoiceZoneGuideCanvasSizeChanged" />
+          <Border x:Name="EqualizerFaceplate" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" BorderBrush="#445D6F7F" BorderThickness="1" CornerRadius="7" Padding="10" Margin="378,0,378,18" SizeChanged="EqualizerFaceplateSizeChanged">
             <Border.Background>
               <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                 <GradientStop Color="#1C2730" Offset="0" />
@@ -2127,6 +2186,220 @@
               </ScrollViewer>
             </Grid>
           </Border>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Mixing">
+        <Grid Background="#05070A">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="2*" />
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="#C0111820" Padding="18,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="Master" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Slider x:Name="MasterVolumeSlider" Width="160" Minimum="0" Maximum="150" Value="100" TickFrequency="10" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
+                <TextBlock Text="{Binding ElementName=MasterVolumeSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="52" VerticalAlignment="Center" Margin="8,0,0,0" />
+              </StackPanel>
+              <ToggleButton x:Name="MasterNormalizeToggle" Grid.Column="2" Style="{StaticResource PresetConsoleButton}" Content="Normalize" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
+              <ToggleButton x:Name="MasterLimiterToggle" Grid.Column="3" Style="{StaticResource PresetConsoleButton}" Content="Limiter" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
+              <TextBlock Grid.Column="4" Text="Ceiling" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
+              <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
+                <Slider x:Name="MasterLimiterCeilingSlider" Width="128" Minimum="-12" Maximum="0" Value="-1" TickFrequency="1" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
+                <TextBlock Text="{Binding ElementName=MasterLimiterCeilingSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" Width="70" VerticalAlignment="Center" Margin="8,0,0,0" />
+              </StackPanel>
+              <TextBlock x:Name="MixBusStatusText" Grid.Column="6" Text="Bus: processed output" Foreground="#8DA2B7" VerticalAlignment="Center" HorizontalAlignment="Right" />
+            </Grid>
+          </Border>
+          <Grid Grid.Row="1" Margin="18,14,18,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="2*" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Style="{StaticResource DspBubble}" Padding="12" Margin="0,0,10,0">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                  <TextBlock Text="Mic spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" />
+                  <TextBlock Text="10 processed mic lines" Foreground="#8DA2B7" FontSize="11" HorizontalAlignment="Right" />
+                </DockPanel>
+                <Border Grid.Row="1" Background="#050B10" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                  <Grid ClipToBounds="True">
+                    <ContentControl x:Name="MixingMicSpectrumGraphHost" Focusable="False" ClipToBounds="True" />
+                    <Canvas x:Name="MixingMicSpectrumCanvas" Background="#050B10" ClipToBounds="True" Visibility="Collapsed" />
+                  </Grid>
+                </Border>
+              </Grid>
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource DspBubble}" Padding="12" Margin="10,0,0,0">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                  <TextBlock Text="Program output" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" />
+                  <TextBlock Text="DX12 3D" Foreground="#8DA2B7" FontSize="11" HorizontalAlignment="Right" />
+                </DockPanel>
+                <Border Grid.Row="1" Background="#050B10" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                  <ContentControl x:Name="MixingOutputWaveform3DHost" Focusable="False" ClipToBounds="True" />
+                </Border>
+              </Grid>
+            </Border>
+          </Grid>
+          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Border Style="{StaticResource DspBubble}" Margin="18" Padding="12">
+              <ItemsControl x:Name="MixingChannelsItemsControl">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <UniformGrid Rows="1" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Width="126" MinHeight="490" Background="#071017" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="6" Padding="8" Margin="4">
+                      <Grid>
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="*" />
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBox Grid.Row="0" Text="{Binding DisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Foreground="#F8FAFC" FontWeight="SemiBold" Background="#081017" BorderBrush="#334B5C" Padding="5,3" TextAlignment="Center" TextChanged="MixerChannelNameChanged" />
+                        <TextBlock Grid.Row="1" Text="{Binding RouteText}" Foreground="#8DA2B7" FontSize="10" TextWrapping="Wrap" TextAlignment="Center" ToolTip="{Binding RouteText}" MaxHeight="44" Margin="0,6,0,8" />
+                        <StackPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,8">
+                          <CheckBox Content="On" IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="0,0,0,6" />
+                          <CheckBox Content="Mute" IsChecked="{Binding IsMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" />
+                        </StackPanel>
+                        <Slider Grid.Row="3" Style="{StaticResource MixerFaderSlider}" Minimum="0" Maximum="150" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="10" HorizontalAlignment="Center" ValueChanged="MixerChannelControlChanged" />
+                        <TextBlock Grid.Row="4" Text="{Binding VolumeDisplayText}" Foreground="#F8FAFC" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,8,0,8" />
+                        <Border Grid.Row="5" Height="16" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+                          <Grid>
+                            <Rectangle Fill="#10202A" />
+                            <Rectangle Fill="#35E8D8" Width="0" HorizontalAlignment="Left" RadiusX="4" RadiusY="4" />
+                          </Grid>
+                        </Border>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </Border>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+      <TabItem Header="About">
+        <Grid Background="#05070A">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="#C0111820" Padding="18,14">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="About Jericho Down" Foreground="#F8FAFC" FontSize="24" FontWeight="Bold" />
+                <TextBlock Text="Dedicated to Scarlett and Mark, and to the One who made the miracle possible." Foreground="#B8C7D9" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" />
+              </StackPanel>
+              <TextBlock Grid.Column="1" Text="Worship / Testimony / Sound" Foreground="#35E8D8" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="24,0,0,0" />
+            </Grid>
+          </Border>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid MaxWidth="1320" HorizontalAlignment="Center" Margin="28,26,28,34">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#A30B1118" BorderBrush="#334F5D6B" BorderThickness="1" CornerRadius="6" Padding="24" Margin="0,0,0,18">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="5" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border Background="#35E8D8" CornerRadius="3" />
+                  <StackPanel Grid.Column="1" Margin="18,0,0,0">
+                    <TextBlock Text="Jericho Down was built for worship, testimony, music, and the kind of sound that carries something eternal with it." Foreground="#F8FAFC" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="34" />
+                    <TextBlock Text="It is dedicated to my daughter Scarlett and to my friend Mark." Foreground="#B8C7D9" FontSize="15" TextWrapping="Wrap" Margin="0,12,0,0" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+              <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource DspBubble}" Padding="22" Margin="0,0,18,18">
+                <StackPanel>
+                  <TextBlock Text="For Scarlett" Foreground="#35E8D8" FontSize="20" FontWeight="Bold" Margin="0,0,0,12" />
+                  <TextBlock Text="Scarlett was born with every number against her. My wife's water broke at 15 weeks and 6 days, and Scarlett was born at 26 and a half weeks, weighing 1 pound, 11 ounces. We were told she had a 5% chance to live. We were told she might never come off a ventilator. That first night, people tried to prepare us for the worst." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
+                  <TextBlock Text="But Scarlett stayed." Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12" />
+                  <TextBlock Text="By the next day, she was breathing room air on the ventilator with no added oxygen. She moved from the ventilator, to non-invasive support, to CPAP, and by the time she would have been 36 weeks gestation, she came home eating, drinking, growing, and doing great. The hospital did incredible work, but when people said they had no explanation, we did." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
+                  <TextBlock Text="Scarlett is a miracle." Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Row="1" Grid.Column="1" Background="#A30B1118" BorderBrush="#334F5D6B" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,18">
+                <Grid MinHeight="360">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <Border Background="#05090C" BorderBrush="#26323D" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+                    <Image Source="Assets/about-dedication.png" Stretch="Uniform" SnapsToDevicePixels="True" />
+                  </Border>
+                  <Border Grid.Row="1" Background="#B805070A" BorderBrush="#6635E8D8" BorderThickness="1,0,1,1" Padding="12,9">
+                    <TextBlock Text="The sound of praise, the God who listens, the miracle that gave me a daughter, and a friend who didn't know how to give up." Foreground="#F8FAFC" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                  </Border>
+                </Grid>
+              </Border>
+              <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource DspBubble}" Padding="22" Margin="0,0,18,0">
+                <StackPanel>
+                  <TextBlock Text="For Mark" Foreground="#35E8D8" FontSize="20" FontWeight="Bold" Margin="0,0,0,12" />
+                  <TextBlock Text="Mark was one of a kind. Some people thought he was strange, and maybe he was, but he and I could talk on the same frequency. He was the first person who ever gave me a real chance to do software work. I saw him launching fireworks with a BASIC Stamp, told him I could make it better, and we rebuilt it with Arduino and a Java program. I never charged him a dime. He was thrilled, and I was changed." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
+                  <TextBlock Text="When I was going through some of the hardest days of my life, Mark helped me walk the anxiety off. We would walk his land and his dirt roads, talking, praying, and fighting our way through it. His own battle was not temporary, but every day he got up full of faith and ready to fight the devil. When my faith was weak, Mark helped recharge it." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
+                  <TextBlock Text="Mark had the spirit of a battlefield general. If he sat still, you would wonder where he was, but if you knew him, you knew where to find him: advancing. He was always attacking on one front or another, and from the time Mark was born, the devil got no rest. Mark brought a lot of people to know Christ, and he never stopped pushing forward." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
+                  <TextBlock Text="When Scarlett was being born, Mark was one of the first people I called. He prayed with us, stood with us, and helped carry us through. God did it all, but it would have been much harder without Mark in my corner." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Row="2" Grid.Column="1" Background="#A30B1118" BorderBrush="#35E8D8" BorderThickness="1" CornerRadius="6" Padding="22">
+                <StackPanel>
+                  <TextBlock Text="Jericho Down is for them." Foreground="#F8FAFC" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" Margin="0,0,0,12" />
+                  <TextBlock Text="For Scarlett, who lived when the numbers said she would not." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,10" />
+                  <TextBlock Text="For Mark, who believed, prayed, fought, and helped me believe again when I needed it most." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,14" />
+                  <Border Background="#1E3A8A" BorderBrush="#60A5FA" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,16">
+                    <StackPanel>
+                      <TextBlock Text="Romans 8:37-39" Foreground="#BAE6FD" FontSize="13" FontWeight="Bold" Margin="0,0,0,8" />
+                      <TextBlock Foreground="#EFF6FF" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="22">But in all these things we overwhelmingly conquer through Him who loved us. For I am convinced that neither death, nor life, nor angels, nor principalities, nor things present, nor things to come, nor powers, nor height, nor depth, nor any other created thing will be able to separate us from the love of God that is in Christ Jesus our Lord.</TextBlock>
+                    </StackPanel>
+                  </Border>
+                  <Border BorderBrush="#334F5D6B" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                    <StackPanel>
+                      <TextBlock Text="And most of all, Jericho Down is a testimony to the One who made all of this possible." Foreground="#F8FAFC" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="24" Margin="0,0,0,10" />
+                      <TextBlock Text="God never broke a single promise. He never missed one cue. He was always there, He always provided, He always came through, and He made the miracle possible." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,14" />
+                      <TextBlock Text="May this program carry the sound of worship clearly, faithfully, and loudly. And if it gives the devil a bad day, Mark would have loved that." Foreground="#35E8D8" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="23" />
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </Border>
+            </Grid>
+          </ScrollViewer>
         </Grid>
       </TabItem>
     </TabControl>

@@ -4,7 +4,7 @@ public sealed class SpectrumAnalyzer
 {
     private const int FftSize = 8192;
     private const int BarCount = 256;
-    private const double MinimumDisplayFrequency = 40d;
+    private const double MinimumDisplayFrequency = 20d;
     private const double MaximumDisplayFrequency = 20000d;
     private static readonly int[] BitReversedIndices = CreateBitReversedIndices();
     private static readonly FftStage[] FftStages = CreateFftStages();

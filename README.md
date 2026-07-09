@@ -1,6 +1,8 @@
 # Jericho Down
 
-Jericho Down is a standalone WPF podcast recording, camera preview, microphone DSP, and voice analysis tool split out of Automagination Amalgastation.
+Jericho Down is a standalone WPF church/live-worship production tool for recording, camera preview, microphone DSP, EQ, spectrum/waveform visualization, karaoke/worship lyrics, mic comparison, and processed output routing.
+
+It is offered freely for Christian churches, worship teams, and ministries.
 
 ## Current Features
 
@@ -37,6 +39,10 @@ dotnet run --project tests\JerichoDown.Tests\JerichoDown.Tests.csproj
 ```
 
 The default verifier builds the solution, runs the test harness, and lists available cameras. `-LiveCamera` briefly opens the configured real and virtual cameras through the DX12 preview host. `-TextureDiagnostic` probes the texture-native path without making that experimental path a required pass condition.
+
+## License
+
+Jericho Down is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Camera Probe
 

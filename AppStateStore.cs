@@ -201,9 +201,21 @@ internal sealed class AppSettingsState
 
     public bool LeftControlRailCollapsed { get; set; }
 
+    public int SelectedMicChannelNumber { get; set; } = 1;
+
+    public List<MicChannelSettingsState> MicChannels { get; set; } = [];
+
     public string? MicrophoneName { get; set; }
 
     public string? InputChannelMode { get; set; }
+
+    public double? MixerMasterVolumePercent { get; set; }
+
+    public bool MixerAutoNormalizeEnabled { get; set; } = true;
+
+    public bool MixerLimiterEnabled { get; set; } = true;
+
+    public double? MixerLimiterCeilingDb { get; set; }
 
     public string? OutputDeviceName { get; set; }
 
@@ -264,4 +276,46 @@ internal sealed class AppSettingsState
     public string? ActivePresetName { get; set; }
 
     public bool ActivePresetIsUserPreset { get; set; }
+}
+
+internal sealed class MicChannelSettingsState
+{
+    public int ChannelNumber { get; set; }
+
+    public string? DisplayName { get; set; }
+
+    public string? MicrophoneName { get; set; }
+
+    public string? InputChannelMode { get; set; }
+
+    public bool IsEnabled { get; set; } = true;
+
+    public bool IsMuted { get; set; }
+
+    public double? VolumePercent { get; set; }
+
+    public string? ActivePresetName { get; set; }
+
+    public bool ActivePresetIsUserPreset { get; set; }
+
+    public string? PresetDescription { get; set; }
+
+    public double? AnalyzerSmoothing { get; set; }
+
+    public List<EqualizerBandSettingsState> EqualizerBands { get; set; } = [];
+
+    public Dictionary<string, double> NumberSettings { get; set; } = [];
+
+    public Dictionary<string, bool> BooleanSettings { get; set; } = [];
+}
+
+internal sealed class EqualizerBandSettingsState
+{
+    public string? Label { get; set; }
+
+    public double FrequencyHz { get; set; }
+
+    public double GainDb { get; set; }
+
+    public bool IsEnabled { get; set; } = true;
 }
