@@ -25,6 +25,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice low-pass filter tames high hiss", VoiceLowPassFilterTamesHighHiss),
     ("Voice hum removal notches mains buzz", VoiceHumRemovalNotchesMainsBuzz),
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
+    ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
@@ -325,6 +326,30 @@ static void VoiceNotchFilterCutsOneRingingTone()
     Assert(notchedRingRms < bypassRingRms * 0.42d, "notch filter should cut the selected ringing frequency");
     Assert(notchedNearbyRms > bypassNearbyRms * 0.74d, "notch filter should mostly preserve nearby voice content");
     Assert(notchedRing.All(float.IsFinite), "notch filter output should stay finite");
+}
+
+static void VoiceParametricEqShapesOneAdjustableBand()
+{
+    const int sampleRate = 48_000;
+    var centerTone = GenerateSine(sampleRate, 1_000d, 0.35d, 2.0d);
+    var offBandTone = GenerateSine(sampleRate, 4_000d, 0.35d, 2.0d);
+    var centerBypass = ProcessParametricEqTestTone(centerTone, enabled: false, gainDb: 0d);
+    var centerBoosted = ProcessParametricEqTestTone(centerTone, enabled: true, gainDb: 6d);
+    var centerCut = ProcessParametricEqTestTone(centerTone, enabled: true, gainDb: -9d);
+    var offBypass = ProcessParametricEqTestTone(offBandTone, enabled: false, gainDb: 0d);
+    var offBoosted = ProcessParametricEqTestTone(offBandTone, enabled: true, gainDb: 6d);
+
+    var start = sampleRate;
+    var centerBypassRms = CalculateTailRms(centerBypass, start);
+    var centerBoostedRms = CalculateTailRms(centerBoosted, start);
+    var centerCutRms = CalculateTailRms(centerCut, start);
+    var offBypassRms = CalculateTailRms(offBypass, start);
+    var offBoostedRms = CalculateTailRms(offBoosted, start);
+
+    Assert(centerBoostedRms > centerBypassRms * 1.65d, "parametric EQ boost should raise the selected frequency");
+    Assert(centerCutRms < centerBypassRms * 0.52d, "parametric EQ cut should lower the selected frequency");
+    Assert(offBoostedRms > offBypassRms * 0.86d && offBoostedRms < offBypassRms * 1.14d, "parametric EQ should leave off-band content mostly unchanged");
+    Assert(centerBoosted.All(float.IsFinite), "parametric EQ output should stay finite");
 }
 
 static void VoiceSaturationAddsWarmHarmonicsSafely()
@@ -1359,6 +1384,34 @@ static float[] ProcessNotchFilterTestTone(float[] samples, bool enabled)
         NotchFilterFrequencyHz = 2_800,
         NotchFilterDepthDb = 30,
         NotchFilterQ = 18,
+        LowPassEnabled = false,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        SaturationEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessParametricEqTestTone(float[] samples, bool enabled, double gainDb)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = false,
+        NotchFilterEnabled = false,
+        ParametricEqEnabled = enabled,
+        ParametricEqFrequencyHz = 1_000,
+        ParametricEqGainDb = gainDb,
+        ParametricEqQ = 2.2,
         LowPassEnabled = false,
         DePopperEnabled = false,
         NoiseGateEnabled = false,

@@ -37,6 +37,11 @@ public sealed class VoiceSampleProcessor
     private double _manualNotchX2;
     private double _manualNotchY1;
     private double _manualNotchY2;
+    private double _parametricEqWet;
+    private double _parametricEqX1;
+    private double _parametricEqX2;
+    private double _parametricEqY1;
+    private double _parametricEqY2;
     private double _lowPassWet;
     private double _lowPassX1;
     private double _lowPassX2;
@@ -92,6 +97,7 @@ public sealed class VoiceSampleProcessor
     private bool _highPassEnabled;
     private bool _humRemovalEnabled;
     private bool _notchFilterEnabled;
+    private bool _parametricEqEnabled;
     private bool _lowPassEnabled;
     private bool _dePopperEnabled;
     private bool _noiseGateEnabled;
@@ -135,6 +141,15 @@ public sealed class VoiceSampleProcessor
     private double _lastNotchFilterFrequencyHz;
     private double _lastNotchFilterDepthDb = double.NaN;
     private double _lastNotchFilterQ;
+    private double _parametricEqB0 = 1d;
+    private double _parametricEqWetCoefficient;
+    private double _parametricEqB1;
+    private double _parametricEqB2;
+    private double _parametricEqA1;
+    private double _parametricEqA2;
+    private double _lastParametricEqFrequencyHz;
+    private double _lastParametricEqGainDb = double.NaN;
+    private double _lastParametricEqQ;
     private double _lowPassB0 = 1d;
     private double _lowPassWetCoefficient;
     private double _lowPassB1;
@@ -278,6 +293,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyHumRemoval(sample);
             sample = ApplyManualNotch(sample);
             sample = ApplyEqualizer(sample);
+            sample = ApplyParametricEq(sample);
             sample = ApplySaturation(sample);
             sample = ApplyNoiseSuppression(sample);
             sample = ApplyExpander(sample);
@@ -336,6 +352,7 @@ public sealed class VoiceSampleProcessor
         _highPassEnabled = _settings.HighPassEnabled;
         _humRemovalEnabled = _settings.HumRemovalEnabled;
         _notchFilterEnabled = _settings.NotchFilterEnabled && _settings.NotchFilterDepthDb > 0d;
+        _parametricEqEnabled = _settings.ParametricEqEnabled && Math.Abs(_settings.ParametricEqGainDb) > 0.01d;
         _lowPassEnabled = _settings.LowPassEnabled;
         _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
         _noiseGateEnabled = _settings.NoiseGateEnabled;
@@ -350,10 +367,12 @@ public sealed class VoiceSampleProcessor
         _highPassWetCoefficient = TimeCoefficient(12d);
         _humRemovalWetCoefficient = TimeCoefficient(12d);
         _manualNotchWetCoefficient = TimeCoefficient(12d);
+        _parametricEqWetCoefficient = TimeCoefficient(12d);
         _lowPassWetCoefficient = TimeCoefficient(12d);
         UpdateHighPassCoefficients();
         UpdateHumRemovalCoefficients();
         UpdateManualNotchCoefficients();
+        UpdateParametricEqCoefficients();
         UpdateLowPassCoefficients();
 
         var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
@@ -989,6 +1008,81 @@ public sealed class VoiceSampleProcessor
         }
 
         return sample;
+    }
+
+    private double ApplyParametricEq(double sample)
+    {
+        if (!_parametricEqEnabled && _parametricEqWet <= 0d)
+        {
+            ResetParametricEqState();
+            return sample;
+        }
+
+        var output = FlushDenormal(_parametricEqB0 * sample
+            + _parametricEqB1 * _parametricEqX1
+            + _parametricEqB2 * _parametricEqX2
+            - _parametricEqA1 * _parametricEqY1
+            - _parametricEqA2 * _parametricEqY2);
+        _parametricEqX2 = _parametricEqX1;
+        _parametricEqX1 = FlushDenormal(sample);
+        _parametricEqY2 = _parametricEqY1;
+        _parametricEqY1 = output;
+
+        var targetWet = _parametricEqEnabled ? 1d : 0d;
+        _parametricEqWet = FlushDenormal(_parametricEqWet + (targetWet - _parametricEqWet) * _parametricEqWetCoefficient);
+        if (!_parametricEqEnabled && _parametricEqWet < 0.0001d)
+        {
+            _parametricEqWet = 0d;
+            ResetParametricEqState();
+        }
+        else if (_parametricEqEnabled && _parametricEqWet > 0.9999d)
+        {
+            _parametricEqWet = 1d;
+        }
+
+        return sample + (output - sample) * _parametricEqWet;
+    }
+
+    private void ResetParametricEqState()
+    {
+        _parametricEqX1 = 0d;
+        _parametricEqX2 = 0d;
+        _parametricEqY1 = 0d;
+        _parametricEqY2 = 0d;
+    }
+
+    private void UpdateParametricEqCoefficients()
+    {
+        var frequencyHz = Math.Clamp(_settings.ParametricEqFrequencyHz, 40d, Math.Min(16000d, _sampleRate * 0.45d));
+        var gainDb = Math.Clamp(_settings.ParametricEqGainDb, -12d, 12d);
+        var q = Math.Clamp(_settings.ParametricEqQ, 0.25d, 24d);
+        if (Math.Abs(frequencyHz - _lastParametricEqFrequencyHz) < 0.01d
+            && Math.Abs(gainDb - _lastParametricEqGainDb) < 0.001d
+            && Math.Abs(q - _lastParametricEqQ) < 0.001d)
+        {
+            return;
+        }
+
+        _lastParametricEqFrequencyHz = frequencyHz;
+        _lastParametricEqGainDb = gainDb;
+        _lastParametricEqQ = q;
+        var omega = 2d * Math.PI * frequencyHz / _sampleRate;
+        var sine = Math.Sin(omega);
+        var cosine = Math.Cos(omega);
+        var alpha = sine / (2d * q);
+        var amplitude = Math.Pow(10d, gainDb / 40d);
+        var b0 = 1d + alpha * amplitude;
+        var b1 = -2d * cosine;
+        var b2 = 1d - alpha * amplitude;
+        var a0 = 1d + alpha / amplitude;
+        var a1 = -2d * cosine;
+        var a2 = 1d - alpha / amplitude;
+
+        _parametricEqB0 = b0 / a0;
+        _parametricEqB1 = b1 / a0;
+        _parametricEqB2 = b2 / a0;
+        _parametricEqA1 = a1 / a0;
+        _parametricEqA2 = a2 / a0;
     }
 
     private double ApplySaturation(double sample)

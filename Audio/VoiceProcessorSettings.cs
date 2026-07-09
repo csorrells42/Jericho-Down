@@ -20,6 +20,10 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _notchFilterFrequencyHz = 2800;
     private double _notchFilterDepthDb = 18;
     private double _notchFilterQ = 16;
+    private bool _parametricEqEnabled;
+    private double _parametricEqFrequencyHz = 1000;
+    private double _parametricEqGainDb;
+    private double _parametricEqQ = 1.2;
     private bool _noiseGateEnabled = true;
     private double _noiseGateThresholdDb = -48;
     private double _noiseGateAttackMs = 5;
@@ -133,6 +137,30 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _notchFilterQ;
         set => SetField(ref _notchFilterQ, value);
+    }
+
+    public bool ParametricEqEnabled
+    {
+        get => _parametricEqEnabled;
+        set => SetField(ref _parametricEqEnabled, value);
+    }
+
+    public double ParametricEqFrequencyHz
+    {
+        get => _parametricEqFrequencyHz;
+        set => SetField(ref _parametricEqFrequencyHz, value);
+    }
+
+    public double ParametricEqGainDb
+    {
+        get => _parametricEqGainDb;
+        set => SetField(ref _parametricEqGainDb, value);
+    }
+
+    public double ParametricEqQ
+    {
+        get => _parametricEqQ;
+        set => SetField(ref _parametricEqQ, value);
     }
 
     public bool NoiseGateEnabled
