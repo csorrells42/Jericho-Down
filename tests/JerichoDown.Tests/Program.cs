@@ -393,10 +393,14 @@ static void MixBusProcessorScalesAndProtectsOutput()
 
     Assert(Math.Abs(output[0] - 0.25f) < 0.0001f, "master volume should scale positive samples");
     Assert(Math.Abs(output[1] + 0.25f) < 0.0001f, "master volume should scale negative samples");
+    Assert(Math.Abs(processor.LastTelemetry.PeakLevel - 0.25d) < 0.0001d, "mix bus telemetry should report processed peak level");
+    Assert(processor.LastTelemetry.RmsLevel > 0d, "mix bus telemetry should report processed RMS level");
 
     processor.Process([1f, -1f, float.NaN], output, new MixBusSettings(200d, true, true, -1d));
     Assert(output.All(float.IsFinite), "mix bus output should stay finite");
     Assert(output.All(sample => Math.Abs(sample) <= 1f), "mix bus output should stay in audio range");
+    Assert(processor.LastTelemetry.LimiterReductionDb > 0d, "mix bus telemetry should report master limiter gain reduction");
+    Assert(processor.LastTelemetry.NormalizeGain > 0d, "mix bus telemetry should report normalizer gain");
 
     var stereo = new[] { 1f, 0f, 0f, -1f };
     output = new float[stereo.Length];
@@ -406,6 +410,7 @@ static void MixBusProcessorScalesAndProtectsOutput()
     Assert(Math.Abs(output[1] - 0.5f) < 0.0001f, "mono output mode should duplicate the averaged sample");
     Assert(Math.Abs(output[2] + 0.5f) < 0.0001f, "mono output mode should average following stereo frames");
     Assert(Math.Abs(output[3] + 0.5f) < 0.0001f, "mono output mode should duplicate following stereo frames");
+    Assert(Math.Abs(processor.LastTelemetry.PeakLevel - 0.5d) < 0.0001d, "mono output telemetry should follow the duplicated mono program sample");
 }
 
 static void NAudioProgramBusMixesOneShotMicBlocks()

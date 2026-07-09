@@ -2215,7 +2215,13 @@
                 </Border>
                 <Border Style="{StaticResource DspBubble}">
                   <StackPanel>
-                    <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <Grid Margin="0,0,0,8">
+                      <TextBlock Text="Output Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" />
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Ellipse x:Name="MasterClipIndicator" Width="10" Height="10" Fill="#334B5C" Stroke="#D7FFF9" StrokeThickness="1" Opacity="0.45" Margin="0,0,5,0" />
+                        <TextBlock Text="Clip" Foreground="#B8C7D9" FontSize="11" />
+                      </StackPanel>
+                    </Grid>
                     <TextBlock Text="Send to" Foreground="#B8C7D9" />
                     <ComboBox x:Name="OutputDeviceComboBox" SelectionChanged="OutputDeviceSelectionChanged" Margin="0,2,0,8" />
                     <ToggleButton x:Name="ProcessedOutputCheckBox" Style="{StaticResource ProcessedOutputToggle}" Content="SEND PROGRAM MIX" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Margin="0,2,0,8">
@@ -2224,6 +2230,7 @@
                       </ToggleButton.ToolTip>
                     </ToggleButton>
                     <TextBlock x:Name="OutputSignalText" Text="Program mix: waiting for signal" Foreground="#B8C7D9" FontWeight="SemiBold" Margin="0,2,0,0" />
+                    <TextBlock x:Name="MasterMeterText" Text="Peak -inf dB | RMS -inf dB" Foreground="#8DA2B7" FontSize="11" Margin="0,2,0,0" />
                     <Border Height="18" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="5" ClipToBounds="True" Margin="0,5,0,0">
                       <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -2233,9 +2240,20 @@
                         </LinearGradientBrush>
                       </Border.Background>
                       <Grid>
-                        <Rectangle x:Name="OutputLevelMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" RadiusX="4" RadiusY="4" />
+                        <Rectangle x:Name="OutputRmsMeter" Fill="#8DA2B7" HorizontalAlignment="Left" Width="0" Opacity="0.58" RadiusX="4" RadiusY="4" />
+                        <Rectangle x:Name="OutputPeakMeter" Fill="#42D77D" HorizontalAlignment="Left" Width="0" Height="9" VerticalAlignment="Center" RadiusX="4" RadiusY="4" />
                         <Rectangle Height="1" Fill="#FFFFFF" Opacity="0.18" VerticalAlignment="Top" Margin="7,3,7,0" />
                         <Rectangle Height="2" Fill="#9CFDF4" Opacity="0.22" VerticalAlignment="Center" Margin="7,0" RadiusX="1" RadiusY="1" />
+                      </Grid>
+                    </Border>
+                    <Grid Margin="0,8,0,0">
+                      <TextBlock x:Name="MasterLimiterReductionText" Text="Limiter GR 0.0 dB" Foreground="#8DA2B7" FontSize="11" />
+                      <TextBlock x:Name="MasterLimiterNormalizeText" Text="Normalize 1.00x" Foreground="#8DA2B7" FontSize="11" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Border Height="10" BorderBrush="#344B5C" BorderThickness="1" CornerRadius="4" ClipToBounds="True" Margin="0,3,0,0">
+                      <Grid>
+                        <Rectangle Fill="#10202A" />
+                        <Rectangle x:Name="MasterLimiterReductionMeter" Fill="#D7B220" HorizontalAlignment="Left" Width="0" RadiusX="3" RadiusY="3" />
                       </Grid>
                     </Border>
                     <TextBlock x:Name="OutputStatusText" Text="Output off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />

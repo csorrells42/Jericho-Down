@@ -217,11 +217,20 @@ public partial class EqualizerWindow : Window
     private Brush? _lastInputCoachForeground;
     private Brush? _lastInputLevelFill;
     private double _displayOutputPeak;
+    private double _displayOutputRms;
+    private double _displayMasterLimiterReductionDb;
     private long _lastOutputLevelDisplayTimestamp;
     private double _lastOutputLevelMeterWidth = -1d;
+    private double _lastOutputRmsMeterWidth = -1d;
+    private double _lastMasterLimiterReductionMeterWidth = -1d;
     private string? _lastOutputSignalText;
+    private string? _lastMasterMeterText;
+    private string? _lastMasterLimiterReductionText;
+    private string? _lastMasterLimiterNormalizeText;
     private Brush? _lastOutputSignalForeground;
     private Brush? _lastOutputLevelFill;
+    private Brush? _lastMasterClipFill;
+    private int _masterClipHoldFrames;
     private long _lastAudioStabilityDisplayTimestamp;
     private double _audioStabilityScore;
     private double _audioStabilityMeterWidth;
@@ -5430,7 +5439,7 @@ public partial class EqualizerWindow : Window
         UpdateAudioStability(_latestFrame);
         UpdateInputCoach(selectedMicFrame.RawPeakLevel);
         UpdateSignalStatus(selectedMicFrame.PeakLevel);
-        UpdateOutputSignalStatus(_latestFrame.PeakLevel);
+        UpdateOutputSignalStatus(_latestFrame);
         UpdateMixerChannelMeters(_latestFrame);
         UpdateMixBusStatus(_latestFrame);
 
@@ -10714,7 +10723,11 @@ public partial class EqualizerWindow : Window
         }
         else
         {
-            text = $"Bus: program active ({audibleChannels.Count} mic{(audibleChannels.Count == 1 ? string.Empty : "s")})";
+            var limiterReductionDb = frame.Telemetry.MasterLimiterReductionDb;
+            var limiterText = limiterReductionDb >= 0.1d
+                ? $", limiter {limiterReductionDb:0.0} dB GR"
+                : string.Empty;
+            text = $"Bus: program active ({audibleChannels.Count} mic{(audibleChannels.Count == 1 ? string.Empty : "s")}{limiterText})";
             foreground = _meterGoodBrush;
         }
 
@@ -11048,16 +11061,33 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void UpdateOutputSignalStatus(double programPeakLevel)
+    private void UpdateOutputSignalStatus(SpectrumFrame frame)
     {
-        if (OutputSignalText is null || OutputLevelMeter is null)
+        if (OutputSignalText is null || OutputPeakMeter is null || OutputRmsMeter is null)
         {
             return;
         }
 
+        var programPeakLevel = Math.Clamp(double.IsFinite(frame.PeakLevel) ? frame.PeakLevel : 0d, 0d, 1d);
+        var programRmsLevel = Math.Clamp(double.IsFinite(frame.RmsLevel) ? frame.RmsLevel : 0d, 0d, 1d);
+        var limiterReductionDb = Math.Clamp(
+            double.IsFinite(frame.Telemetry.MasterLimiterReductionDb) ? frame.Telemetry.MasterLimiterReductionDb : 0d,
+            0d,
+            24d);
+        var normalizeGain = Math.Clamp(
+            double.IsFinite(frame.Telemetry.MasterNormalizeGain) ? frame.Telemetry.MasterNormalizeGain : 1d,
+            0.01d,
+            12d);
+
         _displayOutputPeak = programPeakLevel > _displayOutputPeak
             ? Ease(_displayOutputPeak, programPeakLevel, 0.35d)
             : Ease(_displayOutputPeak, programPeakLevel, 0.06d);
+        _displayOutputRms = programRmsLevel > _displayOutputRms
+            ? Ease(_displayOutputRms, programRmsLevel, 0.24d)
+            : Ease(_displayOutputRms, programRmsLevel, 0.08d);
+        _displayMasterLimiterReductionDb = limiterReductionDb > _displayMasterLimiterReductionDb
+            ? Ease(_displayMasterLimiterReductionDb, limiterReductionDb, 0.38d)
+            : Ease(_displayMasterLimiterReductionDb, limiterReductionDb, 0.08d);
 
         var now = Stopwatch.GetTimestamp();
         if (_lastOutputLevelDisplayTimestamp != 0)
@@ -11071,11 +11101,21 @@ public partial class EqualizerWindow : Window
 
         _lastOutputLevelDisplayTimestamp = now;
         var peakDb = 20d * Math.Log10(Math.Max(0.000001d, _displayOutputPeak));
-        var meterHostWidth = OutputLevelMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
+        var rmsDb = 20d * Math.Log10(Math.Max(0.000001d, _displayOutputRms));
+        var meterHostWidth = OutputPeakMeter.Parent is FrameworkElement meterHost && meterHost.ActualWidth > 0d
             ? meterHost.ActualWidth
             : 260d;
         var meterWidth = Math.Clamp((_displayOutputPeak / 0.95d) * meterHostWidth, 0d, meterHostWidth);
+        var rmsMeterWidth = Math.Clamp((_displayOutputRms / 0.45d) * meterHostWidth, 0d, meterHostWidth);
         var routed = IsProcessedOutputRequested() && _spectrumService.IsProcessedOutputEnabled;
+        if (programPeakLevel >= 0.98d)
+        {
+            _masterClipHoldFrames = 18;
+        }
+        else if (_masterClipHoldFrames > 0)
+        {
+            _masterClipHoldFrames--;
+        }
 
         string signalText;
         Brush signalForeground;
@@ -11111,16 +11151,61 @@ public partial class EqualizerWindow : Window
             meterFill = _meterDangerBrush;
         }
 
+        var masterMeterText = $"Peak {FormatDbText(peakDb)} | RMS {FormatDbText(rmsDb)}";
+        var limiterText = _displayMasterLimiterReductionDb >= 0.05d
+            ? $"Limiter GR {_displayMasterLimiterReductionDb:0.0} dB"
+            : "Limiter GR 0.0 dB";
+        var normalizeText = $"Normalize {normalizeGain:0.00}x";
+        var limiterHostWidth = MasterLimiterReductionMeter?.Parent is FrameworkElement limiterHost && limiterHost.ActualWidth > 0d
+            ? limiterHost.ActualWidth
+            : meterHostWidth;
+        var limiterMeterWidth = Math.Clamp((_displayMasterLimiterReductionDb / 12d) * limiterHostWidth, 0d, limiterHostWidth);
+        var clipFill = _masterClipHoldFrames > 0 ? _meterDangerBrush : _meterMutedBrush;
+
         if (Math.Abs(meterWidth - _lastOutputLevelMeterWidth) >= 0.5d)
         {
             _lastOutputLevelMeterWidth = meterWidth;
-            OutputLevelMeter.Width = meterWidth;
+            OutputPeakMeter.Width = meterWidth;
+        }
+
+        if (Math.Abs(rmsMeterWidth - _lastOutputRmsMeterWidth) >= 0.5d)
+        {
+            _lastOutputRmsMeterWidth = rmsMeterWidth;
+            OutputRmsMeter.Width = rmsMeterWidth;
+        }
+
+        if (MasterLimiterReductionMeter is not null
+            && Math.Abs(limiterMeterWidth - _lastMasterLimiterReductionMeterWidth) >= 0.5d)
+        {
+            _lastMasterLimiterReductionMeterWidth = limiterMeterWidth;
+            MasterLimiterReductionMeter.Width = limiterMeterWidth;
         }
 
         if (!string.Equals(_lastOutputSignalText, signalText, StringComparison.Ordinal))
         {
             _lastOutputSignalText = signalText;
             OutputSignalText.Text = signalText;
+        }
+
+        if (MasterMeterText is not null
+            && !string.Equals(_lastMasterMeterText, masterMeterText, StringComparison.Ordinal))
+        {
+            _lastMasterMeterText = masterMeterText;
+            MasterMeterText.Text = masterMeterText;
+        }
+
+        if (MasterLimiterReductionText is not null
+            && !string.Equals(_lastMasterLimiterReductionText, limiterText, StringComparison.Ordinal))
+        {
+            _lastMasterLimiterReductionText = limiterText;
+            MasterLimiterReductionText.Text = limiterText;
+        }
+
+        if (MasterLimiterNormalizeText is not null
+            && !string.Equals(_lastMasterLimiterNormalizeText, normalizeText, StringComparison.Ordinal))
+        {
+            _lastMasterLimiterNormalizeText = normalizeText;
+            MasterLimiterNormalizeText.Text = normalizeText;
         }
 
         if (!ReferenceEquals(_lastOutputSignalForeground, signalForeground))
@@ -11132,8 +11217,20 @@ public partial class EqualizerWindow : Window
         if (!ReferenceEquals(_lastOutputLevelFill, meterFill))
         {
             _lastOutputLevelFill = meterFill;
-            OutputLevelMeter.Fill = meterFill;
+            OutputPeakMeter.Fill = meterFill;
         }
+
+        if (MasterClipIndicator is not null && !ReferenceEquals(_lastMasterClipFill, clipFill))
+        {
+            _lastMasterClipFill = clipFill;
+            MasterClipIndicator.Fill = clipFill;
+            MasterClipIndicator.Opacity = _masterClipHoldFrames > 0 ? 1d : 0.45d;
+        }
+    }
+
+    private static string FormatDbText(double decibels)
+    {
+        return decibels <= -99d ? "-inf dB" : $"{decibels:0} dB";
     }
 
     private void UpdateAudioStability(SpectrumFrame frame)

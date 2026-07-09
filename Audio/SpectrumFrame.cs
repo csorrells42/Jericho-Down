@@ -81,7 +81,9 @@ public sealed class SpectrumFrame
         double input2PeakLevel = 0d,
         float[]? input1Samples = null,
         float[]? input2Samples = null,
-        IReadOnlyList<MicrophoneSpectrumLine>? microphoneLines = null)
+        IReadOnlyList<MicrophoneSpectrumLine>? microphoneLines = null,
+        double rmsLevel = 0d,
+        double rawRmsLevel = 0d)
     {
         Magnitudes = magnitudes;
         RawMagnitudes = rawMagnitudes;
@@ -89,6 +91,8 @@ public sealed class SpectrumFrame
         RawSamples = rawSamples;
         PeakLevel = peakLevel;
         RawPeakLevel = rawPeakLevel;
+        RmsLevel = rmsLevel;
+        RawRmsLevel = rawRmsLevel;
         Telemetry = telemetry;
         SampleRate = sampleRate;
         Input1Magnitudes = input1Magnitudes ?? [];
@@ -111,6 +115,10 @@ public sealed class SpectrumFrame
     public double PeakLevel { get; }
 
     public double RawPeakLevel { get; }
+
+    public double RmsLevel { get; }
+
+    public double RawRmsLevel { get; }
 
     public VoiceProcessingTelemetry Telemetry { get; }
 

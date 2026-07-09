@@ -34,6 +34,14 @@ public sealed class VoiceProcessingTelemetry
 
     public double LimiterReductionDb { get; set; }
 
+    public double ProgramPeakLevel { get; set; }
+
+    public double ProgramRmsLevel { get; set; }
+
+    public double MasterLimiterReductionDb { get; set; }
+
+    public double MasterNormalizeGain { get; set; } = 1d;
+
     public double AudioCallbackIntervalMs { get; set; }
 
     public double AudioProcessingTimeMs { get; set; }
@@ -68,6 +76,10 @@ public sealed class VoiceProcessingTelemetry
             PresenceBoostDb = PresenceBoostDb,
             MakeupGainDb = MakeupGainDb,
             LimiterReductionDb = LimiterReductionDb,
+            ProgramPeakLevel = ProgramPeakLevel,
+            ProgramRmsLevel = ProgramRmsLevel,
+            MasterLimiterReductionDb = MasterLimiterReductionDb,
+            MasterNormalizeGain = MasterNormalizeGain,
             AudioCallbackIntervalMs = AudioCallbackIntervalMs,
             AudioProcessingTimeMs = AudioProcessingTimeMs,
             AudioBufferDurationMs = AudioBufferDurationMs,

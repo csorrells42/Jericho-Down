@@ -32,7 +32,9 @@ public static class SpectrumFrameRouter
                 frame.Input2PeakLevel,
                 frame.Input1Samples,
                 frame.Input2Samples,
-                frame.MicrophoneLines);
+                frame.MicrophoneLines,
+                frame.RmsLevel,
+                frame.RawRmsLevel);
         }
 
         var rawMagnitudes = selectedLine.RawMagnitudes.Length > 0
@@ -55,7 +57,9 @@ public static class SpectrumFrameRouter
             frame.Input2PeakLevel,
             frame.Input1Samples,
             frame.Input2Samples,
-            frame.MicrophoneLines);
+            frame.MicrophoneLines,
+            selectedLine.RmsLevel,
+            selectedLine.RawRmsLevel);
     }
 
     public static SpectrumFrame CreateProgramOutputFrame(SpectrumFrame frame)
@@ -68,7 +72,8 @@ public static class SpectrumFrameRouter
             frame.PeakLevel,
             0d,
             frame.Telemetry,
-            frame.SampleRate);
+            frame.SampleRate,
+            rmsLevel: frame.RmsLevel);
     }
 
     private static SpectrumFrame CreateEmptyFrame(SpectrumFrame frame)

@@ -1222,6 +1222,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 telemetry = _emptyTelemetry.Snapshot();
             }
 
+            telemetry.ProgramPeakLevel = GetPeakLevel(processedSamples);
+            telemetry.ProgramRmsLevel = GetRmsLevel(processedSamples);
+            telemetry.MasterLimiterReductionDb = 0d;
+            telemetry.MasterNormalizeGain = 1d;
             rawSamples = fallbackRawSamples;
             programOutputSamples = processedSamples;
             programOutputChannelCount = 1;
@@ -1298,6 +1302,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         var outputSamples = _mixOutputSamples.AsSpan(0, stereoSampleCount);
         _mixBusProcessor.Process(mixSamples, outputSamples, mixBusSettings);
+        var mixBusTelemetry = _mixBusProcessor.LastTelemetry;
         var analyzerOutputSamples = _mixOutputMonoSamples.AsSpan(0, fallbackRawSamples.Length);
         DownmixStereoToMono(outputSamples, analyzerOutputSamples);
         rawSamples = hasRawPrimarySamples ? rawPrimarySamples : fallbackRawSamples;
@@ -1305,6 +1310,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
         programOutputSamples = outputSamples;
         programOutputChannelCount = 2;
         telemetry = (primaryTelemetry ?? _emptyTelemetry).Snapshot();
+        telemetry.ProgramPeakLevel = mixBusTelemetry.PeakLevel;
+        telemetry.ProgramRmsLevel = mixBusTelemetry.RmsLevel;
+        telemetry.MasterLimiterReductionDb = mixBusTelemetry.LimiterReductionDb;
+        telemetry.MasterNormalizeGain = mixBusTelemetry.NormalizeGain;
     }
 
     private static void CaptureLastMicSamples(
@@ -1541,7 +1550,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         var rawPeakLevel = GetPeakLevel(rawSamplesSpan);
-        var processedPeakLevel = GetPeakLevel(processedSamplesSpan);
+        var rawRmsLevel = GetRmsLevel(rawSamplesSpan);
+        var processedPeakLevel = telemetry.ProgramPeakLevel > 0d
+            ? telemetry.ProgramPeakLevel
+            : GetPeakLevel(processedSamplesSpan);
+        var processedRmsLevel = telemetry.ProgramRmsLevel > 0d
+            ? telemetry.ProgramRmsLevel
+            : GetRmsLevel(processedSamplesSpan);
         var input1PeakLevel = GetPeakLevel(input1Samples);
         var input2PeakLevel = GetPeakLevel(input2Samples);
 
@@ -1567,7 +1582,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 input2PeakLevel,
                 input1Samples,
                 input2Samples,
-                microphoneLines));
+                microphoneLines,
+                processedRmsLevel,
+                rawRmsLevel));
     }
 
     private static float[] RentAndCopySamples(ReadOnlySpan<float> samples)
