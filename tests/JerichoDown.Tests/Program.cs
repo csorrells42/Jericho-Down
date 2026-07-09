@@ -47,6 +47,7 @@ var tests = new (string Name, Action Test)[]
     ("Live service bus records selected mic sources", LiveServiceBusRecordsSelectedMicSources),
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
+    ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -946,6 +947,74 @@ static void LiveOutputProviderFollowsMixerMuteAndSolo()
         rightMinimum: 0.08f);
 }
 
+static void LiveOutputProviderFollowsMixerGainPanPolarityAndDelay()
+{
+    using var service = CreateLiveOutputService(out var outputProvider);
+    var mic1Settings = CreateTransparentVoiceSettings();
+    var mic2Settings = CreateTransparentVoiceSettings();
+
+    ConfigureTwoMicOutputService(service, mic1Settings, mic2Settings, mic2Muted: true);
+    FeedAlternatingStereoBlock(service);
+    var baselineSamples = ReadBufferedFloatSamples(outputProvider);
+    var (baselineLeftPeak, _) = MeasureStereoPeaks(baselineSamples);
+    Assert(baselineLeftPeak > 0.20f, "baseline left mic should reach the service output before control changes");
+
+    ConfigureTwoMicOutputService(service, mic1Settings, mic2Settings, mic1Pan: 100d, mic2Muted: true);
+    FeedAlternatingStereoBlock(service);
+    var pannedSamples = ReadBufferedFloatSamples(outputProvider);
+    AssertStereoPeaks(
+        pannedSamples,
+        "pan control should move mic 1 to the right side of the service output",
+        leftMaximum: 0.03f,
+        rightMinimum: 0.20f);
+
+    using var gainOnlyService = CreateLiveOutputService(out var gainOnlyOutputProvider);
+    ConfigureTwoMicOutputService(
+        gainOnlyService,
+        CreateTransparentVoiceSettings(),
+        CreateTransparentVoiceSettings(),
+        mic1InputGainDb: -12d,
+        mic1Pan: -100d,
+        mic2Muted: true);
+    FeedAlternatingStereoBlock(gainOnlyService);
+    var gainOnlySamples = ReadBufferedFloatSamples(gainOnlyOutputProvider);
+    var (gainOnlyLeftPeak, gainOnlyRightPeak) = MeasureStereoPeaks(gainOnlySamples);
+    Assert(gainOnlyRightPeak < 0.03f, "input gain test should still be isolated to the left mic");
+    Assert(gainOnlyLeftPeak > 0.08f, "input gain should leave an audible reduced signal");
+    Assert(gainOnlyLeftPeak < baselineLeftPeak * 0.72f, "input gain should reduce the live service output level");
+
+    using var invertedService = CreateLiveOutputService(out var invertedOutputProvider);
+    ConfigureTwoMicOutputService(
+        invertedService,
+        CreateTransparentVoiceSettings(),
+        CreateTransparentVoiceSettings(),
+        mic1InputGainDb: -12d,
+        mic1Pan: -100d,
+        mic1PolarityInverted: true,
+        mic2Muted: true);
+    FeedAlternatingStereoBlock(invertedService);
+    var invertedSamples = ReadBufferedFloatSamples(invertedOutputProvider);
+    var (invertedLeftPeak, invertedRightPeak) = MeasureStereoPeaks(invertedSamples);
+    var polarityDotProduct = MeasureLeftDotProduct(gainOnlySamples, invertedSamples, startFrame: 0, frameCount: 220);
+    Assert(invertedRightPeak < 0.03f, "input gain and polarity test should still be isolated to the left mic");
+    Assert(Math.Abs(invertedLeftPeak - gainOnlyLeftPeak) < 0.05f, "polarity should flip the waveform without changing the live output level much");
+    Assert(polarityDotProduct < -0.10f, "polarity inversion should produce an opposite live output waveform");
+
+    using var delayedService = CreateLiveOutputService(out var delayedOutputProvider);
+    ConfigureTwoMicOutputService(
+        delayedService,
+        CreateTransparentVoiceSettings(),
+        CreateTransparentVoiceSettings(),
+        mic1DelayMilliseconds: 1d,
+        mic2Muted: true);
+    FeedAlternatingStereoBlock(delayedService);
+    var delayedSamples = ReadBufferedFloatSamples(delayedOutputProvider);
+    var earlyLeftPeak = MeasureLeftPeak(delayedSamples, startFrame: 0, frameCount: 40);
+    var lateLeftPeak = MeasureLeftPeak(delayedSamples, startFrame: 64, frameCount: 120);
+    Assert(earlyLeftPeak < 0.03f, "per-mic delay should hold back the start of the live output");
+    Assert(lateLeftPeak > 0.20f, "per-mic delay should release the delayed live output after the requested time");
+}
+
 static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
 {
     using var service = CreateLiveOutputServiceForProvider(outputProvider);
@@ -980,8 +1049,16 @@ static void ConfigureTwoMicOutputService(
     MicrophoneSpectrumService service,
     VoiceProcessorSettings mic1Settings,
     VoiceProcessorSettings mic2Settings,
+    double mic1InputGainDb = 0d,
+    double mic1Pan = -100d,
+    bool mic1PolarityInverted = false,
+    double mic1DelayMilliseconds = 0d,
     bool mic2Muted = false,
-    bool mic2Soloed = false)
+    bool mic2Soloed = false,
+    double mic2InputGainDb = 0d,
+    double mic2Pan = 100d,
+    bool mic2PolarityInverted = false,
+    double mic2DelayMilliseconds = 0d)
 {
     service.ConfigureLiveMix(
         [
@@ -991,11 +1068,11 @@ static void ConfigureTwoMicOutputService(
                 InputChannelMode.Input1Left,
                 mic1Settings,
                 100d,
-                0d,
-                -100d,
+                mic1InputGainDb,
+                mic1Pan,
+                mic1PolarityInverted,
                 false,
-                false,
-                0d,
+                mic1DelayMilliseconds,
                 true,
                 false),
             new MicrophoneLiveChannelSettings(
@@ -1004,11 +1081,11 @@ static void ConfigureTwoMicOutputService(
                 InputChannelMode.Input2Right,
                 mic2Settings,
                 100d,
-                0d,
-                100d,
-                false,
+                mic2InputGainDb,
+                mic2Pan,
+                mic2PolarityInverted,
                 mic2Soloed,
-                0d,
+                mic2DelayMilliseconds,
                 true,
                 mic2Muted)
         ],
@@ -1099,21 +1176,47 @@ static void AssertStereoPeaks(
 
 static (float LeftPeak, float RightPeak) MeasureStereoPeaks(IReadOnlyList<float> samples)
 {
-    var leftPeak = 0f;
-    var rightPeak = 0f;
-    var start = Math.Min(300, Math.Max(0, samples.Count - 2));
-    if (start % 2 != 0)
+    return (
+        MeasureLeftPeak(samples, startFrame: 150, frameCount: int.MaxValue),
+        MeasureRightPeak(samples, startFrame: 150, frameCount: int.MaxValue));
+}
+
+static float MeasureLeftPeak(IReadOnlyList<float> samples, int startFrame, int frameCount)
+{
+    return MeasureChannelPeak(samples, channel: 0, startFrame, frameCount);
+}
+
+static float MeasureRightPeak(IReadOnlyList<float> samples, int startFrame, int frameCount)
+{
+    return MeasureChannelPeak(samples, channel: 1, startFrame, frameCount);
+}
+
+static float MeasureChannelPeak(IReadOnlyList<float> samples, int channel, int startFrame, int frameCount)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Max(0, samples.Count / 2)) * 2 + Math.Clamp(channel, 0, 1);
+    var maxExclusive = frameCount == int.MaxValue
+        ? samples.Count
+        : Math.Min(samples.Count, start + Math.Max(0, frameCount) * 2);
+    var peak = 0f;
+    for (var i = start; i < maxExclusive; i += 2)
     {
-        start--;
+        peak = Math.Max(peak, Math.Abs(samples[i]));
     }
 
-    for (var i = start; i + 1 < samples.Count; i += 2)
+    return peak;
+}
+
+static float MeasureLeftDotProduct(IReadOnlyList<float> first, IReadOnlyList<float> second, int startFrame, int frameCount)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Min(first.Count, second.Count) / 2) * 2;
+    var maxExclusive = Math.Min(Math.Min(first.Count, second.Count), start + Math.Max(0, frameCount) * 2);
+    var dotProduct = 0f;
+    for (var i = start; i < maxExclusive; i += 2)
     {
-        leftPeak = Math.Max(leftPeak, Math.Abs(samples[i]));
-        rightPeak = Math.Max(rightPeak, Math.Abs(samples[i + 1]));
+        dotProduct += first[i] * second[i];
     }
 
-    return (leftPeak, rightPeak);
+    return dotProduct;
 }
 
 static void ProcessedAudioConverterWritesOutputFormats()
