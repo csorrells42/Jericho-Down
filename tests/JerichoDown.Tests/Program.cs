@@ -35,6 +35,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
+    ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
@@ -504,6 +505,30 @@ static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
     Assert(
         endpointOnlyOrder.SequenceEqual(expectedEndpointOnlyOrder),
         "endpoint routes without a matching WaveOut device should still try both WASAPI formats");
+}
+
+static void ProcessedOutputStatusReportsActualPlaybackFormat()
+{
+    using var service = new MicrophoneSpectrumService();
+    var sourceProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(96_000, 2));
+    var playbackProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(44_100, 2));
+
+    SetPrivateField(service, "_activeSampleRate", 96_000);
+    SetPrivateField(service, "_processedOutputEnabled", 1);
+    SetPrivateField(service, "_processedOutputBackendDescription", "WASAPI shared");
+    SetPrivateField(service, "_processedOutputProvider", sourceProvider);
+    SetPrivateField<IWaveProvider?>(service, "_processedOutputPlaybackProvider", playbackProvider);
+
+    Assert(
+        service.ActualProcessedOutputFormatStatus.Contains("44.1 kHz", StringComparison.Ordinal),
+        "actual output format should report the provider feeding playback, not only the write buffer");
+    Assert(
+        service.IsProcessedOutputFormatConstrained,
+        "resampled playback should be shown as constrained against the active mix target");
+    Assert(
+        service.ProcessedOutputFormatStatus.Contains("writing 96 kHz", StringComparison.Ordinal)
+            && service.ProcessedOutputFormatStatus.Contains("playback 44.1 kHz", StringComparison.Ordinal),
+        "route status should show both source and playback formats when Windows resamples");
 }
 
 static void InputChannelModesMapInterfaceLanes()
@@ -1496,6 +1521,17 @@ static T GetPrivateStaticValue<T>(Type type, string name)
     return field.IsLiteral
         ? (T)field.GetRawConstantValue()!
         : (T)field.GetValue(null)!;
+}
+
+static void SetPrivateField<T>(object target, string name, T value)
+{
+    var field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+    if (field is null)
+    {
+        throw new InvalidOperationException($"{target.GetType().Name}.{name} was not found");
+    }
+
+    field.SetValue(target, value);
 }
 
 static void Assert(bool condition, string message)

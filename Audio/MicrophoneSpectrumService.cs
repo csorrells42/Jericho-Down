@@ -366,7 +366,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         get
         {
-            var provider = _processedOutputProvider;
+            var provider = GetActualProcessedOutputProvider();
             return IsProcessedOutputEnabledVolatile() && provider is not null
                 ? DescribeWaveFormat(provider.WaveFormat)
                 : "not routed";
@@ -377,7 +377,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         get
         {
-            var provider = _processedOutputProvider;
+            var provider = GetActualProcessedOutputProvider();
             return IsProcessedOutputEnabledVolatile() && provider is not null && !IsTargetProcessedOutputFormat(provider.WaveFormat);
         }
     }
@@ -386,11 +386,25 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         get
         {
-            var provider = _processedOutputProvider;
-            return IsProcessedOutputEnabledVolatile() && provider is not null
-                ? $"Live route opened via {_processedOutputBackendDescription} as {DescribeWaveFormat(provider.WaveFormat)}."
-                : "Live route is not open.";
+            var sourceProvider = _processedOutputProvider;
+            if (!IsProcessedOutputEnabledVolatile() || sourceProvider is null)
+            {
+                return "Live route is not open.";
+            }
+
+            var playbackProvider = GetActualProcessedOutputProvider();
+            if (playbackProvider is not null && !WaveFormatsMatch(sourceProvider.WaveFormat, playbackProvider.WaveFormat))
+            {
+                return $"Live route opened via {_processedOutputBackendDescription}; writing {DescribeWaveFormat(sourceProvider.WaveFormat)}, playback {DescribeWaveFormat(playbackProvider.WaveFormat)}.";
+            }
+
+            return $"Live route opened via {_processedOutputBackendDescription} as {DescribeWaveFormat(sourceProvider.WaveFormat)}.";
         }
+    }
+
+    private IWaveProvider? GetActualProcessedOutputProvider()
+    {
+        return _processedOutputPlaybackProvider ?? _processedOutputProvider;
     }
 
     private bool IsProcessedOutputEnabledVolatile()
@@ -2333,6 +2347,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return format.SampleRate == _activeSampleRate
             && format.Channels == 2
             && IsFloatCaptureFormat(format);
+    }
+
+    private static bool WaveFormatsMatch(WaveFormat first, WaveFormat second)
+    {
+        return first.SampleRate == second.SampleRate
+            && first.Channels == second.Channels
+            && first.BitsPerSample == second.BitsPerSample
+            && first.Encoding == second.Encoding
+            && IsFloatCaptureFormat(first) == IsFloatCaptureFormat(second)
+            && IsPcmCaptureFormat(first) == IsPcmCaptureFormat(second);
     }
 
     private int ConvertFloatSamplesToStereoFloat32(ReadOnlySpan<float> samples, int sourceChannelCount)
