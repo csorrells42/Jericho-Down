@@ -36,6 +36,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
@@ -502,6 +503,38 @@ static void InputChannelModeFallsBackForMonoDevices()
     var coerced = (InputChannelMode)method!.Invoke(null, [headset, null, InputChannelMode.Input2Right])!;
 
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
+}
+
+static void PrimaryCaptureSelectorFollowsActiveMicSource()
+{
+    var candidates = new[]
+    {
+        new PrimaryCaptureCandidate(1, 10, IsActive: false, IsMuted: false),
+        new PrimaryCaptureCandidate(3, 42, IsActive: true, IsMuted: false),
+        new PrimaryCaptureCandidate(5, 77, IsActive: false, IsMuted: false)
+    };
+
+    var selected = PrimaryCaptureSelector.ResolveChannelNumber(candidates, requestedDeviceNumber: 10);
+    Assert(selected == 3, "active mic should become the primary capture even if the previous top-level device is still selected");
+
+    candidates =
+    [
+        new PrimaryCaptureCandidate(1, 10, IsActive: false, IsMuted: true),
+        new PrimaryCaptureCandidate(3, 42, IsActive: false, IsMuted: false)
+    ];
+    selected = PrimaryCaptureSelector.ResolveChannelNumber(candidates, requestedDeviceNumber: 10);
+    Assert(selected == 1, "requested device should remain primary when no active mic source is available");
+
+    selected = PrimaryCaptureSelector.ResolveChannelNumber(candidates, requestedDeviceNumber: 999);
+    Assert(selected == 3, "unmatched devices should fall back to the first unmuted configured mic");
+
+    candidates =
+    [
+        new PrimaryCaptureCandidate(2, 12, IsActive: false, IsMuted: true),
+        new PrimaryCaptureCandidate(4, 14, IsActive: false, IsMuted: true)
+    ];
+    selected = PrimaryCaptureSelector.ResolveChannelNumber(candidates, requestedDeviceNumber: null);
+    Assert(selected == 2, "if every configured mic is muted, the selector should still pick a real source for the live bus");
 }
 
 static void AudioRecordingFilenamesIdentifySelectedSource()

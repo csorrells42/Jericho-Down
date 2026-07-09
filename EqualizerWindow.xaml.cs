@@ -4842,21 +4842,16 @@ public partial class EqualizerWindow : Window
 
     private MicChannelStrip? ResolvePrimaryCaptureChannel()
     {
-        if (_selectedDevice is not null)
-        {
-            if (_activeMicChannel?.SelectedDevice is not null
-                && _activeMicChannel.SelectedDevice.DeviceNumber == _selectedDevice.DeviceNumber)
-            {
-                return _activeMicChannel;
-            }
-
-            return _micChannels.FirstOrDefault(channel =>
-                channel.SelectedDevice is not null
-                && channel.SelectedDevice.DeviceNumber == _selectedDevice.DeviceNumber);
-        }
-
-        return _micChannels.FirstOrDefault(channel => channel.SelectedDevice is not null && !channel.IsMuted)
-            ?? _micChannels.FirstOrDefault(channel => channel.SelectedDevice is not null);
+        var candidates = _micChannels
+            .Where(channel => channel.SelectedDevice is not null)
+            .Select(channel => new PrimaryCaptureCandidate(
+                channel.ChannelNumber,
+                channel.SelectedDevice!.DeviceNumber,
+                ReferenceEquals(channel, _activeMicChannel),
+                channel.IsMuted))
+            .ToArray();
+        var channelNumber = PrimaryCaptureSelector.ResolveChannelNumber(candidates, _selectedDevice?.DeviceNumber);
+        return channelNumber is null ? null : FindMicChannel(channelNumber.Value);
     }
 
     private void StartSelectedDevice()
@@ -4875,7 +4870,13 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        var previousSelectedDevice = _selectedDevice;
         _selectedDevice = selectedDevice;
+        if (!Equals(previousSelectedDevice, selectedDevice))
+        {
+            _selectedDeviceFormat = null;
+        }
+
         if (primaryCaptureChannel is not null)
         {
             _selectedInputChannelMode = primaryCaptureChannel.InputChannelMode;
@@ -4999,14 +5000,24 @@ public partial class EqualizerWindow : Window
 
     private async Task RestartSelectedAudioStreamAsync(string statusMessage, bool preferWaveInFallback = false)
     {
-        var selectedDevice = _selectedDevice;
+        var primaryCaptureChannel = ResolvePrimaryCaptureChannel();
+        var selectedDevice = primaryCaptureChannel?.SelectedDevice ?? _selectedDevice;
         if (selectedDevice is null || _isClosing)
         {
             return;
         }
 
+        var previousSelectedDevice = _selectedDevice;
+        _selectedDevice = selectedDevice;
+        if (!Equals(previousSelectedDevice, selectedDevice))
+        {
+            _selectedDeviceFormat = null;
+        }
+
         var operationVersion = ++_audioStreamOperationVersion;
-        var inputChannelMode = _selectedInputChannelMode;
+        var processorSettings = primaryCaptureChannel?.ProcessorSettings ?? Settings;
+        var inputChannelMode = primaryCaptureChannel?.InputChannelMode ?? _selectedInputChannelMode;
+        _selectedInputChannelMode = inputChannelMode;
         _isRestartingAudioStream = true;
         StatusText.Text = "Reopening audio stream...";
         UpdateAudioFormatRouteText();
@@ -5020,7 +5031,7 @@ public partial class EqualizerWindow : Window
             ConfigureLiveMixFromChannels();
             await Task.Run(() =>
             {
-                _spectrumService.RestartCapture(selectedDevice.DeviceNumber, Settings, inputChannelMode, TimeSpan.FromMilliseconds(850));
+                _spectrumService.RestartCapture(selectedDevice.DeviceNumber, processorSettings, inputChannelMode, TimeSpan.FromMilliseconds(850));
             });
             if (_isClosing || operationVersion != _audioStreamOperationVersion || !Equals(_selectedDevice, selectedDevice))
             {
