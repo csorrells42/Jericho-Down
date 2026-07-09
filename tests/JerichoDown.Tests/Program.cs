@@ -44,6 +44,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Live service bus records interface left and right", LiveServiceBusRecordsInterfaceLeftAndRight),
     ("Live service bus records higher interface lanes", LiveServiceBusRecordsHigherInterfaceLanes),
+    ("Live service bus records selected mic sources", LiveServiceBusRecordsSelectedMicSources),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -810,6 +811,88 @@ static void LiveServiceBusRecordsHigherInterfaceLanes()
     {
         Directory.Delete(folder, recursive: true);
     }
+}
+
+static void LiveServiceBusRecordsSelectedMicSources()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var rawPath = Path.Combine(folder, "selected_raw.wav");
+        var rawRecorded = RecordSelectedMicSourceBlock(rawPath, ProcessedRecordingSource.SelectedMicRawBackup);
+        Assert(rawRecorded.Length >= 3, "selected raw backup should write the captured mic block");
+        Assert(Math.Abs(rawRecorded[0] - 0.25f) < 0.04f, "selected raw backup should record mic 2 input 2 before DSP");
+        Assert(Math.Abs(rawRecorded[1] + 0.10f) < 0.04f, "selected raw backup should preserve following raw input 2 samples");
+        Assert(Math.Abs(rawRecorded[2] - 0.15f) < 0.04f, "selected raw backup should keep recording the selected mic lane");
+
+        var processedPath = Path.Combine(folder, "selected_processed.wav");
+        var processedRecorded = RecordSelectedMicSourceBlock(processedPath, ProcessedRecordingSource.SelectedMicProcessed);
+        Assert(processedRecorded.Length >= 3, "selected processed mic should write the captured mic block");
+        Assert(processedRecorded[0] < -0.18f, "selected processed mic should include pre-DSP polarity inversion");
+        Assert(processedRecorded[1] > 0.06f, "selected processed mic should preserve inverted following samples");
+        Assert(processedRecorded[2] < -0.08f, "selected processed mic should keep using processed selected mic samples");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
+}
+
+static float[] RecordSelectedMicSourceBlock(string recordingPath, ProcessedRecordingSource source)
+{
+    using var service = new MicrophoneSpectrumService();
+    var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
+    var capture = new FakeWaveIn(waveFormat);
+    SetPrivateField<IWaveIn?>(service, "_capture", capture);
+    SetPrivateField(service, "_currentDeviceNumber", 0);
+    SetPrivateField(service, "_activeSampleRate", 48_000);
+    SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                1,
+                0,
+                InputChannelMode.Input1Left,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                -100d,
+                false,
+                false,
+                0d,
+                true,
+                false),
+            new MicrophoneLiveChannelSettings(
+                2,
+                0,
+                InputChannelMode.Input2Right,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                100d,
+                true,
+                false,
+                0d,
+                true,
+                false)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+    service.ConfigureProcessedRecordingSource(source, 2);
+
+    service.StartProcessedAudioRecording(recordingPath);
+    var stereoSamples = new[] { 0.40f, 0.25f, -0.20f, -0.10f, 0.30f, 0.15f };
+    var buffer = MemoryMarshal.AsBytes(stereoSamples.AsSpan()).ToArray();
+    var method = typeof(MicrophoneSpectrumService).GetMethod(
+        "CaptureDataAvailable",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+    Assert(method is not null, "capture callback should be available for selected source service integration test");
+    method!.Invoke(service, [null, new WaveInEventArgs(buffer, buffer.Length)]);
+    service.StopProcessedAudioRecording();
+
+    using var reader = new WaveFileReader(recordingPath);
+    Assert(reader.WaveFormat.Channels == 1, "selected mic recording sources should be mono");
+    return ReadWaveFloatSamples(reader);
 }
 
 static void ProcessedAudioConverterWritesOutputFormats()
