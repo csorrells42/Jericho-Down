@@ -5098,9 +5098,9 @@ public partial class EqualizerWindow : Window
             SelectMainTab("Mic Compare");
         }
 
-        if (_latestFrame?.HasStereoInput != true)
+        if (_latestFrame is null || !CreateMicCompareFrame(_latestFrame).HasAnalysisSources)
         {
-            MicAnalysisStatusText.Text = "No stereo mic stream yet. Choose the Scarlett/2-channel input and use Sum L+R.";
+            MicAnalysisStatusText.Text = "No compare mic signal yet. Choose two mic sources and speak normally.";
             MicAnalysisResultText.Text = "Waiting for both mic channels.";
             return;
         }
@@ -5138,7 +5138,8 @@ public partial class EqualizerWindow : Window
 
     private void CollectMicAnalysisFrame(SpectrumFrame frame)
     {
-        if (!_isMicAnalysisRunning || !frame.HasStereoInput)
+        var compareFrame = CreateMicCompareFrame(frame);
+        if (!_isMicAnalysisRunning || !compareFrame.HasAnalysisSources)
         {
             return;
         }
@@ -5150,10 +5151,16 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
-            if (_micAnalysisInput1Sums.Length != frame.Input1Magnitudes.Length)
+            var compareLength = Math.Min(compareFrame.Mic1Magnitudes.Length, compareFrame.Mic2Magnitudes.Length);
+            if (compareLength <= 0)
             {
-                _micAnalysisInput1Sums = new double[frame.Input1Magnitudes.Length];
-                _micAnalysisInput2Sums = new double[frame.Input2Magnitudes.Length];
+                return;
+            }
+
+            if (_micAnalysisInput1Sums.Length != compareLength)
+            {
+                _micAnalysisInput1Sums = new double[compareLength];
+                _micAnalysisInput2Sums = new double[compareLength];
                 _micAnalysisInput1FrameCount = 0;
                 _micAnalysisInput2FrameCount = 0;
             }
@@ -5166,34 +5173,34 @@ public partial class EqualizerWindow : Window
             {
                 if (collectInput1)
                 {
-                    _micAnalysisInput1Sums[i] += frame.Input1Magnitudes[i];
+                    _micAnalysisInput1Sums[i] += compareFrame.Mic1Magnitudes[i];
                 }
 
                 if (collectInput2)
                 {
-                    _micAnalysisInput2Sums[i] += frame.Input2Magnitudes[Math.Min(i, frame.Input2Magnitudes.Length - 1)];
+                    _micAnalysisInput2Sums[i] += compareFrame.Mic2Magnitudes[i];
                 }
             }
 
             if (collectInput1)
             {
-                foreach (var sample in frame.Input1Samples)
+                foreach (var sample in compareFrame.Mic1Samples)
                 {
                     _micAnalysisInput1Squares += sample * sample;
                 }
 
-                _micAnalysisInput1SampleCount += frame.Input1Samples.Length;
+                _micAnalysisInput1SampleCount += compareFrame.Mic1Samples.Length;
                 _micAnalysisInput1FrameCount++;
             }
 
             if (collectInput2)
             {
-                foreach (var sample in frame.Input2Samples)
+                foreach (var sample in compareFrame.Mic2Samples)
                 {
                     _micAnalysisInput2Squares += sample * sample;
                 }
 
-                _micAnalysisInput2SampleCount += frame.Input2Samples.Length;
+                _micAnalysisInput2SampleCount += compareFrame.Mic2Samples.Length;
                 _micAnalysisInput2FrameCount++;
             }
 
@@ -5267,8 +5274,8 @@ public partial class EqualizerWindow : Window
 
         if (input1FrameCount < 8 || input2FrameCount < 8 || input1SampleCount == 0 || input2SampleCount == 0 || input1.Length == 0 || input2.Length == 0)
         {
-            MicAnalysisStatusText.Text = "Test did not capture enough stereo data.";
-            MicAnalysisResultText.Text = "Try again with Sum L+R selected and both mics active.";
+            MicAnalysisStatusText.Text = "Test did not capture enough compare data.";
+            MicAnalysisResultText.Text = "Try again with both selected mics active.";
             return;
         }
 
@@ -10596,10 +10603,9 @@ public partial class EqualizerWindow : Window
         _micCompareInput1Trace.Clip = clip;
         _micCompareInput2Trace.Clip = clip;
 
-        var mic1 = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == 1);
-        var mic2 = frame.MicrophoneLines.FirstOrDefault(line => line.ChannelNumber == 2);
-        var mic1Magnitudes = ResolveCompareMagnitudes(mic1, frame.Input1Magnitudes);
-        var mic2Magnitudes = ResolveCompareMagnitudes(mic2, frame.Input2Magnitudes);
+        var compareFrame = CreateMicCompareFrame(frame);
+        var mic1Magnitudes = compareFrame.Mic1Magnitudes;
+        var mic2Magnitudes = compareFrame.Mic2Magnitudes;
         var compareLength = Math.Min(mic1Magnitudes.Length, mic2Magnitudes.Length);
         if (compareLength <= 0)
         {
@@ -10641,19 +10647,9 @@ public partial class EqualizerWindow : Window
         _micCompareInput2Trace.Data = CreateSmoothedGeometry(input2Points);
     }
 
-    private static double[] ResolveCompareMagnitudes(MicrophoneSpectrumLine? line, double[] fallbackMagnitudes)
+    private static MicCompareFrame CreateMicCompareFrame(SpectrumFrame frame)
     {
-        if (line?.RawMagnitudes.Length > 0)
-        {
-            return line.RawMagnitudes;
-        }
-
-        if (line?.Magnitudes.Length > 0)
-        {
-            return line.Magnitudes;
-        }
-
-        return fallbackMagnitudes;
+        return MicCompareFrameRouter.CreateFrame(frame, mic1ChannelNumber: 1, mic2ChannelNumber: 2);
     }
 
     private void RenderMixingMicSpectrum(SpectrumFrame frame)

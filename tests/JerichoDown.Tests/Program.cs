@@ -56,6 +56,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
+    ("Mic compare frame router follows live mic lines", MicCompareFrameRouterFollowsLiveMicLines),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
@@ -1662,6 +1663,69 @@ static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()
     AssertSequenceEqual(frame.Magnitudes, recordingOutput.Magnitudes, "program line should stay the final output when a recording reference is present");
     AssertSequenceEqual(lines[2].Magnitudes, recordingOutput.RawMagnitudes, "recording reference line should carry the selected recording source");
     Assert(recordingOutput.MicrophoneLines.Count == 0, "recording reference should not bring the ten individual mic lines back");
+}
+
+static void MicCompareFrameRouterFollowsLiveMicLines()
+{
+    var frame = new SpectrumFrame(
+        [0.91d, 0.72d],
+        [0.42d, 0.21d],
+        [0.5f, -0.5f],
+        [0.1f, -0.1f],
+        0.8d,
+        0.6d,
+        new VoiceProcessingTelemetry(),
+        48_000,
+        input1Magnitudes: [9d, 9d],
+        input2Magnitudes: [8d, 8d],
+        input1Samples: [0.9f, 0.9f],
+        input2Samples: [0.8f, 0.8f],
+        microphoneLines:
+        [
+            new MicrophoneSpectrumLine(
+                1,
+                [0.11d, 0.12d],
+                0.2d,
+                [0.21d, 0.22d],
+                0.3d,
+                processedSamples: [0.31f, 0.32f],
+                rawSamples: [0.41f, 0.42f]),
+            new MicrophoneSpectrumLine(
+                2,
+                [0.51d, 0.52d],
+                0.6d,
+                [0.61d, 0.62d],
+                0.7d,
+                processedSamples: [0.71f, 0.72f],
+                rawSamples: [0.81f, 0.82f])
+        ]);
+
+    var compare = MicCompareFrameRouter.CreateFrame(frame);
+
+    Assert(compare.HasAnalysisSources, "compare frame should be ready when both selected live mic lines have magnitudes and samples");
+    AssertSequenceEqual(new[] { 0.21d, 0.22d }, compare.Mic1Magnitudes, "mic compare should prefer mic 1 raw live-bus magnitudes over stale stereo input fallback");
+    AssertSequenceEqual(new[] { 0.61d, 0.62d }, compare.Mic2Magnitudes, "mic compare should prefer mic 2 raw live-bus magnitudes over stale stereo input fallback");
+    AssertSequenceEqual(new[] { 0.41f, 0.42f }, compare.Mic1Samples, "mic analysis should use mic 1 raw live-bus samples");
+    AssertSequenceEqual(new[] { 0.81f, 0.82f }, compare.Mic2Samples, "mic analysis should use mic 2 raw live-bus samples");
+
+    var fallbackFrame = new SpectrumFrame(
+        [],
+        [],
+        [],
+        [],
+        0d,
+        0d,
+        new VoiceProcessingTelemetry(),
+        input1Magnitudes: [0.13d],
+        input2Magnitudes: [0.24d],
+        input1Samples: [0.35f],
+        input2Samples: [0.46f]);
+    var fallback = MicCompareFrameRouter.CreateFrame(fallbackFrame);
+
+    AssertSequenceEqual(new[] { 0.13d }, fallback.Mic1Magnitudes, "mic compare should still fall back to legacy stereo input 1 when no live mic line exists");
+    AssertSequenceEqual(new[] { 0.24d }, fallback.Mic2Magnitudes, "mic compare should still fall back to legacy stereo input 2 when no live mic line exists");
+    AssertSequenceEqual(new[] { 0.35f }, fallback.Mic1Samples, "mic analysis should still fall back to legacy stereo input 1 samples");
+    AssertSequenceEqual(new[] { 0.46f }, fallback.Mic2Samples, "mic analysis should still fall back to legacy stereo input 2 samples");
 }
 
 static void SpectrumAnalyzerEmitsHighResolutionBins()
