@@ -38,6 +38,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Blank mixer channels restore without fallback input", BlankMixerChannelsRestoreWithoutFallbackInput),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
@@ -554,6 +555,28 @@ static void InputChannelModeFallsBackForMonoDevices()
     var coerced = (InputChannelMode)method!.Invoke(null, [headset, null, InputChannelMode.Input2Right])!;
 
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
+}
+
+static void BlankMixerChannelsRestoreWithoutFallbackInput()
+{
+    var method = typeof(EqualizerWindow).GetMethod(
+        "ResolvePersistedMicChannelDevice",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "persisted mic device resolver should be available");
+
+    var devices = new[]
+    {
+        new AudioInputDevice(0, "Interface input", 2),
+        new AudioInputDevice(1, "Headset mic", 1)
+    };
+
+    var blank = method!.Invoke(null, [devices, null]);
+    var named = (AudioInputDevice?)method.Invoke(null, [devices, "Headset mic"]);
+    var missing = (AudioInputDevice?)method.Invoke(null, [devices, "Old unplugged mic"]);
+
+    Assert(blank is null, "blank saved mic channels should stay disconnected instead of joining the live bus");
+    Assert(named?.DeviceNumber == 1, "saved mic names should restore their matching device");
+    Assert(missing?.DeviceNumber == 0, "named saved mics can still fall back if the old device is missing");
 }
 
 static void PrimaryCaptureSelectorFollowsActiveMicSource()

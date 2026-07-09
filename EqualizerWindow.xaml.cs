@@ -877,10 +877,7 @@ public partial class EqualizerWindow : Window
         }
         else
         {
-            foreach (var channel in _micChannels.Where(channel => channel.SelectedDevice is null))
-            {
-                channel.SelectedDevice = devices.FirstOrDefault();
-            }
+            CoercePersistedMicChannelModes(devices);
         }
 
         _activeMicChannel = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
@@ -891,7 +888,7 @@ public partial class EqualizerWindow : Window
         channel.DisplayName = string.IsNullOrWhiteSpace(state.DisplayName)
             ? $"Mic {channel.ChannelNumber}"
             : state.DisplayName.Trim();
-        channel.SelectedDevice = FindAudioInputDevice(devices, state.MicrophoneName) ?? devices.FirstOrDefault();
+        channel.SelectedDevice = ResolvePersistedMicChannelDevice(devices, state.MicrophoneName);
         channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
             ? parsedMode
             : InputChannelMode.MonoSum;
@@ -929,6 +926,20 @@ public partial class EqualizerWindow : Window
         SyncEqualizerSettings(channel);
     }
 
+    private void CoercePersistedMicChannelModes(IReadOnlyList<AudioInputDevice> devices)
+    {
+        foreach (var channel in _micChannels)
+        {
+            if (channel.SelectedDevice is null)
+            {
+                channel.InputChannelMode = InputChannelMode.MonoSum;
+                continue;
+            }
+
+            channel.InputChannelMode = CoerceInputChannelModeForDevice(channel.SelectedDevice, null, channel.InputChannelMode);
+        }
+    }
+
     private static MicChannelStrip? FindMicChannel(IEnumerable<MicChannelStrip> channels, int channelNumber)
     {
         return channels.FirstOrDefault(channel => channel.ChannelNumber == channelNumber);
@@ -947,6 +958,18 @@ public partial class EqualizerWindow : Window
             ? null
             : devices.FirstOrDefault(device =>
                 device.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static AudioInputDevice? ResolvePersistedMicChannelDevice(
+        IReadOnlyList<AudioInputDevice> devices,
+        string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return FindAudioInputDevice(devices, name) ?? devices.FirstOrDefault();
     }
 
     private static AudioOutputDevice? FindAudioOutputDevice(
