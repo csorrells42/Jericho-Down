@@ -516,6 +516,7 @@ static void PrimaryCaptureSelectorFollowsActiveMicSource()
 
     var selected = PrimaryCaptureSelector.ResolveChannelNumber(candidates, requestedDeviceNumber: 10);
     Assert(selected == 3, "active mic should become the primary capture even if the previous top-level device is still selected");
+    Assert(candidates.First(candidate => candidate.ChannelNumber == selected).DeviceNumber == 42, "active mic selection should point startup at the active mic device");
 
     candidates =
     [

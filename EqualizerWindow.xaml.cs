@@ -4863,7 +4863,7 @@ public partial class EqualizerWindow : Window
         }
 
         var primaryCaptureChannel = ResolvePrimaryCaptureChannel();
-        var selectedDevice = _selectedDevice ?? primaryCaptureChannel?.SelectedDevice;
+        var selectedDevice = primaryCaptureChannel?.SelectedDevice ?? _selectedDevice;
         if (selectedDevice is null)
         {
             UpdateAudioFormatRouteText();
