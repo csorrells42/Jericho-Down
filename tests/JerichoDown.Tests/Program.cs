@@ -46,6 +46,7 @@ var tests = new (string Name, Action Test)[]
     ("Live service bus records higher interface lanes", LiveServiceBusRecordsHigherInterfaceLanes),
     ("Live service bus records selected mic sources", LiveServiceBusRecordsSelectedMicSources),
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
+    ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -915,9 +916,55 @@ static void LiveOutputProviderReceivesProgramMix()
     AssertAudibleStereoProgram(pcmSamples, "PCM output provider");
 }
 
+static void LiveOutputProviderFollowsMixerMuteAndSolo()
+{
+    using var service = CreateLiveOutputService(out var outputProvider);
+    var mic1Settings = CreateTransparentVoiceSettings();
+    var mic2Settings = CreateTransparentVoiceSettings();
+
+    ConfigureTwoMicOutputService(service, mic1Settings, mic2Settings);
+    FeedAlternatingStereoBlock(service);
+    var mixedSamples = ReadBufferedFloatSamples(outputProvider);
+    AssertAudibleStereoProgram(mixedSamples, "unmuted service output");
+
+    ConfigureTwoMicOutputService(service, mic1Settings, mic2Settings, mic2Muted: true);
+    FeedAlternatingStereoBlock(service);
+    var mutedSamples = ReadBufferedFloatSamples(outputProvider);
+    AssertStereoPeaks(
+        mutedSamples,
+        "muted mic should disappear from the right side of the service output",
+        leftMinimum: 0.20f,
+        rightMaximum: 0.03f);
+
+    ConfigureTwoMicOutputService(service, mic1Settings, mic2Settings, mic2Soloed: true);
+    FeedAlternatingStereoBlock(service);
+    var soloedSamples = ReadBufferedFloatSamples(outputProvider);
+    AssertStereoPeaks(
+        soloedSamples,
+        "soloed mic should be the only service output",
+        leftMaximum: 0.03f,
+        rightMinimum: 0.08f);
+}
+
 static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
 {
-    using var service = new MicrophoneSpectrumService();
+    using var service = CreateLiveOutputServiceForProvider(outputProvider);
+    ConfigureTwoMicOutputService(service, CreateTransparentVoiceSettings(), CreateTransparentVoiceSettings());
+    FeedAlternatingStereoBlock(service);
+}
+
+static MicrophoneSpectrumService CreateLiveOutputService(out BufferedWaveProvider outputProvider)
+{
+    outputProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2))
+    {
+        ReadFully = false
+    };
+    return CreateLiveOutputServiceForProvider(outputProvider);
+}
+
+static MicrophoneSpectrumService CreateLiveOutputServiceForProvider(BufferedWaveProvider outputProvider)
+{
+    var service = new MicrophoneSpectrumService();
     var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
     var capture = new FakeWaveIn(waveFormat);
     SetPrivateField<IWaveIn?>(service, "_capture", capture);
@@ -926,13 +973,23 @@ static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
     SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
     SetPrivateField(service, "_processedOutputEnabled", 1);
     SetPrivateField(service, "_processedOutputProvider", outputProvider);
+    return service;
+}
+
+static void ConfigureTwoMicOutputService(
+    MicrophoneSpectrumService service,
+    VoiceProcessorSettings mic1Settings,
+    VoiceProcessorSettings mic2Settings,
+    bool mic2Muted = false,
+    bool mic2Soloed = false)
+{
     service.ConfigureLiveMix(
         [
             new MicrophoneLiveChannelSettings(
                 1,
                 0,
                 InputChannelMode.Input1Left,
-                CreateTransparentVoiceSettings(),
+                mic1Settings,
                 100d,
                 0d,
                 -100d,
@@ -945,18 +1002,21 @@ static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
                 2,
                 0,
                 InputChannelMode.Input2Right,
-                CreateTransparentVoiceSettings(),
+                mic2Settings,
                 100d,
                 0d,
                 100d,
                 false,
-                false,
+                mic2Soloed,
                 0d,
                 true,
-                false)
+                mic2Muted)
         ],
         new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+}
 
+static void FeedAlternatingStereoBlock(MicrophoneSpectrumService service)
+{
     const int frameCount = 384;
     var stereoSamples = new float[frameCount * 2];
     for (var frame = 0; frame < frameCount; frame++)
@@ -999,6 +1059,46 @@ static void AssertAudibleStereoProgram(IReadOnlyList<float> samples, string rout
 {
     Assert(samples.Count >= 512, $"{routeName} should receive the live output block");
 
+    var (leftPeak, rightPeak) = MeasureStereoPeaks(samples);
+
+    Assert(leftPeak > 0.20f, $"{routeName} should contain audible left program mix samples");
+    Assert(rightPeak > 0.08f, $"{routeName} should contain audible right program mix samples");
+    Assert(leftPeak > rightPeak * 1.35f, $"{routeName} should preserve the left/right program balance");
+}
+
+static void AssertStereoPeaks(
+    IReadOnlyList<float> samples,
+    string message,
+    float? leftMinimum = null,
+    float? leftMaximum = null,
+    float? rightMinimum = null,
+    float? rightMaximum = null)
+{
+    Assert(samples.Count >= 512, $"{message}: output block should be present");
+    var (leftPeak, rightPeak) = MeasureStereoPeaks(samples);
+    if (leftMinimum is not null)
+    {
+        Assert(leftPeak >= leftMinimum.Value, $"{message}: left peak {leftPeak:0.000} should be >= {leftMinimum:0.000}");
+    }
+
+    if (leftMaximum is not null)
+    {
+        Assert(leftPeak <= leftMaximum.Value, $"{message}: left peak {leftPeak:0.000} should be <= {leftMaximum:0.000}");
+    }
+
+    if (rightMinimum is not null)
+    {
+        Assert(rightPeak >= rightMinimum.Value, $"{message}: right peak {rightPeak:0.000} should be >= {rightMinimum:0.000}");
+    }
+
+    if (rightMaximum is not null)
+    {
+        Assert(rightPeak <= rightMaximum.Value, $"{message}: right peak {rightPeak:0.000} should be <= {rightMaximum:0.000}");
+    }
+}
+
+static (float LeftPeak, float RightPeak) MeasureStereoPeaks(IReadOnlyList<float> samples)
+{
     var leftPeak = 0f;
     var rightPeak = 0f;
     var start = Math.Min(300, Math.Max(0, samples.Count - 2));
@@ -1013,9 +1113,7 @@ static void AssertAudibleStereoProgram(IReadOnlyList<float> samples, string rout
         rightPeak = Math.Max(rightPeak, Math.Abs(samples[i + 1]));
     }
 
-    Assert(leftPeak > 0.20f, $"{routeName} should contain audible left program mix samples");
-    Assert(rightPeak > 0.08f, $"{routeName} should contain audible right program mix samples");
-    Assert(leftPeak > rightPeak * 1.35f, $"{routeName} should preserve the left/right program balance");
+    return (leftPeak, rightPeak);
 }
 
 static void ProcessedAudioConverterWritesOutputFormats()
