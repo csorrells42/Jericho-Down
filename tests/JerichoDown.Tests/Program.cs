@@ -2,6 +2,7 @@ using System.Collections;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using JerichoDown;
 using JerichoDown.Audio;
@@ -37,6 +38,8 @@ var tests = new (string Name, Action Test)[]
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
+    ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
+    ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
@@ -548,6 +551,66 @@ static void AudioRecordingWaveFormatFollowsSelectedSource()
     {
         Directory.Delete(folder, recursive: true);
     }
+}
+
+static void ProcessedAudioConverterWritesOutputFormats()
+{
+    var monoSamples = new[] { 0.25f, -0.5f, float.NaN, 2f };
+    var floatBytes = new byte[ProcessedAudioSampleConverter.GetStereoFloat32ByteCount(monoSamples.Length, 1)];
+    var floatByteCount = ProcessedAudioSampleConverter.WriteStereoFloat32(
+        monoSamples,
+        sourceChannelCount: 1,
+        floatBytes,
+        sample => sample * 0.5f);
+    var floatOutput = MemoryMarshal.Cast<byte, float>(floatBytes.AsSpan(0, floatByteCount)).ToArray();
+
+    AssertSequenceEqual(
+        new[] { 0.125f, 0.125f, -0.25f, -0.25f, 0f, 0f, 0.5f, 0.5f },
+        floatOutput,
+        "mono program output should duplicate sanitized samples to stereo float");
+
+    var stereoSamples = new[] { 0.2f, 0.4f, -2f, float.NaN, 0.5f, -0.25f };
+    floatBytes = new byte[ProcessedAudioSampleConverter.GetStereoFloat32ByteCount(stereoSamples.Length, 2)];
+    floatByteCount = ProcessedAudioSampleConverter.WriteStereoFloat32(stereoSamples, 2, floatBytes);
+    floatOutput = MemoryMarshal.Cast<byte, float>(floatBytes.AsSpan(0, floatByteCount)).ToArray();
+
+    AssertSequenceEqual(
+        new[] { 0.2f, 0.4f, -1f, 0f, 0.5f, -0.25f },
+        floatOutput,
+        "stereo program output should keep left/right samples and sanitize bad values");
+
+    var pcmBytes = new byte[ProcessedAudioSampleConverter.GetStereoPcm16ByteCount(2, 1)];
+    uint ditherState = 0;
+    var pcmByteCount = ProcessedAudioSampleConverter.WriteStereoPcm16([1f, -1f], 1, pcmBytes, ref ditherState);
+    var pcmOutput = MemoryMarshal.Cast<byte, short>(pcmBytes.AsSpan(0, pcmByteCount)).ToArray();
+
+    AssertSequenceEqual(
+        new[] { short.MaxValue, short.MaxValue, short.MinValue, short.MinValue },
+        pcmOutput,
+        "PCM fallback output should duplicate mono samples and quantize full scale safely");
+}
+
+static void ProcessedAudioConverterRechannelsRecordingSources()
+{
+    var stereoProgram = new[] { 0.8f, 0.2f, -0.5f, -1.5f, float.NaN, 0.6f };
+    var monoRecording = new float[ProcessedAudioSampleConverter.GetConvertedSampleCount(stereoProgram.Length, 2, 1)];
+    var written = ProcessedAudioSampleConverter.WriteChannelCount(stereoProgram, 2, 1, monoRecording);
+
+    Assert(written == monoRecording.Length, "recording converter should report the mono recording sample count");
+    AssertSequenceEqual(
+        new[] { 0.5f, -0.75f, 0.3f },
+        monoRecording,
+        "selected mono recording should average sanitized stereo program frames");
+
+    var selectedMic = new[] { 0.25f, -0.25f };
+    var stereoRecording = new float[ProcessedAudioSampleConverter.GetConvertedSampleCount(selectedMic.Length, 1, 2)];
+    written = ProcessedAudioSampleConverter.WriteChannelCount(selectedMic, 1, 2, stereoRecording);
+
+    Assert(written == stereoRecording.Length, "recording converter should report the stereo recording sample count");
+    AssertSequenceEqual(
+        new[] { 0.25f, 0.25f, -0.25f, -0.25f },
+        stereoRecording,
+        "mono selected mic recordings should expand cleanly when written to a stereo target");
 }
 
 static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()

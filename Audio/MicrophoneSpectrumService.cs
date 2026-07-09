@@ -2343,59 +2343,33 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private int ConvertFloatSamplesToStereoFloat32(ReadOnlySpan<float> samples, int sourceChannelCount)
     {
-        const int channelCount = 2;
-        sourceChannelCount = Math.Max(1, sourceChannelCount);
-        var frameCount = samples.Length / sourceChannelCount;
-        var byteCount = frameCount * sizeof(float) * channelCount;
+        var byteCount = ProcessedAudioSampleConverter.GetStereoFloat32ByteCount(samples.Length, sourceChannelCount);
         if (_processedOutputBytes.Length < byteCount)
         {
             _processedOutputBytes = new byte[byteCount];
         }
 
-        var outputSamples = MemoryMarshal.Cast<byte, float>(_processedOutputBytes.AsSpan(0, byteCount));
-        var offset = 0;
-        for (var frame = 0; frame < frameCount; frame++)
-        {
-            var left = GetFrameChannelSample(samples, sourceChannelCount, frame, 0);
-            var right = sourceChannelCount > 1
-                ? GetFrameChannelSample(samples, sourceChannelCount, frame, 1)
-                : left;
-            outputSamples[offset] = PrepareProcessedOutputSample(left);
-            outputSamples[offset + 1] = PrepareProcessedOutputSample(right);
-            offset += channelCount;
-        }
-
-        return byteCount;
+        return ProcessedAudioSampleConverter.WriteStereoFloat32(
+            samples,
+            sourceChannelCount,
+            _processedOutputBytes.AsSpan(0, byteCount),
+            PrepareProcessedOutputSample);
     }
 
     private int ConvertFloatSamplesToStereoPcm16(ReadOnlySpan<float> samples, int sourceChannelCount)
     {
-        const int channelCount = 2;
-        const double ditherScale = 1d / 32768d;
-        sourceChannelCount = Math.Max(1, sourceChannelCount);
-        var frameCount = samples.Length / sourceChannelCount;
-        var byteCount = frameCount * sizeof(short) * channelCount;
+        var byteCount = ProcessedAudioSampleConverter.GetStereoPcm16ByteCount(samples.Length, sourceChannelCount);
         if (_processedOutputBytes.Length < byteCount)
         {
             _processedOutputBytes = new byte[byteCount];
         }
 
-        var outputSamples = MemoryMarshal.Cast<byte, short>(_processedOutputBytes.AsSpan(0, byteCount));
-        var offset = 0;
-        for (var frame = 0; frame < frameCount; frame++)
-        {
-            var left = GetFrameChannelSample(samples, sourceChannelCount, frame, 0);
-            var right = sourceChannelCount > 1
-                ? GetFrameChannelSample(samples, sourceChannelCount, frame, 1)
-                : left;
-            var dither = (NextDitherRandom() - NextDitherRandom()) * ditherScale;
-            outputSamples[offset] = QuantizeToPcm16(PrepareProcessedOutputSample(left), dither);
-            dither = (NextDitherRandom() - NextDitherRandom()) * ditherScale;
-            outputSamples[offset + 1] = QuantizeToPcm16(PrepareProcessedOutputSample(right), dither);
-            offset += channelCount;
-        }
-
-        return byteCount;
+        return ProcessedAudioSampleConverter.WriteStereoPcm16(
+            samples,
+            sourceChannelCount,
+            _processedOutputBytes.AsSpan(0, byteCount),
+            ref _ditherState,
+            PrepareProcessedOutputSample);
     }
 
     private ReadOnlySpan<float> EnsureRecordingChannelCount(
@@ -2410,62 +2384,22 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return samples;
         }
 
-        var frameCount = samples.Length / sourceChannelCount;
-        var requiredSamples = checked(frameCount * recordingChannelCount);
+        var requiredSamples = ProcessedAudioSampleConverter.GetConvertedSampleCount(
+            samples.Length,
+            sourceChannelCount,
+            recordingChannelCount);
         if (_processedRecordingFloatSamples.Length < requiredSamples)
         {
             _processedRecordingFloatSamples = new float[requiredSamples];
         }
 
         var destination = _processedRecordingFloatSamples.AsSpan(0, requiredSamples);
-        if (recordingChannelCount == 1)
-        {
-            for (var frame = 0; frame < frameCount; frame++)
-            {
-                var left = GetFrameChannelSample(samples, sourceChannelCount, frame, 0);
-                var right = sourceChannelCount > 1
-                    ? GetFrameChannelSample(samples, sourceChannelCount, frame, 1)
-                    : left;
-                destination[frame] = (left + right) * 0.5f;
-            }
-
-            return destination;
-        }
-
-        var write = 0;
-        for (var frame = 0; frame < frameCount; frame++)
-        {
-            var left = GetFrameChannelSample(samples, sourceChannelCount, frame, 0);
-            var right = sourceChannelCount > 1
-                ? GetFrameChannelSample(samples, sourceChannelCount, frame, 1)
-                : left;
-            destination[write++] = left;
-            destination[write++] = right;
-            for (var channel = 2; channel < recordingChannelCount; channel++)
-            {
-                destination[write++] = 0f;
-            }
-        }
-
+        ProcessedAudioSampleConverter.WriteChannelCount(
+            samples,
+            sourceChannelCount,
+            recordingChannelCount,
+            destination);
         return destination;
-    }
-
-    private static float GetFrameChannelSample(ReadOnlySpan<float> samples, int sourceChannelCount, int frame, int channel)
-    {
-        var index = checked(frame * sourceChannelCount + Math.Clamp(channel, 0, sourceChannelCount - 1));
-        return index >= 0 && index < samples.Length
-            ? Math.Clamp(float.IsFinite(samples[index]) ? samples[index] : 0f, -1f, 1f)
-            : 0f;
-    }
-
-    private static short QuantizeToPcm16(float inputSample, double dither)
-    {
-        var sample = Math.Clamp((double)inputSample + dither, -1d, 1d);
-        var scaled = sample < 0d
-            ? sample * -short.MinValue
-            : sample * short.MaxValue;
-        var quantized = (int)Math.Round(scaled, MidpointRounding.AwayFromZero);
-        return (short)Math.Clamp(quantized, short.MinValue, short.MaxValue);
     }
 
     private void ArmProcessedOutputRecoveryRamp()
@@ -2488,14 +2422,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
         var gain = progress * progress * (3d - 2d * progress);
         _processedOutputRampSamplesRemaining--;
         return (float)(sample * gain);
-    }
-
-    private double NextDitherRandom()
-    {
-        _ditherState ^= _ditherState << 13;
-        _ditherState ^= _ditherState >> 17;
-        _ditherState ^= _ditherState << 5;
-        return _ditherState / ((double)uint.MaxValue + 1d);
     }
 
     private static double CalculateBufferDurationMs(int bytesRecorded, WaveFormat format)
