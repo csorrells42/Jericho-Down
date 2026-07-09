@@ -71,6 +71,13 @@ public sealed class VoiceSampleProcessor
     private double _previousDeEsserOutput;
     private double _deEsserBand;
     private double _deEsserDetectorEnvelope;
+    private double _previousBreathInput;
+    private double _previousBreathHigh;
+    private double _breathBand;
+    private double _breathDetectorEnvelope;
+    private double _breathBodyEnvelope;
+    private double _breathGain = 1d;
+    private double _breathWet;
     private double _previousPresenceInput;
     private double _previousPresenceHigh;
     private double _presenceBand;
@@ -116,6 +123,7 @@ public sealed class VoiceSampleProcessor
     private bool _echoReducerEnabled;
     private bool _compressorEnabled;
     private bool _deEsserEnabled;
+    private bool _breathReducerEnabled;
     private bool _presenceEnhancerEnabled;
     private bool _saturationEnabled;
     private bool _limiterEnabled;
@@ -236,6 +244,15 @@ public sealed class VoiceSampleProcessor
     private double _deEsserThresholdDb;
     private double _deEsserRangeDb;
     private double _deEsserSensitivity;
+    private double _breathHighPassAlpha;
+    private double _breathLowPassAlpha;
+    private double _breathAttackCoefficient;
+    private double _breathReleaseCoefficient;
+    private double _breathDetectorAttackCoefficient;
+    private double _breathDetectorReleaseCoefficient;
+    private double _breathWetCoefficient;
+    private double _breathMaximumReductionDb;
+    private double _breathSensitivity;
     private double _presenceHighPassAlpha;
     private double _presenceLowPassAlpha;
     private double _presenceBlend;
@@ -326,6 +343,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyNoiseGate(sample);
             sample = ApplyEchoReducer(sample);
             sample = ApplyCompressor(sample);
+            sample = ApplyBreathReducer(sample);
             sample = ApplyDeEsser(sample);
             sample = ApplyPresenceEnhancer(sample);
             sample = ApplyLowPass(sample);
@@ -389,6 +407,7 @@ public sealed class VoiceSampleProcessor
         _echoReducerEnabled = _settings.EchoReducerEnabled && _settings.EchoReducerAmountDb > 0d;
         _compressorEnabled = _settings.CompressorEnabled;
         _deEsserEnabled = _settings.DeEsserEnabled && _settings.DeEsserAmountDb > 0d;
+        _breathReducerEnabled = _settings.BreathReducerEnabled && _settings.BreathReducerAmountDb > 0d;
         _presenceEnhancerEnabled = _settings.PresenceEnhancerEnabled && _settings.PresenceEnhancerAmountDb > 0d;
         _saturationEnabled = _settings.SaturationEnabled && _settings.SaturationAmount > 0d;
         _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
@@ -461,6 +480,13 @@ public sealed class VoiceSampleProcessor
         _deEsserThresholdDb = Math.Clamp(_settings.DeEsserThresholdDb, -60d, -12d);
         _deEsserRangeDb = Math.Clamp(_settings.DeEsserRangeDb, 1d, 18d);
         _deEsserSensitivity = Math.Clamp(_settings.DeEsserAmountDb, 0d, 12d) / 12d;
+        _breathAttackCoefficient = TimeCoefficient(3d);
+        _breathReleaseCoefficient = TimeCoefficient(150d);
+        _breathDetectorAttackCoefficient = TimeCoefficient(2d);
+        _breathDetectorReleaseCoefficient = TimeCoefficient(120d);
+        _breathWetCoefficient = TimeCoefficient(10d);
+        _breathMaximumReductionDb = Math.Clamp(_settings.BreathReducerAmountDb, 0d, 18d);
+        _breathSensitivity = Math.Clamp(_settings.BreathReducerSensitivity, 1d, 10d);
 
         var centerHz = Math.Clamp(_settings.PresenceEnhancerFrequencyHz, 1500d, 6500d);
         var widthHz = Math.Clamp(_settings.PresenceEnhancerWidthHz, 800d, 5000d);
@@ -483,6 +509,11 @@ public sealed class VoiceSampleProcessor
         _deEsserHighPassAlpha = deEsserRc / (deEsserRc + dt);
         var deEsserLowPassHz = Math.Clamp(deEsserCutoffHz + 3500d, 6500d, Math.Min(14000d, _sampleRate * 0.45d));
         _deEsserLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * deEsserLowPassHz / _sampleRate);
+        const double breathHighPassHz = 2500d;
+        var breathHighPassRc = 1d / (2d * Math.PI * breathHighPassHz);
+        _breathHighPassAlpha = breathHighPassRc / (breathHighPassRc + dt);
+        var breathLowPassHz = Math.Min(12000d, _sampleRate * 0.45d);
+        _breathLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * breathLowPassHz / _sampleRate);
 
         _limiterEnabled = _settings.LimiterEnabled;
         _limiterSoftClipEnabled = _settings.LimiterSoftClipEnabled;
@@ -1732,6 +1763,86 @@ public sealed class VoiceSampleProcessor
         _compressorSidechainLow = FlushDenormal(_compressorSidechainLow + (sample - _compressorSidechainLow) * _compressorSidechainLowPassCoefficient);
         var sidechainHigh = sample - _compressorSidechainLow;
         return sidechainHigh + sample * 0.35d;
+    }
+
+    private double ApplyBreathReducer(double sample)
+    {
+        if (!_breathReducerEnabled && _breathWet <= 0d)
+        {
+            ResetBreathReducerState();
+            return sample;
+        }
+
+        var breathBand = ApplyBreathBand(sample);
+        var body = sample - breathBand;
+        var breathLevel = TrackLevelEnvelope(
+            ref _breathDetectorEnvelope,
+            Math.Abs(breathBand),
+            _breathDetectorAttackCoefficient,
+            _breathDetectorReleaseCoefficient);
+        var bodyLevel = TrackLevelEnvelope(
+            ref _breathBodyEnvelope,
+            Math.Abs(body),
+            _breathDetectorAttackCoefficient,
+            _breathDetectorReleaseCoefficient);
+        var breathRatio = breathLevel / Math.Max(0.000001d, breathLevel + bodyLevel);
+        var ratioThreshold = Math.Clamp(0.58d - _breathSensitivity * 0.045d, 0.16d, 0.55d);
+        var breathiness = Math.Clamp((breathRatio - ratioThreshold) / Math.Max(0.000001d, 1d - ratioThreshold), 0d, 1d);
+        var overallDb = LinearToDb(breathLevel + bodyLevel);
+        var quietFavor = Math.Clamp((-3d - overallDb) / 24d, 0.65d, 1d);
+        var reductionDb = _breathMaximumReductionDb * breathiness * quietFavor;
+        var targetGain = DbToLinear(-reductionDb);
+        var gainCoefficient = targetGain < _breathGain
+            ? _breathAttackCoefficient
+            : _breathReleaseCoefficient;
+        _breathGain = FlushDenormal(_breathGain + (targetGain - _breathGain) * gainCoefficient);
+        _breathGain = Math.Clamp(_breathGain, 0d, 1d);
+        var processed = body + breathBand * _breathGain;
+
+        var targetWet = _breathReducerEnabled ? 1d : 0d;
+        _breathWet = FlushDenormal(_breathWet + (targetWet - _breathWet) * _breathWetCoefficient);
+        if (!_breathReducerEnabled && _breathWet < 0.0001d)
+        {
+            _breathWet = 0d;
+            ResetBreathReducerState();
+        }
+        else if (_breathReducerEnabled && _breathWet > 0.9999d)
+        {
+            _breathWet = 1d;
+        }
+
+        return sample + (processed - sample) * _breathWet;
+    }
+
+    private double ApplyBreathBand(double sample)
+    {
+        var high = FlushDenormal(_breathHighPassAlpha * (_previousBreathHigh + sample - _previousBreathInput));
+        _previousBreathInput = FlushDenormal(sample);
+        _previousBreathHigh = high;
+        _breathBand = FlushDenormal(_breathBand + _breathLowPassAlpha * (high - _breathBand));
+        return _breathBand;
+    }
+
+    private void ResetBreathReducerState()
+    {
+        if (_previousBreathInput == 0d
+            && _previousBreathHigh == 0d
+            && _breathBand == 0d
+            && _breathDetectorEnvelope == 0d
+            && _breathBodyEnvelope == 0d
+            && _breathGain == 1d
+            && _breathWet == 0d)
+        {
+            return;
+        }
+
+        _previousBreathInput = 0d;
+        _previousBreathHigh = 0d;
+        _breathBand = 0d;
+        _breathDetectorEnvelope = 0d;
+        _breathBodyEnvelope = 0d;
+        _breathGain = 1d;
+        _breathWet = 0d;
     }
 
     private double ApplyDeEsser(double sample)

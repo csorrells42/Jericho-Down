@@ -11915,6 +11915,9 @@ public partial class EqualizerWindow : Window
         Settings.DeEsserFrequencyHz = 5200;
         Settings.DeEsserThresholdDb = -34;
         Settings.DeEsserRangeDb = 9;
+        Settings.BreathReducerEnabled = false;
+        Settings.BreathReducerAmountDb = 6;
+        Settings.BreathReducerSensitivity = 5;
         Settings.PresenceEnhancerEnabled = true;
         Settings.PresenceEnhancerAmountDb = 2;
         Settings.PresenceEnhancerFrequencyHz = 3000;
@@ -12992,6 +12995,8 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(DeEsserFrequencySlider, Settings.DeEsserFrequencyHz);
         SetProcessingSliderDefault(DeEsserThresholdSlider, Settings.DeEsserThresholdDb);
         SetProcessingSliderDefault(DeEsserRangeSlider, Settings.DeEsserRangeDb);
+        SetProcessingSliderDefault(BreathReducerSlider, Settings.BreathReducerAmountDb);
+        SetProcessingSliderDefault(BreathReducerSensitivitySlider, Settings.BreathReducerSensitivity);
         SetProcessingSliderDefault(PresenceEnhancerSlider, Settings.PresenceEnhancerAmountDb);
         SetProcessingSliderDefault(PresenceFrequencySlider, Settings.PresenceEnhancerFrequencyHz);
         SetProcessingSliderDefault(PresenceWidthSlider, Settings.PresenceEnhancerWidthHz);

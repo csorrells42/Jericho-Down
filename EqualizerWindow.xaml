@@ -2066,6 +2066,25 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Breath reducer" IsChecked="{Binding BreathReducerEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Turns down airy breath noise without changing the whole mic level." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="Reduction" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=BreathReducerSlider, Path=Value, StringFormat={}{0:0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="BreathReducerSlider" Minimum="0" Maximum="18" Value="{Binding BreathReducerAmountDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Sensitivity" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=BreathReducerSensitivitySlider, Path=Value, StringFormat={}{0:0.0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="BreathReducerSensitivitySlider" Minimum="1" Maximum="10" Value="{Binding BreathReducerSensitivity}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Presence enhancer" IsChecked="{Binding PresenceEnhancerEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8" />
                       <Grid>
                         <TextBlock Text="Presence amount" Foreground="#B8C7D9" />

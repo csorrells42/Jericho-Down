@@ -27,6 +27,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
+    ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
@@ -378,6 +379,27 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(highShapedRms < highBypassRms * 0.70d, "high shelf cut should tame high air");
     Assert(midShapedRms > midBypassRms * 0.82d && midShapedRms < midBypassRms * 1.22d, "shelf EQ should keep mid voice mostly stable");
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
+}
+
+static void VoiceBreathReducerTamesAiryBreathNoise()
+{
+    const int sampleRate = 48_000;
+    var breathTone = GenerateSine(sampleRate, 6_500d, 0.24d, 2.0d);
+    var voiceTone = GenerateSine(sampleRate, 1_000d, 0.35d, 2.0d);
+    var breathBypass = ProcessBreathReducerTestTone(breathTone, enabled: false);
+    var breathReduced = ProcessBreathReducerTestTone(breathTone, enabled: true);
+    var voiceBypass = ProcessBreathReducerTestTone(voiceTone, enabled: false);
+    var voiceReduced = ProcessBreathReducerTestTone(voiceTone, enabled: true);
+
+    var start = sampleRate;
+    var breathBypassRms = CalculateTailRms(breathBypass, start);
+    var breathReducedRms = CalculateTailRms(breathReduced, start);
+    var voiceBypassRms = CalculateTailRms(voiceBypass, start);
+    var voiceReducedRms = CalculateTailRms(voiceReduced, start);
+
+    Assert(breathReducedRms < breathBypassRms * 0.72d, "breath reducer should lower airy breath-band noise");
+    Assert(voiceReducedRms > voiceBypassRms * 0.86d, "breath reducer should preserve normal voice tone");
+    Assert(breathReduced.All(float.IsFinite) && voiceReduced.All(float.IsFinite), "breath reducer output should stay finite");
 }
 
 static void VoiceSaturationAddsWarmHarmonicsSafely()
@@ -1477,6 +1499,35 @@ static float[] ProcessShelfEqTestTone(float[] samples, bool enabled)
         NoiseSuppressionEnabled = false,
         EchoReducerEnabled = false,
         CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        SaturationEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessBreathReducerTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        HumRemovalEnabled = false,
+        NotchFilterEnabled = false,
+        ParametricEqEnabled = false,
+        ShelfEqEnabled = false,
+        LowPassEnabled = false,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        BreathReducerEnabled = enabled,
+        BreathReducerAmountDb = 18,
+        BreathReducerSensitivity = 10,
         DeEsserEnabled = false,
         PresenceEnhancerEnabled = false,
         SaturationEnabled = false,

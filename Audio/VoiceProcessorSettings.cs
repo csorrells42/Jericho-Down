@@ -59,6 +59,9 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _deEsserFrequencyHz = 5200;
     private double _deEsserThresholdDb = -34;
     private double _deEsserRangeDb = 9;
+    private bool _breathReducerEnabled;
+    private double _breathReducerAmountDb = 6;
+    private double _breathReducerSensitivity = 5;
     private bool _presenceEnhancerEnabled = true;
     private double _presenceEnhancerAmountDb = 2;
     private double _presenceEnhancerFrequencyHz = 3000;
@@ -376,6 +379,24 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _deEsserRangeDb;
         set => SetField(ref _deEsserRangeDb, value);
+    }
+
+    public bool BreathReducerEnabled
+    {
+        get => _breathReducerEnabled;
+        set => SetField(ref _breathReducerEnabled, value);
+    }
+
+    public double BreathReducerAmountDb
+    {
+        get => _breathReducerAmountDb;
+        set => SetField(ref _breathReducerAmountDb, value);
+    }
+
+    public double BreathReducerSensitivity
+    {
+        get => _breathReducerSensitivity;
+        set => SetField(ref _breathReducerSensitivity, value);
     }
 
     public bool PresenceEnhancerEnabled
