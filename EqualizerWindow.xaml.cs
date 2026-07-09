@@ -71,19 +71,6 @@ public partial class EqualizerWindow : Window
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
-    private static readonly Color[] MixingMicSpectrumColors =
-    [
-        Color.FromRgb(255, 72, 72),
-        Color.FromRgb(56, 230, 107),
-        Color.FromRgb(69, 171, 255),
-        Color.FromRgb(255, 211, 64),
-        Color.FromRgb(216, 112, 255),
-        Color.FromRgb(0, 224, 255),
-        Color.FromRgb(255, 136, 72),
-        Color.FromRgb(152, 238, 96),
-        Color.FromRgb(255, 112, 181),
-        Color.FromRgb(232, 240, 248)
-    ];
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
     private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
     private static readonly string KaraokeAiToolsFolder = System.IO.Path.Combine(AppStoragePaths.SettingsFolder, "Tools", "KaraokeAi");
@@ -201,7 +188,7 @@ public partial class EqualizerWindow : Window
     private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
     private readonly List<Line> _mixingSpectrumGridLines = [];
     private readonly List<Line> _micCompareGridLines = [];
-    private readonly double[][] _renderedMixingMicMagnitudes = new double[MaximumMicChannelCount][];
+    private readonly double[][] _renderedMixingMicMagnitudes = new double[1][];
     private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
     private readonly SolidColorBrush _waveformGridBrush = new(Color.FromRgb(36, 45, 54));
@@ -266,6 +253,8 @@ public partial class EqualizerWindow : Window
     private bool _masterMixNormalizeEnabled = true;
     private bool _masterMixLimiterEnabled = true;
     private double _masterMixLimiterCeilingDb = -1d;
+    private MixBusOutputMode _masterMixOutputMode = MixBusOutputMode.Stereo;
+    private ProcessedRecordingSource _audioRecordingSource = ProcessedRecordingSource.ProgramMix;
     private string _outputFolder = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         "Jericho Down Sessions");
@@ -423,14 +412,14 @@ public partial class EqualizerWindow : Window
 
     private static ShapePath[] CreateMixingMicSpectrumTraces()
     {
-        var traces = new ShapePath[MaximumMicChannelCount];
+        var traces = new ShapePath[1];
         for (var i = 0; i < traces.Length; i++)
         {
             traces[i] = new ShapePath
             {
-                Stroke = new SolidColorBrush(MixingMicSpectrumColors[i % MixingMicSpectrumColors.Length]),
-                StrokeThickness = i == 0 ? 2.6d : 2d,
-                Opacity = i == 0 ? 0.98d : 0.88d,
+                Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+                StrokeThickness = 2.6d,
+                Opacity = 0.98d,
                 StrokeLineJoin = PenLineJoin.Round,
                 IsHitTestVisible = false
             };
@@ -1220,11 +1209,13 @@ public partial class EqualizerWindow : Window
             MixerAutoNormalizeEnabled = _masterMixNormalizeEnabled,
             MixerLimiterEnabled = _masterMixLimiterEnabled,
             MixerLimiterCeilingDb = _masterMixLimiterCeilingDb,
+            MixerOutputMode = _masterMixOutputMode.ToString(),
             OutputDeviceName = _selectedOutputDevice?.Name,
             OutputEndpointId = _selectedOutputDevice?.EndpointId,
             ProcessedOutputEnabled = ProcessedOutputCheckBox?.IsChecked == true,
             OutputFolder = _outputFolder,
             AudioRecordingFolder = _audioRecordingFolder,
+            AudioRecordingSource = _audioRecordingSource.ToString(),
             LastAudioRecordingPath = !string.IsNullOrWhiteSpace(selectedAudioPath) ? selectedAudioPath : _lastAudioRecordingPath,
             LastSessionRecordingPath = !string.IsNullOrWhiteSpace(selectedSessionPath) ? selectedSessionPath : _lastSessionRecordingPath,
             KaraokeTrackPath = karaokeTrackPath,
@@ -4543,17 +4534,54 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private void MasterOutputModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ReadMasterMixControls();
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
+    private void AudioRecordingSourceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        ReadAudioRecordingSourceControl();
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
     private void ApplyMixerStateToUi()
     {
         _masterMixVolumePercent = Math.Clamp(_appSettings.MixerMasterVolumePercent ?? 100d, 0d, 150d);
         _masterMixNormalizeEnabled = !HasPersistedAppState() || _appSettings.MixerAutoNormalizeEnabled;
         _masterMixLimiterEnabled = !HasPersistedAppState() || _appSettings.MixerLimiterEnabled;
         _masterMixLimiterCeilingDb = Math.Clamp(_appSettings.MixerLimiterCeilingDb ?? -1d, -12d, 0d);
+        _masterMixOutputMode = Enum.TryParse<MixBusOutputMode>(_appSettings.MixerOutputMode, ignoreCase: true, out var outputMode)
+            ? outputMode
+            : MixBusOutputMode.Stereo;
+        _audioRecordingSource = Enum.TryParse<ProcessedRecordingSource>(_appSettings.AudioRecordingSource, ignoreCase: true, out var recordingSource)
+            ? recordingSource
+            : ProcessedRecordingSource.ProgramMix;
 
         _isUpdatingMixerUi = true;
         try
         {
             MasterVolumeSlider.Value = _masterMixVolumePercent;
+            MasterOutputModeComboBox.SelectedIndex = _masterMixOutputMode == MixBusOutputMode.Mono ? 1 : 0;
+            AudioRecordingSourceComboBox.SelectedIndex = _audioRecordingSource switch
+            {
+                ProcessedRecordingSource.SelectedMicProcessed => 1,
+                ProcessedRecordingSource.SelectedMicRawBackup => 2,
+                _ => 0
+            };
             MasterNormalizeToggle.IsChecked = _masterMixNormalizeEnabled;
             MasterLimiterToggle.IsChecked = _masterMixLimiterEnabled;
             MasterLimiterCeilingSlider.Value = _masterMixLimiterCeilingDb;
@@ -4574,6 +4602,19 @@ public partial class EqualizerWindow : Window
         _masterMixLimiterCeilingDb = MasterLimiterCeilingSlider is null
             ? _masterMixLimiterCeilingDb
             : Math.Clamp(MasterLimiterCeilingSlider.Value, -12d, 0d);
+        _masterMixOutputMode = MasterOutputModeComboBox?.SelectedIndex == 1
+            ? MixBusOutputMode.Mono
+            : MixBusOutputMode.Stereo;
+    }
+
+    private void ReadAudioRecordingSourceControl()
+    {
+        _audioRecordingSource = AudioRecordingSourceComboBox?.SelectedIndex switch
+        {
+            1 => ProcessedRecordingSource.SelectedMicProcessed,
+            2 => ProcessedRecordingSource.SelectedMicRawBackup,
+            _ => ProcessedRecordingSource.ProgramMix
+        };
     }
 
     private void SetSelectedOutputDevice(AudioOutputDevice? selectedDevice)
@@ -4662,6 +4703,7 @@ public partial class EqualizerWindow : Window
             })
             .ToList();
         _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
+        _spectrumService.ConfigureProcessedRecordingSource(_audioRecordingSource, _activeMicChannel?.ChannelNumber ?? 1);
     }
 
     private MixBusSettings CreateMixBusSettings()
@@ -4670,7 +4712,8 @@ public partial class EqualizerWindow : Window
             _masterMixVolumePercent,
             _masterMixNormalizeEnabled,
             _masterMixLimiterEnabled,
-            _masterMixLimiterCeilingDb);
+            _masterMixLimiterCeilingDb,
+            _masterMixOutputMode);
     }
 
     private void UpdateOutputRouting()
@@ -10603,6 +10646,11 @@ public partial class EqualizerWindow : Window
             }
 
             channel.UpdateLevelMeter(line.RawPeakLevel, line.RawRmsLevel);
+            channel.UpdateSyncStatus(
+                line.SyncBufferedMilliseconds,
+                line.SyncTargetLatencyMilliseconds,
+                line.SyncUnderflowCount,
+                line.SyncDriftTrimCount);
             updatedChannels.Add(line.ChannelNumber);
         }
 
@@ -10706,7 +10754,7 @@ public partial class EqualizerWindow : Window
         });
         item.Children.Add(new TextBlock
         {
-            Text = "Program / recording output",
+            Text = "Program mix output",
             Foreground = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center
@@ -13020,6 +13068,7 @@ public partial class EqualizerWindow : Window
         private double _rmsMeterScale;
         private bool _isClipping;
         private int _clipHoldFrames;
+        private string _syncStatusText = "Primary capture";
 
         public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
         {
@@ -13211,6 +13260,12 @@ public partial class EqualizerWindow : Window
 
         public bool IsClipping => _isClipping;
 
+        public string SyncStatusText
+        {
+            get => _syncStatusText;
+            private set => SetField(ref _syncStatusText, value);
+        }
+
         public event PropertyChangedEventHandler? PropertyChanged;
 
         public override string ToString() => DisplayName;
@@ -13260,6 +13315,14 @@ public partial class EqualizerWindow : Window
             OnPropertyChanged(nameof(LevelMeterScale));
             OnPropertyChanged(nameof(RmsMeterScale));
             OnPropertyChanged(nameof(IsClipping));
+        }
+
+        public void UpdateSyncStatus(double bufferedMilliseconds, double targetMilliseconds, int underflowCount, int driftTrimCount)
+        {
+            var text = targetMilliseconds <= 0.01d
+                ? "Primary capture"
+                : $"Aux buffer {bufferedMilliseconds:0} ms / target {targetMilliseconds:0} ms, underflows {underflowCount}, trims {driftTrimCount}";
+            SyncStatusText = text;
         }
 
         private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

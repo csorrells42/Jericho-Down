@@ -30,15 +30,31 @@ public sealed class MixBusProcessor
         }
 
         var limiterCeiling = DbToLinear(Math.Clamp(settings.LimiterCeilingDb, -24d, 0d));
-        for (var i = 0; i < input.Length; i++)
+        if (settings.OutputMode == MixBusOutputMode.Mono && input.Length >= 2)
         {
-            var sample = SanitizeSample(input[i]) * masterGain;
-            if (settings.LimiterEnabled)
+            var frameCount = input.Length / 2;
+            for (var frame = 0; frame < frameCount; frame++)
             {
-                sample = ApplyLimiter(sample, limiterCeiling);
+                var leftIndex = frame * 2;
+                var rightIndex = leftIndex + 1;
+                var left = ProcessSample(input[leftIndex], masterGain, limiterCeiling, settings.LimiterEnabled);
+                var right = ProcessSample(input[rightIndex], masterGain, limiterCeiling, settings.LimiterEnabled);
+                var mono = (float)Math.Clamp((left + right) * 0.5d, -1d, 1d);
+                output[leftIndex] = mono;
+                output[rightIndex] = mono;
             }
 
-            output[i] = (float)Math.Clamp(sample, -1d, 1d);
+            if (input.Length % 2 != 0)
+            {
+                output[input.Length - 1] = (float)ProcessSample(input[^1], masterGain, limiterCeiling, settings.LimiterEnabled);
+            }
+
+            return;
+        }
+
+        for (var i = 0; i < input.Length; i++)
+        {
+            output[i] = (float)ProcessSample(input[i], masterGain, limiterCeiling, settings.LimiterEnabled);
         }
     }
 
@@ -94,6 +110,17 @@ public sealed class MixBusProcessor
         return Math.CopySign(softened, sample);
     }
 
+    private static double ProcessSample(float input, double masterGain, double limiterCeiling, bool limiterEnabled)
+    {
+        var sample = SanitizeSample(input) * masterGain;
+        if (limiterEnabled)
+        {
+            sample = ApplyLimiter(sample, limiterCeiling);
+        }
+
+        return Math.Clamp(sample, -1d, 1d);
+    }
+
     private static double DbToLinear(double decibels)
     {
         return Math.Pow(10d, decibels / 20d);
@@ -109,9 +136,16 @@ public sealed record MixBusSettings(
     double MasterVolumePercent,
     bool AutoNormalizeEnabled,
     bool LimiterEnabled,
-    double LimiterCeilingDb)
+    double LimiterCeilingDb,
+    MixBusOutputMode OutputMode = MixBusOutputMode.Stereo)
 {
-    public static MixBusSettings Default { get; } = new(100d, true, true, -1d);
+    public static MixBusSettings Default { get; } = new(100d, true, true, -1d, MixBusOutputMode.Stereo);
+}
+
+public enum MixBusOutputMode
+{
+    Stereo,
+    Mono
 }
 
 public sealed record MicrophoneLiveChannelSettings(

@@ -31,6 +31,7 @@ var tests = new (string Name, Action Test)[]
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
+    ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
     ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
@@ -396,6 +397,15 @@ static void MixBusProcessorScalesAndProtectsOutput()
     processor.Process([1f, -1f, float.NaN], output, new MixBusSettings(200d, true, true, -1d));
     Assert(output.All(float.IsFinite), "mix bus output should stay finite");
     Assert(output.All(sample => Math.Abs(sample) <= 1f), "mix bus output should stay in audio range");
+
+    var stereo = new[] { 1f, 0f, 0f, -1f };
+    output = new float[stereo.Length];
+    processor.Process(stereo, output, new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Mono));
+
+    Assert(Math.Abs(output[0] - 0.5f) < 0.0001f, "mono output mode should average left and right");
+    Assert(Math.Abs(output[1] - 0.5f) < 0.0001f, "mono output mode should duplicate the averaged sample");
+    Assert(Math.Abs(output[2] + 0.5f) < 0.0001f, "mono output mode should average following stereo frames");
+    Assert(Math.Abs(output[3] + 0.5f) < 0.0001f, "mono output mode should duplicate following stereo frames");
 }
 
 static void NAudioProgramBusMixesOneShotMicBlocks()
@@ -431,6 +441,39 @@ static void NAudioProgramBusMixesOneShotMicBlocks()
 
     Assert(Math.Abs(output[0] - 0.3f) < 0.0001f, "program mixer should sum active mic faders");
     Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "program mixer should sum each sample frame");
+}
+
+static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()
+{
+    var mic1 = new LiveMicBlockSampleProvider(48_000);
+    var mic2 = new LiveMicBlockSampleProvider(48_000);
+    var left = new StereoPanSampleProvider(mic1) { Pan = -1d };
+    var right = new StereoPanSampleProvider(mic2) { Pan = 1d };
+    var mixer = new MixingSampleProvider(left.WaveFormat)
+    {
+        ReadFully = true
+    };
+
+    mixer.AddMixerInput(left);
+    mixer.AddMixerInput(right);
+    mic1.SetBlock([0.5f, 0.5f]);
+    mic2.SetBlock([0.25f, 0.25f]);
+    var output = new float[4];
+    mixer.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - 0.5f) < 0.0001f, "hard-left mic should land in the left channel");
+    Assert(Math.Abs(output[1] - 0.25f) < 0.0001f, "hard-right mic should land in the right channel");
+    Assert(Math.Abs(output[2] - 0.5f) < 0.0001f, "hard-left mic should stay left on following frames");
+    Assert(Math.Abs(output[3] - 0.25f) < 0.0001f, "hard-right mic should stay right on following frames");
+
+    var centerMic = new LiveMicBlockSampleProvider(48_000);
+    var center = new StereoPanSampleProvider(centerMic) { Pan = 0d };
+    centerMic.SetBlock([1f]);
+    output = new float[2];
+    center.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - output[1]) < 0.0001f, "center pan should balance left and right");
+    Assert(output[0] > 0.7f && output[0] < 0.71f, "center pan should use equal-power gain");
 }
 
 static void AudioDelayLineDelaysAndResetsSamples()

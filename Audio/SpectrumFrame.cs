@@ -11,7 +11,11 @@ public sealed class MicrophoneSpectrumLine
         float[]? processedSamples = null,
         float[]? rawSamples = null,
         double rmsLevel = 0d,
-        double rawRmsLevel = 0d)
+        double rawRmsLevel = 0d,
+        double syncBufferedMilliseconds = 0d,
+        double syncTargetLatencyMilliseconds = 0d,
+        int syncUnderflowCount = 0,
+        int syncDriftTrimCount = 0)
     {
         ChannelNumber = channelNumber;
         Magnitudes = magnitudes;
@@ -22,6 +26,10 @@ public sealed class MicrophoneSpectrumLine
         RawSamples = rawSamples ?? [];
         RmsLevel = rmsLevel;
         RawRmsLevel = rawRmsLevel;
+        SyncBufferedMilliseconds = syncBufferedMilliseconds;
+        SyncTargetLatencyMilliseconds = syncTargetLatencyMilliseconds;
+        SyncUnderflowCount = syncUnderflowCount;
+        SyncDriftTrimCount = syncDriftTrimCount;
     }
 
     public int ChannelNumber { get; }
@@ -37,6 +45,14 @@ public sealed class MicrophoneSpectrumLine
     public double RmsLevel { get; }
 
     public double RawRmsLevel { get; }
+
+    public double SyncBufferedMilliseconds { get; }
+
+    public double SyncTargetLatencyMilliseconds { get; }
+
+    public int SyncUnderflowCount { get; }
+
+    public int SyncDriftTrimCount { get; }
 
     public float[] ProcessedSamples { get; }
 

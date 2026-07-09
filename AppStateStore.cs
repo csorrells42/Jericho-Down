@@ -217,6 +217,8 @@ internal sealed class AppSettingsState
 
     public double? MixerLimiterCeilingDb { get; set; }
 
+    public string? MixerOutputMode { get; set; }
+
     public string? OutputDeviceName { get; set; }
 
     public string? OutputEndpointId { get; set; }
@@ -226,6 +228,8 @@ internal sealed class AppSettingsState
     public string? OutputFolder { get; set; }
 
     public string? AudioRecordingFolder { get; set; }
+
+    public string? AudioRecordingSource { get; set; }
 
     public string? LastAudioRecordingPath { get; set; }
 

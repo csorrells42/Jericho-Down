@@ -2075,26 +2075,33 @@
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="210" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="118" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="210" />
                 <ColumnDefinition Width="*" />
               </Grid.ColumnDefinitions>
               <TextBlock Text="Master" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Slider x:Name="MasterVolumeSlider" Width="160" Minimum="0" Maximum="150" Value="100" TickFrequency="10" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
+                <Slider x:Name="MasterVolumeSlider" Width="128" Minimum="0" Maximum="150" Value="100" TickFrequency="10" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
                 <TextBlock Text="{Binding ElementName=MasterVolumeSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="52" VerticalAlignment="Center" Margin="8,0,0,0" />
               </StackPanel>
-              <ToggleButton x:Name="MasterNormalizeToggle" Grid.Column="2" Style="{StaticResource PresetConsoleButton}" Content="Normalize" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
-              <ToggleButton x:Name="MasterLimiterToggle" Grid.Column="3" Style="{StaticResource PresetConsoleButton}" Content="Limiter" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
-              <TextBlock Grid.Column="4" Text="Ceiling" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
-              <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Grid.Column="2" Text="Mode" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="8,0,6,0" />
+              <ComboBox x:Name="MasterOutputModeComboBox" Grid.Column="3" SelectedIndex="0" SelectionChanged="MasterOutputModeChanged" VerticalAlignment="Center">
+                <ComboBoxItem Content="Stereo" />
+                <ComboBoxItem Content="Mono" />
+              </ComboBox>
+              <ToggleButton x:Name="MasterNormalizeToggle" Grid.Column="4" Style="{StaticResource PresetConsoleButton}" Content="Normalize" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
+              <ToggleButton x:Name="MasterLimiterToggle" Grid.Column="5" Style="{StaticResource PresetConsoleButton}" Content="Limiter" IsChecked="True" Padding="10,4" Margin="8,0,0,0" Checked="MasterMixControlChanged" Unchecked="MasterMixControlChanged" />
+              <TextBlock Grid.Column="6" Text="Ceiling" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="14,0,8,0" />
+              <StackPanel Grid.Column="7" Orientation="Horizontal" VerticalAlignment="Center">
                 <Slider x:Name="MasterLimiterCeilingSlider" Width="128" Minimum="-12" Maximum="0" Value="-1" TickFrequency="1" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
                 <TextBlock Text="{Binding ElementName=MasterLimiterCeilingSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" Width="70" VerticalAlignment="Center" Margin="8,0,0,0" />
               </StackPanel>
-              <TextBlock x:Name="MixBusStatusText" Grid.Column="6" Text="Bus: processed output" Foreground="#8DA2B7" VerticalAlignment="Center" HorizontalAlignment="Right" />
+              <TextBlock x:Name="MixBusStatusText" Grid.Column="8" Text="Bus: processed output" Foreground="#8DA2B7" VerticalAlignment="Center" HorizontalAlignment="Right" />
             </Grid>
           </Border>
           <Grid Grid.Row="1" Grid.Column="1" Margin="18,14,18,0">
@@ -2109,7 +2116,7 @@
                   <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,8">
-                  <TextBlock Text="Program / recording spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" DockPanel.Dock="Left" />
+                  <TextBlock Text="Output spectrum" Foreground="#F8FAFC" FontSize="14" FontWeight="SemiBold" DockPanel.Dock="Left" />
                   <WrapPanel x:Name="MixingMicLegendPanel" DockPanel.Dock="Right" HorizontalAlignment="Right" />
                 </DockPanel>
                 <Border Grid.Row="1" Background="#050B10" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
@@ -2238,6 +2245,12 @@
                 <Border Style="{StaticResource DspBubble}">
                   <StackPanel>
                     <TextBlock Text="Recording" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Source" Foreground="#B8C7D9" />
+                    <ComboBox x:Name="AudioRecordingSourceComboBox" SelectedIndex="0" SelectionChanged="AudioRecordingSourceChanged" Margin="0,2,0,8">
+                      <ComboBoxItem Content="Program mix" />
+                      <ComboBoxItem Content="Selected mic" />
+                      <ComboBoxItem Content="Selected mic raw backup" />
+                    </ComboBox>
                     <TextBlock Text="Save location" Foreground="#B8C7D9" />
                     <Grid Margin="0,3,0,0">
                       <Grid.ColumnDefinitions>
@@ -2311,6 +2324,8 @@
                     <TextBlock Text="Selected Mic" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding RouteText}" Foreground="#8DA2B7" TextWrapping="Wrap" Margin="0,3,0,10" />
+                    <TextBlock Text="Sync" Foreground="#B8C7D9" />
+                    <TextBlock Text="{Binding SyncStatusText}" Foreground="#F8FAFC" TextWrapping="Wrap" Margin="0,2,0,10" />
                     <Grid Margin="0,0,0,8">
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
