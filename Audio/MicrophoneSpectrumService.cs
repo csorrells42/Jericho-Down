@@ -46,7 +46,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private readonly MixBusProcessor _mixBusProcessor = new();
     private MicrophoneLiveChannelSettings[] _configuredLiveMixChannels = [];
     private LiveMicChannelRuntime[] _liveMixChannels = [];
-    private MixingSampleProvider? _programMixer;
+    private LiveProgramMixBus? _programMixer;
     private MixBusSettings _mixBusSettings = MixBusSettings.Default;
     private readonly object _additionalCaptureLock = new();
     private readonly Dictionary<int, AdditionalCaptureRuntime> _additionalCaptures = [];
@@ -547,13 +547,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 };
             })
             .ToArray();
-        var programMixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 2))
-        {
-            ReadFully = true
-        };
+        var programMixer = new LiveProgramMixBus(sampleRate);
         foreach (var channel in _liveMixChannels.Where(channel => channel.IsEnabled))
         {
-            programMixer.AddMixerInput(channel.PanProvider);
+            programMixer.AddMicInput(channel.PanProvider);
         }
 
         _programMixer = programMixer;
@@ -1193,7 +1190,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         out VoiceProcessingTelemetry telemetry)
     {
         LiveMicChannelRuntime[] liveMixChannels;
-        MixingSampleProvider? programMixer;
+        LiveProgramMixBus? programMixer;
         MixBusSettings mixBusSettings;
         lock (_liveMixLock)
         {

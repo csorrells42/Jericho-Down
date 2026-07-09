@@ -42,6 +42,7 @@ var tests = new (string Name, Action Test)[]
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
+    ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
@@ -689,6 +690,37 @@ static void NAudioProgramBusMixesOneShotMicBlocks()
 
     Assert(Math.Abs(output[0] - 0.3f) < 0.0001f, "program mixer should sum active mic faders");
     Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "program mixer should sum each sample frame");
+}
+
+static void LiveProgramMixBusCombinesTenMicFeeds()
+{
+    var bus = new LiveProgramMixBus(48_000);
+    var mics = new LiveMicBlockSampleProvider[10];
+
+    for (var i = 0; i < mics.Length; i++)
+    {
+        var mic = new LiveMicBlockSampleProvider(48_000);
+        var fader = new VolumeSampleProvider(mic) { Volume = 1f };
+        var pan = new StereoPanSampleProvider(fader)
+        {
+            Pan = i % 2 == 0 ? -1d : 1d
+        };
+
+        mics[i] = mic;
+        bus.AddMicInput(pan);
+        mic.SetBlock([(i + 1) * 0.01f, -(i + 1) * 0.01f]);
+    }
+
+    var output = new float[6];
+    var read = bus.Read(output, 0, output.Length);
+
+    Assert(read == output.Length, "live program bus should stay full for real-time playback");
+    Assert(bus.InputCount == 10, "live program bus should accept all ten mic feeds");
+    Assert(Math.Abs(output[0] - 0.25f) < 0.0001f, "odd-numbered hard-left mics should sum into the left program channel");
+    Assert(Math.Abs(output[1] - 0.30f) < 0.0001f, "even-numbered hard-right mics should sum into the right program channel");
+    Assert(Math.Abs(output[2] + 0.25f) < 0.0001f, "left channel should preserve following mic samples");
+    Assert(Math.Abs(output[3] + 0.30f) < 0.0001f, "right channel should preserve following mic samples");
+    Assert(Math.Abs(output[4]) < 0.0001f && Math.Abs(output[5]) < 0.0001f, "exhausted live mic blocks should pad with silence");
 }
 
 static void LiveMixAudibilityGatesMuteAndSolo()
