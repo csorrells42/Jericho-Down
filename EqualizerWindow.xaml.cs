@@ -43,8 +43,6 @@ public partial class EqualizerWindow : Window
     private const double MinimumDisplayFrequency = 20d;
     private const double MaximumDisplayFrequency = 20000d;
     private const double EqualizerHoverQ = 1.35d;
-    private const int DefaultWaveformSampleRate = 44100;
-    private const int MaximumWaveformHistorySeconds = 3;
     private const int MaximumMicChannelCount = 10;
     private const double MicAnalysisDurationSeconds = 8d;
     private const double SequentialMicAnalysisPhaseSeconds = 5d;
@@ -105,12 +103,7 @@ public partial class EqualizerWindow : Window
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
-    private readonly List<Line> _waveformGridLines = [];
-    private readonly object _waveformLock = new();
     private readonly object _micAnalysisLock = new();
-    private readonly Queue<float> _rawWaveformHistory = new();
-    private readonly Queue<float> _processedWaveformHistory = new();
-    private volatile int _waveformSampleRate = DefaultWaveformSampleRate;
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
     [
         new("Rumble", 40, 80, "Low thumps, desk vibration, plosives"),
@@ -172,19 +165,6 @@ public partial class EqualizerWindow : Window
         Visibility = Visibility.Collapsed,
         IsHitTestVisible = false
     };
-    private readonly ShapePath _rawWaveTrace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(167, 176, 188)),
-        StrokeThickness = 1.5,
-        Opacity = 0.68,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly ShapePath _processedWaveTrace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
-        StrokeThickness = 2.5,
-        StrokeLineJoin = PenLineJoin.Round
-    };
     private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
     private readonly List<Line> _mixingSpectrumGridLines = [];
     private readonly List<Line> _micCompareGridLines = [];
@@ -192,7 +172,6 @@ public partial class EqualizerWindow : Window
     private readonly SolidColorBrush _recordingDspActiveBrush = new(Color.FromRgb(66, 215, 125));
     private readonly SolidColorBrush _recordingNaturalAudioBrush = new(Color.FromRgb(215, 178, 32));
     private readonly SolidColorBrush _waveformGridBrush = new(Color.FromRgb(36, 45, 54));
-    private readonly SolidColorBrush _waveformCenterGridBrush = new(Color.FromRgb(83, 101, 117));
     private readonly SolidColorBrush _meterMutedBrush = new(Color.FromRgb(105, 132, 156));
     private readonly SolidColorBrush _meterTextMutedBrush = new(Color.FromRgb(184, 199, 217));
     private readonly SolidColorBrush _meterGoodBrush = new(Color.FromRgb(66, 215, 125));
@@ -387,7 +366,6 @@ public partial class EqualizerWindow : Window
     private volatile bool _isMixingMicSpectrumGraphActive;
     private volatile bool _isMixingOutputWaveform3DActive;
     private EqualizerBand? _hoveredEqualizerBand;
-    private bool _showWaveform;
     private bool _showWaveform3D = true;
     private bool _isLeftControlRailCollapsed;
     private string _lastLoadedPresetName = "Warm Radio";
@@ -462,8 +440,6 @@ public partial class EqualizerWindow : Window
         SpectrumCanvas.Children.Add(_liveTrace);
         MicCompareCanvas.Children.Add(_micCompareInput1Trace);
         MicCompareCanvas.Children.Add(_micCompareInput2Trace);
-        WaveformCanvas.Children.Add(_rawWaveTrace);
-        WaveformCanvas.Children.Add(_processedWaveTrace);
         foreach (var trace in _mixingMicSpectrumTraces)
         {
             MixingMicSpectrumCanvas.Children.Add(trace);
@@ -489,7 +465,6 @@ public partial class EqualizerWindow : Window
         FreezeBrush(_recordingDspActiveBrush);
         FreezeBrush(_recordingNaturalAudioBrush);
         FreezeBrush(_waveformGridBrush);
-        FreezeBrush(_waveformCenterGridBrush);
         FreezeBrush(_meterMutedBrush);
         FreezeBrush(_meterTextMutedBrush);
         FreezeBrush(_meterGoodBrush);
@@ -620,7 +595,6 @@ public partial class EqualizerWindow : Window
         UpdateAdvancedCameraControlsVisibility(loadWhenOpened: false);
         RefreshActiveSpectrumWaterfallHosts();
         UpdateRecordingDspIndicator();
-        UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
@@ -1477,7 +1451,6 @@ public partial class EqualizerWindow : Window
         LeftControlRailToggle.Content = _isLeftControlRailCollapsed ? ">" : "<";
 
         SpectrumCanvas.Margin = centerMargin;
-        WaveformCanvas.Margin = centerMargin;
         AnalyzerToolbar.Margin = centerMargin;
         EqualizerFaceplate.Margin = new Thickness(
             leftWidth + EqualizerFaceplateOuterGap,
@@ -2373,7 +2346,7 @@ public partial class EqualizerWindow : Window
                 _waveform3DGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
             }
         }
-        else if (IsMicDspTabSelected() && !_showWaveform)
+        else if (IsMicDspTabSelected())
         {
             EnsureSelectedMicSpectrumGraphView();
             InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
@@ -3852,12 +3825,10 @@ public partial class EqualizerWindow : Window
 
     private void SpectrumViewClicked(object sender, RoutedEventArgs e)
     {
-        _showWaveform = false;
         _showWaveform3D = false;
         _spectrumService.StereoInputAnalysisEnabled = true;
         EnsureSelectedMicSpectrumGraphView();
         InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
-        UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
         UpdateMicCompareUiState();
@@ -3868,23 +3839,10 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void WaveformViewClicked(object sender, RoutedEventArgs e)
-    {
-        _showWaveform = true;
-        _showWaveform3D = false;
-        _spectrumService.StereoInputAnalysisEnabled = false;
-        UpdateWaveformSampleRetention();
-        UpdateGraphSurfaceVisibility();
-        NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
-        UpdateMicCompareUiState();
-    }
-
     private void MicCompareViewClicked(object sender, RoutedEventArgs e)
     {
-        _showWaveform = false;
         _showWaveform3D = false;
         _spectrumService.StereoInputAnalysisEnabled = true;
-        UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
@@ -3893,13 +3851,11 @@ public partial class EqualizerWindow : Window
 
     private void Waveform3DClicked(object sender, RoutedEventArgs e)
     {
-        _showWaveform = false;
         _showWaveform3D = true;
         _spectrumService.StereoInputAnalysisEnabled = false;
         EnsureInlineWaveform3DView();
         ApplyWaterfallLineDensity();
         InlineWaveform3DHost.Content = _waveform3DGraphHost;
-        UpdateWaveformSampleRetention();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
         UpdateMicCompareUiState();
@@ -3910,18 +3866,10 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void UpdateWaveformSampleRetention()
-    {
-        _spectrumService.WaveformSamplesEnabled = _showWaveform;
-    }
-
     private void UpdateGraphSurfaceVisibility()
     {
-        var showDx12Spectrum = !_showWaveform && !_showWaveform3D;
+        var showDx12Spectrum = !_showWaveform3D;
         SpectrumCanvas.Visibility = Visibility.Collapsed;
-        WaveformCanvas.Visibility = _showWaveform
-            ? Visibility.Visible
-            : Visibility.Collapsed;
         InlineWaveform3DHost.Visibility = _showWaveform3D || showDx12Spectrum
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -3944,7 +3892,7 @@ public partial class EqualizerWindow : Window
 
     private void UpdateGraphViewButtonStates()
     {
-        SpectrumViewButton.IsChecked = !_showWaveform && !_showWaveform3D;
+        SpectrumViewButton.IsChecked = !_showWaveform3D;
         Waveform3DButton.IsChecked = _showWaveform3D;
     }
 
@@ -3980,7 +3928,7 @@ public partial class EqualizerWindow : Window
         graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
         InlineWaveform3DHost.Content = graphHost;
         _selectedMicSpectrumGraphHost = graphHost;
-        if (!_showWaveform && !_showWaveform3D)
+        if (!_showWaveform3D)
         {
             InlineWaveform3DHost.Content = graphHost;
         }
@@ -3991,7 +3939,7 @@ public partial class EqualizerWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if ((_showWaveform3D || !_showWaveform) && StatusText is not null)
+            if (StatusText is not null)
             {
                 StatusText.Text = status;
             }
@@ -4000,7 +3948,7 @@ public partial class EqualizerWindow : Window
 
     private void RefreshActiveSpectrumWaterfallHosts()
     {
-        var micDspSpectrumActive = IsMicDspTabSelected() && !_showWaveform && !_showWaveform3D;
+        var micDspSpectrumActive = IsMicDspTabSelected() && !_showWaveform3D;
         var micDspActive = IsMicDspTabSelected() && _showWaveform3D;
         var podcastActive = IsPodcastTabSelected();
         var karaokeActive = IsKaraokeTabSelected();
@@ -4221,7 +4169,6 @@ public partial class EqualizerWindow : Window
 
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
         _activeMicChannel.SelectedDevice = _selectedDevice;
-        ClearWaveformHistory();
         var selectedDevice = _selectedDevice;
         var selectedDeviceFormat = await GetDeviceFormatAsync(selectedDevice);
         if (!Equals(_selectedDevice, selectedDevice))
@@ -4257,7 +4204,6 @@ public partial class EqualizerWindow : Window
         {
             _selectedInputChannelMode = option.Mode;
             _activeMicChannel.InputChannelMode = option.Mode;
-            ClearWaveformHistory();
         }
 
         ConfigureLiveMixFromChannels();
@@ -4287,7 +4233,6 @@ public partial class EqualizerWindow : Window
 
         DetachEqualizerBandHandlers(_activeMicChannel);
         _activeMicChannel = channel;
-        ClearWaveformHistory();
         AttachEqualizerBandHandlers(_activeMicChannel);
         DataContext = Settings;
         EqBandPanel.ItemsSource = Bands;
@@ -5409,10 +5354,7 @@ public partial class EqualizerWindow : Window
     private void AcceptSpectrumFrame(SpectrumFrame frame)
     {
         _latestFrame = frame;
-        _waveformSampleRate = Math.Max(8000, frame.SampleRate);
         CollectMicAnalysisFrame(frame);
-        var selectedMicFrame = CreateSelectedMicFrame(frame);
-        AppendWaveformHistory(selectedMicFrame.RawSamples, selectedMicFrame.ProcessedSamples);
     }
 
     private SpectrumFrame CreateSelectedMicFrame(SpectrumFrame frame)
@@ -5495,10 +5437,6 @@ public partial class EqualizerWindow : Window
             && SpectrumCanvas.IsVisible
             && SpectrumCanvas.ActualWidth > 1d
             && SpectrumCanvas.ActualHeight > 1d;
-        var shouldRenderWaveform = isMicDspTabSelected
-            && WaveformCanvas.IsVisible
-            && WaveformCanvas.ActualWidth > 1d
-            && WaveformCanvas.ActualHeight > 1d;
         var isMicCompareTabSelected = IsMicCompareTabSelected();
         var shouldRenderMicCompare = isMicCompareTabSelected
             && MicCompareCanvas.IsVisible
@@ -5509,7 +5447,7 @@ public partial class EqualizerWindow : Window
             && MixingMicSpectrumCanvas.IsVisible
             && MixingMicSpectrumCanvas.ActualWidth > 1d
             && MixingMicSpectrumCanvas.ActualHeight > 1d;
-        if (!shouldRenderSpectrum && !shouldRenderWaveform && !shouldRenderMicCompare && !shouldRenderMixingSpectrum)
+        if (!shouldRenderSpectrum && !shouldRenderMicCompare && !shouldRenderMixingSpectrum)
         {
             return;
         }
@@ -5527,11 +5465,6 @@ public partial class EqualizerWindow : Window
         if (shouldRenderSpectrum)
         {
             RenderSpectrum(selectedMicFrame);
-        }
-
-        if (shouldRenderWaveform)
-        {
-            RenderWaveform(selectedMicFrame);
         }
 
         if (shouldRenderMicCompare)
@@ -10834,203 +10767,6 @@ public partial class EqualizerWindow : Window
         return Math.Max(270d, faceplateHeight + 38d);
     }
 
-    private void RenderWaveform(SpectrumFrame frame)
-    {
-        if (!_showWaveform)
-        {
-            return;
-        }
-
-        var width = Math.Max(1d, WaveformCanvas.ActualWidth);
-        var height = Math.Max(1d, WaveformCanvas.ActualHeight);
-        var topInset = 86d;
-        var bottomInset = GetAnalyzerBottomInset();
-        var usableHeight = Math.Max(1d, height - topInset - bottomInset);
-        var graphTop = topInset;
-        var graphBottom = graphTop + usableHeight;
-        var centerY = graphTop + usableHeight / 2d;
-        var halfHeight = usableHeight * 0.42d;
-
-        EnsureWaveformGrid(width, graphTop, graphBottom, centerY);
-
-        var sampleRate = Math.Max(8000, frame.SampleRate);
-        var requestedSamples = Math.Clamp((int)(sampleRate * 0.12d), 512, sampleRate);
-        var snapshotSamples = requestedSamples;
-        float[] rawSamples;
-        float[] processedSamples;
-        lock (_waveformLock)
-        {
-            rawSamples = CopyLatestWaveformSamples(_rawWaveformHistory, snapshotSamples);
-            processedSamples = CopyLatestWaveformSamples(_processedWaveformHistory, snapshotSamples);
-        }
-
-        var startIndex = Math.Max(0, processedSamples.Length - requestedSamples);
-
-        _rawWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(rawSamples, startIndex, requestedSamples, width, centerY, halfHeight));
-        _processedWaveTrace.Data = CreatePolylineGeometry(CreateWaveformPoints(processedSamples, startIndex, requestedSamples, width, centerY, halfHeight));
-    }
-
-    private void AppendWaveformHistory(float[] rawSamples, float[] processedSamples)
-    {
-        if (rawSamples.Length == 0 && processedSamples.Length == 0)
-        {
-            return;
-        }
-
-        lock (_waveformLock)
-        {
-            foreach (var sample in rawSamples)
-            {
-                _rawWaveformHistory.Enqueue(sample);
-            }
-
-            foreach (var sample in processedSamples)
-            {
-                _processedWaveformHistory.Enqueue(sample);
-            }
-
-            TrimWaveformHistory(_rawWaveformHistory, _waveformSampleRate);
-            TrimWaveformHistory(_processedWaveformHistory, _waveformSampleRate);
-        }
-    }
-
-    private void ClearWaveformHistory()
-    {
-        lock (_waveformLock)
-        {
-            _rawWaveformHistory.Clear();
-            _processedWaveformHistory.Clear();
-        }
-    }
-
-    private static void TrimWaveformHistory(Queue<float> samples, int sampleRate)
-    {
-        var maximumSamples = Math.Max(DefaultWaveformSampleRate, sampleRate) * MaximumWaveformHistorySeconds;
-        while (samples.Count > maximumSamples)
-        {
-            samples.Dequeue();
-        }
-    }
-
-    private static float[] CopyLatestWaveformSamples(Queue<float> samples, int requestedSamples)
-    {
-        var copyCount = Math.Clamp(requestedSamples, 0, samples.Count);
-        if (copyCount == 0)
-        {
-            return [];
-        }
-
-        var snapshot = new float[copyCount];
-        var skipCount = samples.Count - copyCount;
-        var index = 0;
-        var queueIndex = 0;
-        foreach (var sample in samples)
-        {
-            if (queueIndex++ < skipCount)
-            {
-                continue;
-            }
-
-            snapshot[index++] = sample;
-        }
-
-        return snapshot;
-    }
-
-    private void EnsureWaveformGrid(double width, double graphTop, double graphBottom, double centerY)
-    {
-        var neededLines = 14;
-        while (_waveformGridLines.Count < neededLines)
-        {
-            var line = new Line
-            {
-                Stroke = _waveformGridBrush,
-                StrokeThickness = 1,
-                Opacity = 0.82
-            };
-            _waveformGridLines.Add(line);
-            WaveformCanvas.Children.Insert(0, line);
-        }
-
-        for (var i = 0; i < 7; i++)
-        {
-            var y = graphTop + (graphBottom - graphTop) * i / 6d;
-            var line = _waveformGridLines[i];
-            line.X1 = 0;
-            line.Y1 = y;
-            line.X2 = width;
-            line.Y2 = y;
-            line.Opacity = Math.Abs(y - centerY) < 1d ? 1d : 0.55d;
-            line.StrokeThickness = Math.Abs(y - centerY) < 1d ? 2d : 1d;
-            line.Stroke = Math.Abs(y - centerY) < 1d
-                ? _waveformCenterGridBrush
-                : _waveformGridBrush;
-        }
-
-        for (var i = 0; i < 7; i++)
-        {
-            var x = width * i / 6d;
-            var line = _waveformGridLines[7 + i];
-            line.X1 = x;
-            line.Y1 = graphTop;
-            line.X2 = x;
-            line.Y2 = graphBottom;
-            line.Opacity = 0.55d;
-            line.StrokeThickness = 1d;
-            line.Stroke = _waveformGridBrush;
-        }
-    }
-
-    private static int FindTriggeredStart(float[] samples, int requestedSamples)
-    {
-        if (samples.Length <= requestedSamples)
-        {
-            return 0;
-        }
-
-        var latestStart = Math.Max(0, samples.Length - requestedSamples);
-        var searchStart = Math.Max(1, latestStart - requestedSamples);
-        var searchEnd = latestStart;
-        for (var i = searchEnd; i >= searchStart; i--)
-        {
-            if (samples[i - 1] < -0.01f && samples[i] >= 0.01f)
-            {
-                return Math.Min(i, samples.Length - requestedSamples);
-            }
-        }
-
-        return latestStart;
-    }
-
-    private static PointCollection CreateWaveformPoints(float[] samples, int startIndex, int requestedSamples, double width, double centerY, double halfHeight)
-    {
-        if (samples.Length == 0)
-        {
-            return new PointCollection();
-        }
-
-        var availableSamples = Math.Clamp(samples.Length - startIndex, 0, requestedSamples);
-        if (availableSamples <= 0)
-        {
-            return new PointCollection();
-        }
-
-        var stride = Math.Max(1, availableSamples / 1000);
-        var pointCount = (availableSamples + stride - 1) / stride;
-        var points = new PointCollection(pointCount);
-        for (var pointIndex = 0; pointIndex < pointCount; pointIndex++)
-        {
-            var sampleIndex = Math.Min(samples.Length - 1, startIndex + pointIndex * stride);
-            var sample = Math.Clamp(samples[sampleIndex], -1f, 1f);
-            var x = pointCount == 1
-                ? 0d
-                : pointIndex / (double)(pointCount - 1) * width;
-            points.Add(new Point(x, centerY - sample * halfHeight));
-        }
-
-        return points;
-    }
-
     private void UpdateInputCoach(double rawPeakLevel)
     {
         _displayInputPeak = rawPeakLevel > _displayInputPeak
@@ -11833,7 +11569,7 @@ public partial class EqualizerWindow : Window
 
     private void UpdateEqualizerHoverRegion(double width, double graphTop, double graphBottom)
     {
-        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D)
+        if (_hoveredEqualizerBand is null || _showWaveform3D)
         {
             _equalizerHoverRegion.Visibility = Visibility.Collapsed;
             return;
@@ -11863,7 +11599,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (_hoveredEqualizerBand is null || _showWaveform || _showWaveform3D)
+        if (_hoveredEqualizerBand is null || _showWaveform3D)
         {
             _selectedMicSpectrumGraphHost.ClearSpectrumHoverRange();
             return;

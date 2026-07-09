@@ -1511,7 +1511,6 @@
       <TabItem Header="Mic / DSP">
         <Grid Background="#05070A">
           <Canvas x:Name="SpectrumCanvas" Background="#05070A" Margin="360,0,360,0" />
-          <Canvas x:Name="WaveformCanvas" Background="#05070A" Margin="360,0,360,0" Visibility="Collapsed" />
           <ContentControl x:Name="InlineWaveform3DHost" ClipToBounds="True" Margin="360,58,360,280" Visibility="Collapsed" />
           <Border x:Name="AnalyzerToolbar" HorizontalAlignment="Stretch" VerticalAlignment="Top" Background="#C0111820" Padding="18,12" Margin="360,0,360,0">
             <Grid>

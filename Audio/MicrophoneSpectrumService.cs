@@ -98,7 +98,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _audioBufferResetCount;
     private int _spectrumSkippedFrameCount;
     private int _stereoInputAnalysisEnabled;
-    private int _waveformSamplesEnabled;
     private int _preferWaveInCapture;
     private int _currentDeviceNumber;
     private VoiceProcessorSettings? _currentProcessorSettings;
@@ -423,12 +422,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         get => System.Threading.Volatile.Read(ref _stereoInputAnalysisEnabled) != 0;
         set => System.Threading.Volatile.Write(ref _stereoInputAnalysisEnabled, value ? 1 : 0);
-    }
-
-    public bool WaveformSamplesEnabled
-    {
-        get => System.Threading.Volatile.Read(ref _waveformSamplesEnabled) != 0;
-        set => System.Threading.Volatile.Write(ref _waveformSamplesEnabled, value ? 1 : 0);
     }
 
     public void ConfigureLiveMix(IReadOnlyList<MicrophoneLiveChannelSettings> channels, MixBusSettings mixBusSettings)
@@ -1056,7 +1049,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         System.Threading.Volatile.Write(ref _nextSpectrumAnalysisTimestamp, now + SpectrumAnalysisIntervalTicks);
-        var includeWaveformSamples = WaveformSamplesEnabled;
+        const bool includeWaveformSamples = false;
         var rawSamplesSnapshot = includeWaveformSamples
             ? rawSamples.ToArray()
             : RentAndCopySamples(rawSamples);
