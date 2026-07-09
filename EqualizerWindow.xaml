@@ -1795,6 +1795,20 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <CheckBox Content="Low-pass filter" IsChecked="{Binding LowPassEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
+                        <CheckBox.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Trims hiss and brittle top-end above the selected frequency without changing the rest of the mic chain." />
+                        </CheckBox.ToolTip>
+                      </CheckBox>
+                      <Grid>
+                        <TextBlock Text="LPF Hz" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=LowPassSlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="LowPassSlider" Minimum="6000" Maximum="20000" Value="{Binding LowPassFrequencyHz}" TickPlacement="BottomRight" TickFrequency="1000" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />
@@ -2426,6 +2440,11 @@
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Flips polarity for this mic before DSP. Useful when two nearby mics cancel each other." />
                         </CheckBox.ToolTip>
                       </CheckBox>
+                      <Button Content="Reset" Style="{StaticResource ConsolePushButton}" Padding="10,4" Margin="8,0,0,0" Click="ResetSelectedMixerChannelClicked">
+                        <Button.ToolTip>
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Returns this mic's mixer controls to center: unmuted, not soloed, normal polarity, 100% volume, 0 dB gain, centered pan, and no delay." />
+                        </Button.ToolTip>
+                      </Button>
                     </UniformGrid>
                     <Grid>
                       <TextBlock Text="Input gain" Foreground="#B8C7D9" />

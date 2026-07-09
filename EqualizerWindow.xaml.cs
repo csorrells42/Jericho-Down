@@ -4474,6 +4474,18 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private void ResetSelectedMixerChannelClicked(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingMixerUi || MicChannelComboBox?.SelectedItem is not MicChannelStrip channel)
+        {
+            return;
+        }
+
+        channel.ResetMixerControls();
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+    }
+
     private void MixerChannelNameChanged(object sender, TextChangedEventArgs e)
     {
         if (_isUpdatingMixerUi)
@@ -11748,8 +11760,10 @@ public partial class EqualizerWindow : Window
         double[] gains)
     {
         Settings.HighPassEnabled = true;
+        Settings.LowPassEnabled = false;
         Settings.InputTrimDb = 0;
         Settings.HighPassFrequencyHz = highPassFrequencyHz;
+        Settings.LowPassFrequencyHz = 16000;
         Settings.DePopperEnabled = true;
         Settings.DePopperAmountDb = dePopperAmountDb;
         Settings.DePopperFrequencyHz = 180;
@@ -12820,6 +12834,7 @@ public partial class EqualizerWindow : Window
         PresetDescriptionText.Text = description;
         SetProcessingSliderDefault(InputTrimSlider, Settings.InputTrimDb);
         SetProcessingSliderDefault(HighPassSlider, Settings.HighPassFrequencyHz);
+        SetProcessingSliderDefault(LowPassSlider, Settings.LowPassFrequencyHz);
         SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
         SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
         SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);
@@ -13231,6 +13246,17 @@ public partial class EqualizerWindow : Window
                 ? "Primary capture"
                 : $"Aux buffer {bufferedMilliseconds:0} ms / target {targetMilliseconds:0} ms, underflows {underflowCount}, trims {driftTrimCount}";
             SyncStatusText = text;
+        }
+
+        public void ResetMixerControls()
+        {
+            IsMuted = false;
+            IsSoloed = false;
+            PolarityInverted = false;
+            VolumePercent = 100d;
+            InputGainDb = 0d;
+            Pan = 0d;
+            DelayMilliseconds = 0d;
         }
 
         private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

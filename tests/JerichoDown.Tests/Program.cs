@@ -21,6 +21,7 @@ var tests = new (string Name, Action Test)[]
     ("Camera catalog groups physical fallback paths", CameraCatalogGroupsPhysicalFallbackPaths),
     ("Camera catalog keeps software cameras separate", CameraCatalogKeepsSoftwareCamerasSeparate),
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
+    ("Voice low-pass filter tames high hiss", VoiceLowPassFilterTamesHighHiss),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
@@ -251,6 +252,25 @@ static void VoiceProcessorProducesFiniteSamples()
     Assert(output.Length == input.Length, "processed output length should match input length");
     Assert(output.All(value => float.IsFinite(value)), "processed samples should be finite");
     Assert(output.All(value => value >= -1f && value <= 1f), "processed samples should stay in safe audio range");
+}
+
+static void VoiceLowPassFilterTamesHighHiss()
+{
+    const int sampleRate = 48_000;
+    var highTone = GenerateSine(sampleRate, 12_000d, 0.5d, 1.0d);
+    var voiceTone = GenerateSine(sampleRate, 1_000d, 0.5d, 1.0d);
+    var highBypass = ProcessLowPassTestTone(highTone, enabled: false);
+    var highFiltered = ProcessLowPassTestTone(highTone, enabled: true);
+    var voiceBypass = ProcessLowPassTestTone(voiceTone, enabled: false);
+    var voiceFiltered = ProcessLowPassTestTone(voiceTone, enabled: true);
+
+    var highBypassRms = CalculateTailRms(highBypass, sampleRate / 2);
+    var highFilteredRms = CalculateTailRms(highFiltered, sampleRate / 2);
+    var voiceBypassRms = CalculateTailRms(voiceBypass, sampleRate / 2);
+    var voiceFilteredRms = CalculateTailRms(voiceFiltered, sampleRate / 2);
+
+    Assert(highFilteredRms < highBypassRms * 0.35d, "low-pass should significantly attenuate high hiss");
+    Assert(voiceFilteredRms > voiceBypassRms * 0.70d, "low-pass should preserve normal voice-band energy");
 }
 
 static void VoiceTelemetrySnapshotIsIndependent()
@@ -1094,6 +1114,54 @@ static void AssertSequenceEqual<T>(IReadOnlyList<T> expected, IReadOnlyList<T> a
     {
         Assert(expected[i].Equals(actual[i]), $"{message}: mismatch at index {i}");
     }
+}
+
+static float[] GenerateSine(int sampleRate, double frequencyHz, double amplitude, double durationSeconds)
+{
+    var sampleCount = Math.Max(1, (int)(sampleRate * durationSeconds));
+    var samples = new float[sampleCount];
+    for (var i = 0; i < samples.Length; i++)
+    {
+        samples[i] = (float)(Math.Sin(2d * Math.PI * frequencyHz * i / sampleRate) * amplitude);
+    }
+
+    return samples;
+}
+
+static float[] ProcessLowPassTestTone(float[] samples, bool enabled)
+{
+    var settings = new VoiceProcessorSettings
+    {
+        HighPassEnabled = false,
+        LowPassEnabled = enabled,
+        LowPassFrequencyHz = 4_000,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        LimiterEnabled = false,
+        MakeupGainDb = 0
+    };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static double CalculateTailRms(IReadOnlyList<float> samples, int startIndex)
+{
+    var start = Math.Clamp(startIndex, 0, samples.Count);
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < samples.Count; i++)
+    {
+        sum += samples[i] * samples[i];
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
 }
 
 static bool WaitFor(Func<bool> condition, int timeoutMilliseconds = 2_500)

@@ -23,6 +23,11 @@ public sealed class VoiceSampleProcessor
     private double _highPassX2;
     private double _highPassY1;
     private double _highPassY2;
+    private double _lowPassWet;
+    private double _lowPassX1;
+    private double _lowPassX2;
+    private double _lowPassY1;
+    private double _lowPassY2;
     private double _dePopperLow;
     private double _dePopperGain = 1d;
     private double _dePopperWet;
@@ -70,6 +75,7 @@ public sealed class VoiceSampleProcessor
     private double _makeupTargetGain = 1d;
     private double _levelSmoothingCoefficient;
     private bool _highPassEnabled;
+    private bool _lowPassEnabled;
     private bool _dePopperEnabled;
     private bool _noiseGateEnabled;
     private bool _expanderEnabled;
@@ -89,6 +95,13 @@ public sealed class VoiceSampleProcessor
     private double _highPassA1;
     private double _highPassA2;
     private double _lastHighPassFrequencyHz;
+    private double _lowPassB0 = 1d;
+    private double _lowPassWetCoefficient;
+    private double _lowPassB1;
+    private double _lowPassB2;
+    private double _lowPassA1;
+    private double _lowPassA2;
+    private double _lastLowPassFrequencyHz;
     private double _dePopperAlpha;
     private double _dePopperWetCoefficient;
     private double _dePopperAttackCoefficient;
@@ -226,6 +239,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyCompressor(sample);
             sample = ApplyDeEsser(sample);
             sample = ApplyPresenceEnhancer(sample);
+            sample = ApplyLowPass(sample);
             maxGainReduction = Math.Max(maxGainReduction, _lastGainReductionDb);
             maxCompressorInputLevel = Math.Max(maxCompressorInputLevel, Math.Abs(sample));
             gateOpennessSum += _gateOpenness;
@@ -273,6 +287,7 @@ public sealed class VoiceSampleProcessor
         _makeupTargetGain = DbToLinear(Math.Clamp(_settings.MakeupGainDb, -12d, 18d));
         _levelSmoothingCoefficient = TimeCoefficient(6d);
         _highPassEnabled = _settings.HighPassEnabled;
+        _lowPassEnabled = _settings.LowPassEnabled;
         _dePopperEnabled = _settings.DePopperEnabled && _settings.DePopperAmountDb > 0d;
         _noiseGateEnabled = _settings.NoiseGateEnabled;
         _expanderEnabled = _settings.ExpanderEnabled;
@@ -283,7 +298,9 @@ public sealed class VoiceSampleProcessor
         _presenceEnhancerEnabled = _settings.PresenceEnhancerEnabled && _settings.PresenceEnhancerAmountDb > 0d;
         _dcBlockerCoefficient = Math.Exp(-2d * Math.PI * 10d / _sampleRate);
         _highPassWetCoefficient = TimeCoefficient(12d);
+        _lowPassWetCoefficient = TimeCoefficient(12d);
         UpdateHighPassCoefficients();
+        UpdateLowPassCoefficients();
 
         var dePopperCutoffHz = Math.Clamp(_settings.DePopperFrequencyHz, 80d, 320d);
         _dePopperAlpha = 1d - Math.Exp(-2d * Math.PI * dePopperCutoffHz / _sampleRate);
@@ -461,6 +478,79 @@ public sealed class VoiceSampleProcessor
         _highPassB2 = b2 / a0;
         _highPassA1 = a1 / a0;
         _highPassA2 = a2 / a0;
+    }
+
+    private double ApplyLowPass(double sample)
+    {
+        if (!_lowPassEnabled && _lowPassWet <= 0d)
+        {
+            ResetLowPassState();
+            return sample;
+        }
+
+        var output = FlushDenormal(_lowPassB0 * sample + _lowPassB1 * _lowPassX1 + _lowPassB2 * _lowPassX2 - _lowPassA1 * _lowPassY1 - _lowPassA2 * _lowPassY2);
+        _lowPassX2 = _lowPassX1;
+        _lowPassX1 = FlushDenormal(sample);
+        _lowPassY2 = _lowPassY1;
+        _lowPassY1 = output;
+
+        var targetWet = _lowPassEnabled ? 1d : 0d;
+        _lowPassWet = FlushDenormal(_lowPassWet + (targetWet - _lowPassWet) * _lowPassWetCoefficient);
+        if (!_lowPassEnabled && _lowPassWet < 0.0001d)
+        {
+            _lowPassWet = 0d;
+            ResetLowPassState();
+        }
+        else if (_lowPassEnabled && _lowPassWet > 0.9999d)
+        {
+            _lowPassWet = 1d;
+        }
+
+        return sample + (output - sample) * _lowPassWet;
+    }
+
+    private void ResetLowPassState()
+    {
+        if (_lowPassX1 == 0d
+            && _lowPassX2 == 0d
+            && _lowPassY1 == 0d
+            && _lowPassY2 == 0d)
+        {
+            return;
+        }
+
+        _lowPassX1 = 0d;
+        _lowPassX2 = 0d;
+        _lowPassY1 = 0d;
+        _lowPassY2 = 0d;
+    }
+
+    private void UpdateLowPassCoefficients()
+    {
+        var frequencyHz = Math.Clamp(_settings.LowPassFrequencyHz, 1000d, Math.Min(20000d, _sampleRate * 0.45d));
+        if (Math.Abs(frequencyHz - _lastLowPassFrequencyHz) < 0.01d)
+        {
+            return;
+        }
+
+        _lastLowPassFrequencyHz = frequencyHz;
+        var omega = 2d * Math.PI * frequencyHz / _sampleRate;
+        var sine = Math.Sin(omega);
+        var cosine = Math.Cos(omega);
+        const double q = 0.7071067811865476d;
+        var alpha = sine / (2d * q);
+        var b0 = (1d - cosine) / 2d;
+        var b1 = 1d - cosine;
+        var b2 = (1d - cosine) / 2d;
+        var a0 = 1d + alpha;
+        var a1 = -2d * cosine;
+        var a2 = 1d - alpha;
+
+        _lowPassB0 = b0 / a0;
+        _lowPassB1 = b1 / a0;
+        _lowPassB2 = b2 / a0;
+        _lowPassA1 = a1 / a0;
+        _lowPassA2 = a2 / a0;
     }
 
     private double ApplyDePopper(double sample)

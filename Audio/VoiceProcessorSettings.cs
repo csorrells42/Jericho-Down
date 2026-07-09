@@ -12,6 +12,8 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _inputTrimDb;
     private bool _highPassEnabled = true;
     private double _highPassFrequencyHz = 80;
+    private bool _lowPassEnabled;
+    private double _lowPassFrequencyHz = 16000;
     private bool _noiseGateEnabled = true;
     private double _noiseGateThresholdDb = -48;
     private double _noiseGateAttackMs = 5;
@@ -75,6 +77,18 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _highPassFrequencyHz;
         set => SetField(ref _highPassFrequencyHz, value);
+    }
+
+    public bool LowPassEnabled
+    {
+        get => _lowPassEnabled;
+        set => SetField(ref _lowPassEnabled, value);
+    }
+
+    public double LowPassFrequencyHz
+    {
+        get => _lowPassFrequencyHz;
+        set => SetField(ref _lowPassFrequencyHz, value);
     }
 
     public bool NoiseGateEnabled
