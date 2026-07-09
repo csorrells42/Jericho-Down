@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text;
 using JerichoDown;
 using JerichoDown.Audio;
@@ -39,6 +40,7 @@ var tests = new (string Name, Action Test)[]
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Blank mixer channels restore without fallback input", BlankMixerChannelsRestoreWithoutFallbackInput),
+    ("App settings roundtrip preserves mic mixer routing state", AppSettingsRoundtripPreservesMicMixerRoutingState),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
@@ -586,6 +588,112 @@ static void BlankMixerChannelsRestoreWithoutFallbackInput()
     Assert(blank is null, "blank saved mic channels should stay disconnected instead of joining the live bus");
     Assert(named?.DeviceNumber == 1, "saved mic names should restore their matching device");
     Assert(missing?.DeviceNumber == 0, "named saved mics can still fall back if the old device is missing");
+}
+
+static void AppSettingsRoundtripPreservesMicMixerRoutingState()
+{
+    var appAssembly = typeof(EqualizerWindow).Assembly;
+    var settingsType = appAssembly.GetType("JerichoDown.AppSettingsState");
+    var micStateType = appAssembly.GetType("JerichoDown.MicChannelSettingsState");
+    var bandStateType = appAssembly.GetType("JerichoDown.EqualizerBandSettingsState");
+    Assert(settingsType is not null, "app settings state type should be available");
+    Assert(micStateType is not null, "mic channel settings state type should be available");
+    Assert(bandStateType is not null, "equalizer band settings state type should be available");
+
+    var settings = Activator.CreateInstance(settingsType!)!;
+    Set(settings, "SelectedMicChannelNumber", 3);
+    Set(settings, "MixerMasterVolumePercent", 88d);
+    Set(settings, "MixerAutoNormalizeEnabled", false);
+    Set(settings, "MixerLimiterEnabled", true);
+    Set(settings, "MixerLimiterCeilingDb", -2.5d);
+    Set(settings, "MixerOutputMode", MixBusOutputMode.Mono.ToString());
+    Set(settings, "OutputDeviceName", "Sanctuary mains");
+    Set(settings, "OutputEndpointId", "{output-guid}");
+    Set(settings, "ProcessedOutputEnabled", true);
+    Set(settings, "AudioRecordingFolder", @"C:\Jericho\Recordings");
+    Set(settings, "AudioRecordingSource", ProcessedRecordingSource.SelectedMicRawBackup.ToString());
+
+    var mic = Activator.CreateInstance(micStateType!)!;
+    Set(mic, "ChannelNumber", 3);
+    Set(mic, "DisplayName", "Scarlett mic");
+    Set(mic, "MicrophoneName", "USB headset");
+    Set(mic, "InputChannelMode", InputChannelMode.Input2Right.ToString());
+    Set(mic, "IsMuted", true);
+    Set(mic, "VolumePercent", 73d);
+    Set(mic, "InputGainDb", -4.5d);
+    Set(mic, "Pan", 35d);
+    Set(mic, "PolarityInverted", true);
+    Set(mic, "IsSoloed", true);
+    Set(mic, "DelayMilliseconds", 18d);
+    Set(mic, "ActivePresetName", "Warm Radio");
+    Set(mic, "ActivePresetIsUserPreset", true);
+    Set(mic, "PresetDescription", "Saved per-mic DSP");
+    Set(mic, "AnalyzerSmoothing", 42d);
+
+    var band = Activator.CreateInstance(bandStateType!)!;
+    Set(band, "Label", "250");
+    Set(band, "FrequencyHz", 250d);
+    Set(band, "GainDb", 3.5d);
+    Set(band, "IsEnabled", false);
+    ((IList)Get(mic, "EqualizerBands")!).Add(band);
+
+    var numberSettings = (IDictionary)Get(mic, "NumberSettings")!;
+    numberSettings[nameof(VoiceProcessorSettings.InputTrimDb)] = -3d;
+    numberSettings[nameof(VoiceProcessorSettings.LowPassFrequencyHz)] = 16_000d;
+    var booleanSettings = (IDictionary)Get(mic, "BooleanSettings")!;
+    booleanSettings[nameof(VoiceProcessorSettings.HighPassEnabled)] = true;
+    booleanSettings[nameof(VoiceProcessorSettings.HumRemovalEnabled)] = true;
+    ((IList)Get(settings, "MicChannels")!).Add(mic);
+
+    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, WriteIndented = true };
+
+    var json = JsonSerializer.Serialize(settings, settingsType!, options);
+    var restored = JsonSerializer.Deserialize(json, settingsType!, options);
+
+    Assert(restored is not null, "settings should deserialize");
+    Assert((int)Get(restored!, "SelectedMicChannelNumber")! == 3, "selected mic should survive app-state roundtrip");
+    Assert((double)Get(restored!, "MixerMasterVolumePercent")! == 88d, "master volume should survive app-state roundtrip");
+    Assert(!(bool)Get(restored!, "MixerAutoNormalizeEnabled")!, "normalize toggle should survive app-state roundtrip");
+    Assert((bool)Get(restored!, "MixerLimiterEnabled")!, "limiter toggle should survive app-state roundtrip");
+    Assert((double)Get(restored!, "MixerLimiterCeilingDb")! == -2.5d, "limiter ceiling should survive app-state roundtrip");
+    Assert((string)Get(restored!, "MixerOutputMode")! == MixBusOutputMode.Mono.ToString(), "output mode should survive app-state roundtrip");
+    Assert((string)Get(restored!, "OutputDeviceName")! == "Sanctuary mains", "output device name should survive app-state roundtrip");
+    Assert((string)Get(restored!, "OutputEndpointId")! == "{output-guid}", "output endpoint should survive app-state roundtrip");
+    Assert((bool)Get(restored!, "ProcessedOutputEnabled")!, "processed output toggle should survive app-state roundtrip");
+    Assert((string)Get(restored!, "AudioRecordingFolder")! == @"C:\Jericho\Recordings", "recording folder should survive app-state roundtrip");
+    Assert((string)Get(restored!, "AudioRecordingSource")! == ProcessedRecordingSource.SelectedMicRawBackup.ToString(), "recording source should survive app-state roundtrip");
+
+    var restoredMic = ((IList)Get(restored!, "MicChannels")!)[0]!;
+    Assert((int)Get(restoredMic, "ChannelNumber")! == 3, "mic channel number should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "DisplayName")! == "Scarlett mic", "mic display name should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "MicrophoneName")! == "USB headset", "mic device should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "InputChannelMode")! == InputChannelMode.Input2Right.ToString(), "mic input mode should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "IsMuted")!, "mute should survive app-state roundtrip");
+    Assert((double)Get(restoredMic, "VolumePercent")! == 73d, "mic volume should survive app-state roundtrip");
+    Assert((double)Get(restoredMic, "InputGainDb")! == -4.5d, "mic input gain should survive app-state roundtrip");
+    Assert((double)Get(restoredMic, "Pan")! == 35d, "mic pan should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "PolarityInverted")!, "mic polarity should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "IsSoloed")!, "solo should survive app-state roundtrip");
+    Assert((double)Get(restoredMic, "DelayMilliseconds")! == 18d, "mic delay should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "ActivePresetName")! == "Warm Radio", "mic preset should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "ActivePresetIsUserPreset")!, "mic user-preset flag should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "PresetDescription")! == "Saved per-mic DSP", "mic preset description should survive app-state roundtrip");
+    Assert((double)Get(restoredMic, "AnalyzerSmoothing")! == 42d, "mic analyzer setting should survive app-state roundtrip");
+    var restoredBand = ((IList)Get(restoredMic, "EqualizerBands")!)[0]!;
+    Assert((double)Get(restoredBand, "GainDb")! == 3.5d, "mic EQ gain should survive app-state roundtrip");
+    Assert(!(bool)Get(restoredBand, "IsEnabled")!, "mic EQ enabled state should survive app-state roundtrip");
+    Assert((double)((IDictionary)Get(restoredMic, "NumberSettings")!)[nameof(VoiceProcessorSettings.InputTrimDb)]! == -3d, "numeric DSP state should survive app-state roundtrip");
+    Assert((bool)((IDictionary)Get(restoredMic, "BooleanSettings")!)[nameof(VoiceProcessorSettings.HighPassEnabled)]!, "boolean DSP state should survive app-state roundtrip");
+
+    static object? Get(object target, string propertyName)
+    {
+        return target.GetType().GetProperty(propertyName)!.GetValue(target);
+    }
+
+    static void Set(object target, string propertyName, object? value)
+    {
+        target.GetType().GetProperty(propertyName)!.SetValue(target, value);
+    }
 }
 
 static void PrimaryCaptureSelectorFollowsActiveMicSource()
