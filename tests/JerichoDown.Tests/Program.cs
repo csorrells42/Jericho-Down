@@ -757,6 +757,11 @@ static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()
     AssertSequenceEqual(frame.Magnitudes, output.Magnitudes, "mixing spectrum should use final program magnitudes");
     Assert(output.MicrophoneLines.Count == 0, "mixing output frame should not carry the ten individual mic graph lines");
     Assert(output.RawMagnitudes.Length == 0, "mixing output frame should not draw a separate raw mic reference line");
+
+    var recordingOutput = SpectrumFrameRouter.CreateProgramOutputFrame(frame, lines[2].Magnitudes);
+    AssertSequenceEqual(frame.Magnitudes, recordingOutput.Magnitudes, "program line should stay the final output when a recording reference is present");
+    AssertSequenceEqual(lines[2].Magnitudes, recordingOutput.RawMagnitudes, "recording reference line should carry the selected recording source");
+    Assert(recordingOutput.MicrophoneLines.Count == 0, "recording reference should not bring the ten individual mic lines back");
 }
 
 static void SpectrumAnalyzerEmitsHighResolutionBins()

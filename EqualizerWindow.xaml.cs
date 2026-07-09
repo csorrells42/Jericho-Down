@@ -2405,9 +2405,9 @@ public partial class EqualizerWindow : Window
             EnsureMixingOutputWaveform3DView();
             if (_latestFrame is not null)
             {
-                var programOutputFrame = CreateProgramOutputFrame(_latestFrame);
+                var programOutputFrame = CreateMixerOutputFrame(_latestFrame);
                 _mixingMicSpectrumGraphHost?.AcceptFrame(programOutputFrame);
-                _mixingOutputWaveform3DGraphHost?.AcceptFrame(programOutputFrame);
+                _mixingOutputWaveform3DGraphHost?.AcceptFrame(CreateProgramOutputFrame(_latestFrame));
             }
         }
 
@@ -3959,7 +3959,7 @@ public partial class EqualizerWindow : Window
 
         var graphHost = new Direct3D12AudioGraphHost
         {
-            GraphMode = Direct3D12AudioGraphMode.SelectedMicSpectrum
+            GraphMode = Direct3D12AudioGraphMode.ProgramOutputSpectrum
         };
         graphHost.StatusChanged += Dx12AudioGraphStatusChanged;
         InlineWaveform3DHost.Content = graphHost;
@@ -4277,6 +4277,7 @@ public partial class EqualizerWindow : Window
         ApplyActiveMicChannelToUi();
         ApplyActiveMicPresetUiState();
         ConfigureLiveMixFromChannels();
+        UpdateMixingMicLegend();
         UpdateAudioRecordingReadyStatus();
         if (restartAudio)
         {
@@ -4578,6 +4579,7 @@ public partial class EqualizerWindow : Window
 
         ReadAudioRecordingSourceControl();
         ConfigureLiveMixFromChannels();
+        UpdateMixingMicLegend();
         UpdateAudioRecordingReadyStatus();
         PersistAppState();
     }
@@ -5401,7 +5403,7 @@ public partial class EqualizerWindow : Window
 
         if (_isMixingMicSpectrumGraphActive)
         {
-            _mixingMicSpectrumGraphHost?.AcceptFrame(CreateProgramOutputFrame(frame));
+            _mixingMicSpectrumGraphHost?.AcceptFrame(CreateMixerOutputFrame(frame));
         }
 
         if (_isMixingOutputWaveform3DActive)
@@ -5430,6 +5432,25 @@ public partial class EqualizerWindow : Window
     private static SpectrumFrame CreateProgramOutputFrame(SpectrumFrame frame)
     {
         return SpectrumFrameRouter.CreateProgramOutputFrame(frame);
+    }
+
+    private SpectrumFrame CreateMixerOutputFrame(SpectrumFrame frame)
+    {
+        return SpectrumFrameRouter.CreateProgramOutputFrame(frame, ResolveRecordingSpectrumMagnitudes(frame));
+    }
+
+    private double[] ResolveRecordingSpectrumMagnitudes(SpectrumFrame frame)
+    {
+        if (_audioRecordingSource == ProcessedRecordingSource.ProgramMix)
+        {
+            return [];
+        }
+
+        var selectedChannelNumber = _activeMicChannel?.ChannelNumber ?? 1;
+        var line = frame.MicrophoneLines.FirstOrDefault(candidate => candidate.ChannelNumber == selectedChannelNumber);
+        return _audioRecordingSource == ProcessedRecordingSource.SelectedMicRawBackup
+            ? line?.RawMagnitudes ?? []
+            : line?.Magnitudes ?? [];
     }
 
     private double[] ResolveActiveInputChannelMagnitudes(SpectrumFrame frame)
@@ -5533,7 +5554,7 @@ public partial class EqualizerWindow : Window
 
         if (shouldRenderMixingSpectrum)
         {
-            RenderMixingMicSpectrum(CreateProgramOutputFrame(_latestFrame));
+            RenderMixingMicSpectrum(CreateMixerOutputFrame(_latestFrame));
         }
 
     }
@@ -10789,6 +10810,21 @@ public partial class EqualizerWindow : Window
         }
 
         MixingMicLegendPanel.Children.Clear();
+        AddMixingLegendItem(
+            "Program mix",
+            new SolidColorBrush(Color.FromRgb(0, 190, 230)));
+        if (_audioRecordingSource == ProcessedRecordingSource.ProgramMix)
+        {
+            return;
+        }
+
+        AddMixingLegendItem(
+            $"Recording: {GetAudioRecordingSourceLabel()}",
+            new SolidColorBrush(Color.FromRgb(167, 176, 188)));
+    }
+
+    private void AddMixingLegendItem(string text, Brush brush)
+    {
         var item = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -10801,13 +10837,13 @@ public partial class EqualizerWindow : Window
             Height = 3,
             RadiusX = 1.5,
             RadiusY = 1.5,
-            Fill = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+            Fill = brush,
             Margin = new Thickness(0, 0, 6, 0)
         });
         item.Children.Add(new TextBlock
         {
-            Text = "Program mix output",
-            Foreground = new SolidColorBrush(Color.FromRgb(0, 190, 230)),
+            Text = text,
+            Foreground = brush,
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center
         });

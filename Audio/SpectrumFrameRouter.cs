@@ -62,15 +62,15 @@ public static class SpectrumFrameRouter
             selectedLine.RawRmsLevel);
     }
 
-    public static SpectrumFrame CreateProgramOutputFrame(SpectrumFrame frame)
+    public static SpectrumFrame CreateProgramOutputFrame(SpectrumFrame frame, double[]? recordingMagnitudes = null)
     {
         return new SpectrumFrame(
             frame.Magnitudes,
-            [],
+            recordingMagnitudes ?? [],
             frame.ProcessedSamples,
             [],
             frame.PeakLevel,
-            0d,
+            recordingMagnitudes is { Length: > 0 } ? frame.RawPeakLevel : 0d,
             frame.Telemetry,
             frame.SampleRate,
             rmsLevel: frame.RmsLevel);

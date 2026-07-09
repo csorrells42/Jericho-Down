@@ -19,6 +19,7 @@ public enum Direct3D12AudioGraphMode
 {
     Waterfall,
     SelectedMicSpectrum,
+    ProgramOutputSpectrum,
     MicrophoneSpectrumLines
 }
 
@@ -353,6 +354,9 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private readonly float[] _detailedProcessedTarget = new float[DetailedSpectrumPointCount];
         private readonly float[] _detailedProcessedTrace = new float[DetailedSpectrumPointCount];
         private readonly float[] _detailedSmoothingScratch = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedReferenceTarget = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedReferenceTrace = new float[DetailedSpectrumPointCount];
+        private readonly float[] _detailedReferenceSmoothingScratch = new float[DetailedSpectrumPointCount];
         private IDXGISwapChain3 _swapChain;
         private ID3D12RootSignature? _rootSignature;
         private ID3D12PipelineState? _linePipelineState;
@@ -364,6 +368,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         private int _historyCount;
         private float _detailedVisualCeiling = 0.25f;
         private bool _hasDetailedSpectrumTrace;
+        private bool _hasDetailedReferenceTrace;
         private bool _disposed;
 
         public Direct3D12AudioGraphRenderer(IntPtr hwnd, int width, int height)
@@ -444,6 +449,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             var segmentCount = graphMode switch
             {
                 Direct3D12AudioGraphMode.SelectedMicSpectrum => WriteSelectedMicSpectrumSegments(frameResource.UploadPointer, MaxSegments, frame, spectrumHoverStart, spectrumHoverEnd),
+                Direct3D12AudioGraphMode.ProgramOutputSpectrum => WriteProgramOutputSpectrumSegments(frameResource.UploadPointer, MaxSegments, frame),
                 Direct3D12AudioGraphMode.MicrophoneSpectrumLines => WriteMicrophoneSpectrumSegments(frameResource.UploadPointer, MaxSegments, frame),
                 _ => WriteWaterfallFrameSegments(frameResource.UploadPointer, MaxSegments, frame, waterfallLinesPerGap)
             };
@@ -529,6 +535,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             return graphMode switch
             {
                 Direct3D12AudioGraphMode.SelectedMicSpectrum => WriteDetailedSpectrumGridSegments(segments, maxSegments, float.NaN, float.NaN),
+                Direct3D12AudioGraphMode.ProgramOutputSpectrum => WriteDetailedSpectrumGridSegments(segments, maxSegments, float.NaN, float.NaN),
                 Direct3D12AudioGraphMode.MicrophoneSpectrumLines => WriteFlatSpectrumGridSegments(segments, maxSegments),
                 _ => WriteGraphSegments(destination, maxSegments, waterfallLinesPerGap)
             };
@@ -544,6 +551,23 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             var segments = (GraphSegment*)destination;
             var count = WriteDetailedSpectrumGridSegments(segments, maxSegments, spectrumHoverStart, spectrumHoverEnd);
             PrepareDetailedSpectrumTrace(frame);
+            count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedProcessedTrace, processed: true);
+            return count;
+        }
+
+        private unsafe int WriteProgramOutputSpectrumSegments(
+            IntPtr destination,
+            int maxSegments,
+            SpectrumFrame frame)
+        {
+            var segments = (GraphSegment*)destination;
+            var count = WriteDetailedSpectrumGridSegments(segments, maxSegments, float.NaN, float.NaN);
+            PrepareDetailedSpectrumTraces(frame);
+            if (frame.RawMagnitudes.Length > 0)
+            {
+                count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedReferenceTrace, processed: false);
+            }
+
             count = WriteDetailedSpectrumLineSegments(segments, count, maxSegments, _detailedProcessedTrace, processed: true);
             return count;
         }
@@ -947,6 +971,28 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             _hasDetailedSpectrumTrace = true;
         }
 
+        private void PrepareDetailedSpectrumTraces(SpectrumFrame frame)
+        {
+            BuildDetailedSpectrumTarget(frame.Magnitudes, _detailedProcessedTarget, _detailedSmoothingScratch);
+            BuildDetailedSpectrumTarget(frame.RawMagnitudes, _detailedReferenceTarget, _detailedReferenceSmoothingScratch);
+
+            var frameCeiling = 0.08f;
+            for (var i = 0; i < DetailedSpectrumPointCount; i++)
+            {
+                frameCeiling = Math.Max(frameCeiling, _detailedProcessedTarget[i]);
+                frameCeiling = Math.Max(frameCeiling, _detailedReferenceTarget[i]);
+            }
+
+            _detailedVisualCeiling = frameCeiling > _detailedVisualCeiling
+                ? Lerp(_detailedVisualCeiling, frameCeiling, 0.08d)
+                : Lerp(_detailedVisualCeiling, frameCeiling, 0.015d);
+
+            NormalizeDetailedSpectrumTarget(_detailedProcessedTarget, _detailedVisualCeiling);
+            NormalizeDetailedSpectrumTarget(_detailedReferenceTarget, _detailedVisualCeiling);
+            EaseDetailedSpectrumTrace(_detailedProcessedTarget, _detailedProcessedTrace, ref _hasDetailedSpectrumTrace);
+            EaseDetailedSpectrumTrace(_detailedReferenceTarget, _detailedReferenceTrace, ref _hasDetailedReferenceTrace);
+        }
+
         private static void BuildDetailedSpectrumTarget(double[] magnitudes, float[] destination, float[] smoothingScratch)
         {
             if (magnitudes.Length == 0)
@@ -1020,9 +1066,15 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
 
         private void EaseDetailedSpectrumTrace(float[] target, float[] trace)
         {
-            if (!_hasDetailedSpectrumTrace)
+            EaseDetailedSpectrumTrace(target, trace, ref _hasDetailedSpectrumTrace);
+        }
+
+        private static void EaseDetailedSpectrumTrace(float[] target, float[] trace, ref bool hasTrace)
+        {
+            if (!hasTrace)
             {
                 Array.Copy(target, trace, target.Length);
+                hasTrace = true;
                 return;
             }
 
