@@ -27,6 +27,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
@@ -327,6 +328,23 @@ static void InputChannelModeFallsBackForMonoDevices()
     var coerced = (InputChannelMode)method!.Invoke(null, [headset, null, InputChannelMode.Input2Right])!;
 
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
+}
+
+static void AudioRecordingFilenamesIdentifySelectedSource()
+{
+    var method = typeof(EqualizerWindow).GetMethod(
+        "CreateAudioRecordingFileName",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "audio recording filename helper should be available");
+
+    var timestamp = new DateTime(2026, 7, 9, 14, 3, 5);
+    var program = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.ProgramMix, 3])!;
+    var processed = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicProcessed, 3])!;
+    var raw = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicRawBackup, 3])!;
+
+    Assert(program == "jericho_program_mix_2026-07-09_14-03-05.wav", "program mix recordings should be clearly named");
+    Assert(processed == "jericho_mic3_processed_2026-07-09_14-03-05.wav", "selected processed mic recordings should identify the mic");
+    Assert(raw == "jericho_mic3_raw_backup_2026-07-09_14-03-05.wav", "raw backup recordings should identify the mic and raw source");
 }
 
 static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()

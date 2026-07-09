@@ -276,6 +276,7 @@ public partial class EqualizerWindow : Window
     private TimeSpan _audioRecordingPausedDuration;
     private bool _isStandaloneAudioRecording;
     private bool _isStandaloneAudioRecordingPaused;
+    private string _activeAudioRecordingSourceLabel = "program mix";
     private string? _lastAudioRecordingPath;
     private readonly ObservableCollection<AudioRecordingFileItem> _audioRecordingFiles = [];
     private FileBrowserWatcher? _audioRecordingFolderWatcher;
@@ -1575,18 +1576,20 @@ public partial class EqualizerWindow : Window
 
         if (_spectrumService.IsProcessedAudioRecording)
         {
-            AudioRecordingStatusText.Text = "Another program mix recording is already running.";
+            AudioRecordingStatusText.Text = "Another audio recording is already running.";
             UpdateStandaloneAudioRecordingTransportControls();
             UpdateKaraokeTransportControls();
             return;
         }
 
+        ConfigureLiveMixFromChannels();
+        var sourceLabel = GetAudioRecordingSourceLabel();
         if (!_spectrumService.IsRunning)
         {
             StartSelectedDevice();
             if (!_spectrumService.IsRunning)
             {
-                AudioRecordingStatusText.Text = "Assign and enable a mic before recording the program mix.";
+                AudioRecordingStatusText.Text = $"Assign and enable a mic before recording {sourceLabel}.";
                 return;
             }
         }
@@ -1596,17 +1599,19 @@ public partial class EqualizerWindow : Window
             var path = CreateAudioRecordingFilePath(DateTime.Now);
             _spectrumService.StartProcessedAudioRecording(path);
             _activeAudioRecordingPath = path;
+            _activeAudioRecordingSourceLabel = sourceLabel;
             _audioRecordingStartedAt = DateTime.UtcNow;
             _audioRecordingPausedAt = default;
             _audioRecordingPausedDuration = TimeSpan.Zero;
             _isStandaloneAudioRecording = true;
             _isStandaloneAudioRecordingPaused = false;
-            AudioRecordingStatusText.Text = $"Recording program mix: {System.IO.Path.GetFileName(path)}";
+            AudioRecordingStatusText.Text = $"Recording {sourceLabel}: {System.IO.Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
             AudioRecordingStatusText.Text = $"Audio recording failed: {ex.Message}";
             _activeAudioRecordingPath = null;
+            _activeAudioRecordingSourceLabel = "program mix";
             _isStandaloneAudioRecording = false;
             _isStandaloneAudioRecordingPaused = false;
         }
@@ -1627,14 +1632,14 @@ public partial class EqualizerWindow : Window
             _audioRecordingPausedDuration += DateTime.UtcNow - _audioRecordingPausedAt;
             _isStandaloneAudioRecordingPaused = false;
             _spectrumService.ResumeProcessedAudioRecording();
-            AudioRecordingStatusText.Text = "Audio recording resumed.";
+            AudioRecordingStatusText.Text = $"Recording {_activeAudioRecordingSourceLabel} resumed.";
         }
         else
         {
             _audioRecordingPausedAt = DateTime.UtcNow;
             _isStandaloneAudioRecordingPaused = true;
             _spectrumService.PauseProcessedAudioRecording();
-            AudioRecordingStatusText.Text = "Audio recording paused.";
+            AudioRecordingStatusText.Text = $"Recording {_activeAudioRecordingSourceLabel} paused.";
         }
 
         UpdateStandaloneAudioRecordingTransportControls();
@@ -1656,10 +1661,12 @@ public partial class EqualizerWindow : Window
         _audioRecordingPausedDuration = TimeSpan.Zero;
         _isStandaloneAudioRecording = false;
         _isStandaloneAudioRecordingPaused = false;
+        var sourceLabel = _activeAudioRecordingSourceLabel;
+        _activeAudioRecordingSourceLabel = "program mix";
 
         AudioRecordingStatusText.Text = string.IsNullOrWhiteSpace(savedPath)
             ? $"Audio recording stopped at {FormatDuration(elapsed)}."
-            : $"Saved {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
+            : $"Saved {sourceLabel} recording {System.IO.Path.GetFileName(savedPath)} ({FormatDuration(elapsed)}).";
         _lastAudioRecordingPath = savedPath;
         RefreshAudioRecordingFiles(savedPath);
         PersistAppState();
@@ -3812,15 +3819,28 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private static string CreateAudioRecordingFileName(DateTime timestamp)
+    private static string CreateAudioRecordingFileName(
+        DateTime timestamp,
+        ProcessedRecordingSource source,
+        int channelNumber)
     {
-        return $"pwRecording_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
+        var sourceSlug = source switch
+        {
+            ProcessedRecordingSource.SelectedMicProcessed => $"mic{Math.Max(1, channelNumber)}_processed",
+            ProcessedRecordingSource.SelectedMicRawBackup => $"mic{Math.Max(1, channelNumber)}_raw_backup",
+            _ => "program_mix"
+        };
+
+        return $"jericho_{sourceSlug}_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
     }
 
     private string CreateAudioRecordingFilePath(DateTime timestamp)
     {
         Directory.CreateDirectory(_audioRecordingFolder);
-        var baseName = System.IO.Path.GetFileNameWithoutExtension(CreateAudioRecordingFileName(timestamp));
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(CreateAudioRecordingFileName(
+            timestamp,
+            _audioRecordingSource,
+            _activeMicChannel?.ChannelNumber ?? 1));
         var path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}.wav");
         for (var attempt = 1; File.Exists(path) && attempt < 100; attempt++)
         {
@@ -4276,6 +4296,7 @@ public partial class EqualizerWindow : Window
         ApplyActiveMicChannelToUi();
         ApplyActiveMicPresetUiState();
         ConfigureLiveMixFromChannels();
+        UpdateAudioRecordingReadyStatus();
         if (restartAudio)
         {
             await RestartSelectedAudioStreamAsync("Listening");
@@ -4564,7 +4585,31 @@ public partial class EqualizerWindow : Window
 
         ReadAudioRecordingSourceControl();
         ConfigureLiveMixFromChannels();
+        UpdateAudioRecordingReadyStatus();
         PersistAppState();
+    }
+
+    private void UpdateAudioRecordingReadyStatus()
+    {
+        if (AudioRecordingStatusText is null || _isStandaloneAudioRecording)
+        {
+            return;
+        }
+
+        AudioRecordingStatusText.Text = $"Ready to record {GetAudioRecordingSourceLabel()}.";
+    }
+
+    private string GetAudioRecordingSourceLabel()
+    {
+        var selectedMicName = string.IsNullOrWhiteSpace(_activeMicChannel?.DisplayName)
+            ? $"Mic {_activeMicChannel?.ChannelNumber ?? 1}"
+            : _activeMicChannel.DisplayName;
+        return _audioRecordingSource switch
+        {
+            ProcessedRecordingSource.SelectedMicProcessed => $"{selectedMicName} processed",
+            ProcessedRecordingSource.SelectedMicRawBackup => $"{selectedMicName} raw backup",
+            _ => "program mix"
+        };
     }
 
     private void ApplyMixerStateToUi()
@@ -4599,6 +4644,8 @@ public partial class EqualizerWindow : Window
         {
             _isUpdatingMixerUi = false;
         }
+
+        UpdateAudioRecordingReadyStatus();
     }
 
     private void ReadMasterMixControls()
