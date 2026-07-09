@@ -2290,7 +2290,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Width="126" MinHeight="490" BorderThickness="1" CornerRadius="6" Padding="8" Margin="4" PreviewMouseLeftButtonDown="MixerChannelStripPreviewMouseLeftButtonDown">
+                    <Border MinHeight="490" BorderThickness="1" CornerRadius="6" Padding="7" Margin="3" SnapsToDevicePixels="True" UseLayoutRounding="True" PreviewMouseLeftButtonDown="MixerChannelStripPreviewMouseLeftButtonDown">
                       <Border.Style>
                         <Style TargetType="Border">
                           <Setter Property="Background" Value="#071017" />
