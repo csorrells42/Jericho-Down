@@ -42,6 +42,7 @@ var tests = new (string Name, Action Test)[]
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
+    ("Live service bus records interface left and right", LiveServiceBusRecordsInterfaceLeftAndRight),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -654,6 +655,77 @@ static void AudioRecordingWaveFormatFollowsSelectedSource()
         AssertWaveChannelCount(programPath, 2, "program mix recording should be stereo");
         AssertWaveChannelCount(processedPath, 1, "selected processed mic recording should be mono");
         AssertWaveChannelCount(rawPath, 1, "selected raw backup recording should be mono");
+    }
+    finally
+    {
+        Directory.Delete(folder, recursive: true);
+    }
+}
+
+static void LiveServiceBusRecordsInterfaceLeftAndRight()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        using var service = new MicrophoneSpectrumService();
+        var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
+        var capture = new FakeWaveIn(waveFormat);
+        SetPrivateField<IWaveIn?>(service, "_capture", capture);
+        SetPrivateField(service, "_currentDeviceNumber", 0);
+        SetPrivateField(service, "_activeSampleRate", 48_000);
+        SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
+        service.ConfigureLiveMix(
+            [
+                new MicrophoneLiveChannelSettings(
+                    1,
+                    0,
+                    InputChannelMode.Input1Left,
+                    CreateTransparentVoiceSettings(),
+                    100d,
+                    0d,
+                    -100d,
+                    false,
+                    false,
+                    0d,
+                    true,
+                    false),
+                new MicrophoneLiveChannelSettings(
+                    2,
+                    0,
+                    InputChannelMode.Input2Right,
+                    CreateTransparentVoiceSettings(),
+                    100d,
+                    0d,
+                    100d,
+                    false,
+                    false,
+                    0d,
+                    true,
+                    false)
+            ],
+            new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+        service.ConfigureProcessedRecordingSource(ProcessedRecordingSource.ProgramMix, 1);
+
+        var recordingPath = Path.Combine(folder, "program.wav");
+        service.StartProcessedAudioRecording(recordingPath);
+        var stereoSamples = new[] { 0.40f, 0.10f, -0.20f, -0.05f, 0.30f, 0.15f };
+        var buffer = MemoryMarshal.AsBytes(stereoSamples.AsSpan()).ToArray();
+        var method = typeof(MicrophoneSpectrumService).GetMethod(
+            "CaptureDataAvailable",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert(method is not null, "capture callback should be available for service integration test");
+        method!.Invoke(service, [null, new WaveInEventArgs(buffer, buffer.Length)]);
+        service.StopProcessedAudioRecording();
+
+        using var reader = new WaveFileReader(recordingPath);
+        var recorded = ReadWaveFloatSamples(reader);
+        Assert(reader.WaveFormat.Channels == 2, "live program mix recording should remain stereo");
+        Assert(recorded.Length >= stereoSamples.Length, "live program mix should write the captured block");
+        Assert(Math.Abs(recorded[0] - 0.40f) < 0.04f, "mic 1 input 1 should reach the left program channel");
+        Assert(Math.Abs(recorded[1] - 0.10f) < 0.04f, "mic 2 input 2 should reach the right program channel");
+        Assert(Math.Abs(recorded[2] + 0.20f) < 0.05f, "left channel should preserve following input 1 samples");
+        Assert(Math.Abs(recorded[3] + 0.05f) < 0.04f, "right channel should preserve following input 2 samples");
     }
     finally
     {
@@ -1586,6 +1658,41 @@ static void AssertWaveChannelCount(string path, int expectedChannels, string mes
     Assert(reader.WaveFormat.Channels == expectedChannels, $"{message}: found {reader.WaveFormat.Channels} channels");
 }
 
+static float[] ReadWaveFloatSamples(WaveFileReader reader)
+{
+    var bytes = new byte[reader.Length];
+    var read = reader.Read(bytes, 0, bytes.Length);
+    return MemoryMarshal.Cast<byte, float>(bytes.AsSpan(0, read)).ToArray();
+}
+
+static VoiceProcessorSettings CreateTransparentVoiceSettings()
+{
+    return new VoiceProcessorSettings
+    {
+        InputTrimDb = 0,
+        HighPassEnabled = false,
+        LowPassEnabled = false,
+        HumRemovalEnabled = false,
+        NotchFilterEnabled = false,
+        ParametricEqEnabled = false,
+        ShelfEqEnabled = false,
+        DePopperEnabled = false,
+        NoiseGateEnabled = false,
+        ExpanderEnabled = false,
+        NoiseSuppressionEnabled = false,
+        EchoReducerEnabled = false,
+        CompressorEnabled = false,
+        BreathReducerEnabled = false,
+        DeEsserEnabled = false,
+        PresenceEnhancerEnabled = false,
+        SaturationEnabled = false,
+        MakeupGainDb = 0,
+        LimiterEnabled = false,
+        LimiterSoftClipEnabled = false,
+        LimiterLookaheadEnabled = false
+    };
+}
+
 static float[] GenerateSine(int sampleRate, double frequencyHz, double amplitude, double durationSeconds)
 {
     var sampleCount = Math.Max(1, (int)(sampleRate * durationSeconds));
@@ -1826,4 +1933,38 @@ static bool WaitFor(Func<bool> condition, int timeoutMilliseconds = 2_500)
     }
 
     return condition();
+}
+
+sealed class FakeWaveIn : IWaveIn
+{
+    public FakeWaveIn(WaveFormat waveFormat)
+    {
+        WaveFormat = waveFormat;
+    }
+
+    public WaveFormat WaveFormat { get; set; }
+
+    public event EventHandler<WaveInEventArgs>? DataAvailable
+    {
+        add { }
+        remove { }
+    }
+
+    public event EventHandler<StoppedEventArgs>? RecordingStopped
+    {
+        add { }
+        remove { }
+    }
+
+    public void StartRecording()
+    {
+    }
+
+    public void StopRecording()
+    {
+    }
+
+    public void Dispose()
+    {
+    }
 }
