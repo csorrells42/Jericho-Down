@@ -45,6 +45,7 @@ var tests = new (string Name, Action Test)[]
     ("Live service bus records interface left and right", LiveServiceBusRecordsInterfaceLeftAndRight),
     ("Live service bus records higher interface lanes", LiveServiceBusRecordsHigherInterfaceLanes),
     ("Live service bus records selected mic sources", LiveServiceBusRecordsSelectedMicSources),
+    ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -893,6 +894,128 @@ static float[] RecordSelectedMicSourceBlock(string recordingPath, ProcessedRecor
     using var reader = new WaveFileReader(recordingPath);
     Assert(reader.WaveFormat.Channels == 1, "selected mic recording sources should be mono");
     return ReadWaveFloatSamples(reader);
+}
+
+static void LiveOutputProviderReceivesProgramMix()
+{
+    var floatProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2))
+    {
+        ReadFully = false
+    };
+    FeedLiveOutputProvider(floatProvider);
+    var floatSamples = ReadBufferedFloatSamples(floatProvider);
+    AssertAudibleStereoProgram(floatSamples, "float output provider");
+
+    var pcmProvider = new BufferedWaveProvider(new WaveFormat(48_000, 16, 2))
+    {
+        ReadFully = false
+    };
+    FeedLiveOutputProvider(pcmProvider);
+    var pcmSamples = ReadBufferedPcm16Samples(pcmProvider);
+    AssertAudibleStereoProgram(pcmSamples, "PCM output provider");
+}
+
+static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
+{
+    using var service = new MicrophoneSpectrumService();
+    var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
+    var capture = new FakeWaveIn(waveFormat);
+    SetPrivateField<IWaveIn?>(service, "_capture", capture);
+    SetPrivateField(service, "_currentDeviceNumber", 0);
+    SetPrivateField(service, "_activeSampleRate", 48_000);
+    SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
+    SetPrivateField(service, "_processedOutputEnabled", 1);
+    SetPrivateField(service, "_processedOutputProvider", outputProvider);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                1,
+                0,
+                InputChannelMode.Input1Left,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                -100d,
+                false,
+                false,
+                0d,
+                true,
+                false),
+            new MicrophoneLiveChannelSettings(
+                2,
+                0,
+                InputChannelMode.Input2Right,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                100d,
+                false,
+                false,
+                0d,
+                true,
+                false)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+
+    const int frameCount = 384;
+    var stereoSamples = new float[frameCount * 2];
+    for (var frame = 0; frame < frameCount; frame++)
+    {
+        var sign = frame % 2 == 0 ? 1f : -1f;
+        stereoSamples[frame * 2] = 0.50f * sign;
+        stereoSamples[frame * 2 + 1] = 0.25f * sign;
+    }
+
+    var buffer = MemoryMarshal.AsBytes(stereoSamples.AsSpan()).ToArray();
+    var method = typeof(MicrophoneSpectrumService).GetMethod(
+        "CaptureDataAvailable",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+    Assert(method is not null, "capture callback should be available for output provider service integration test");
+    method!.Invoke(service, [null, new WaveInEventArgs(buffer, buffer.Length)]);
+}
+
+static float[] ReadBufferedFloatSamples(BufferedWaveProvider provider)
+{
+    var bytes = new byte[provider.BufferedBytes];
+    var read = provider.Read(bytes, 0, bytes.Length);
+    return MemoryMarshal.Cast<byte, float>(bytes.AsSpan(0, read)).ToArray();
+}
+
+static float[] ReadBufferedPcm16Samples(BufferedWaveProvider provider)
+{
+    var bytes = new byte[provider.BufferedBytes];
+    var read = provider.Read(bytes, 0, bytes.Length);
+    var pcmSamples = MemoryMarshal.Cast<byte, short>(bytes.AsSpan(0, read));
+    var samples = new float[pcmSamples.Length];
+    for (var i = 0; i < samples.Length; i++)
+    {
+        samples[i] = pcmSamples[i] / 32768f;
+    }
+
+    return samples;
+}
+
+static void AssertAudibleStereoProgram(IReadOnlyList<float> samples, string routeName)
+{
+    Assert(samples.Count >= 512, $"{routeName} should receive the live output block");
+
+    var leftPeak = 0f;
+    var rightPeak = 0f;
+    var start = Math.Min(300, Math.Max(0, samples.Count - 2));
+    if (start % 2 != 0)
+    {
+        start--;
+    }
+
+    for (var i = start; i + 1 < samples.Count; i += 2)
+    {
+        leftPeak = Math.Max(leftPeak, Math.Abs(samples[i]));
+        rightPeak = Math.Max(rightPeak, Math.Abs(samples[i + 1]));
+    }
+
+    Assert(leftPeak > 0.20f, $"{routeName} should contain audible left program mix samples");
+    Assert(rightPeak > 0.08f, $"{routeName} should contain audible right program mix samples");
+    Assert(leftPeak > rightPeak * 1.35f, $"{routeName} should preserve the left/right program balance");
 }
 
 static void ProcessedAudioConverterWritesOutputFormats()
