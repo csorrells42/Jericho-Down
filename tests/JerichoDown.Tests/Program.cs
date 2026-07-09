@@ -51,6 +51,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
+    ("Live service bus publishes auxiliary sync telemetry", LiveServiceBusPublishesAuxiliarySyncTelemetry),
     ("Live service bus records auxiliary mic in program mix", LiveServiceBusRecordsAuxiliaryMicInProgramMix),
     ("Live service bus records selected auxiliary mic sources", LiveServiceBusRecordsSelectedAuxiliaryMicSources),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
@@ -1168,6 +1169,83 @@ static void LiveServiceBusMixesAuxiliaryCaptureDevice()
         "auxiliary capture device should feed the service output bus",
         leftMaximum: 0.03f,
         rightMinimum: 0.12f);
+}
+
+static void LiveServiceBusPublishesAuxiliarySyncTelemetry()
+{
+    using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out _);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                3,
+                7,
+                InputChannelMode.MonoSum,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                0d,
+                false,
+                false,
+                0d,
+                true,
+                false)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+
+    var auxiliaryCapture = new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 1));
+    var auxiliaryRuntime = CreateAdditionalCaptureRuntime(service, deviceNumber: 7, auxiliaryCapture);
+    SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+
+    SpectrumFrame? latestFrame = null;
+    var frameLock = new object();
+    service.SpectrumAvailable += (_, frame) =>
+    {
+        lock (frameLock)
+        {
+            latestFrame = frame;
+        }
+    };
+
+    InvokePrimaryCapture(service, new float[384 * 2]);
+    Assert(
+        WaitForMicLine(line => line.ChannelNumber == 3 && line.SyncUnderflowCount >= 1),
+        "auxiliary mic line should publish underflow telemetry when the sync buffer is empty");
+
+    SetPrivateField(service, "_nextSpectrumAnalysisTimestamp", 0L);
+    lock (frameLock)
+    {
+        latestFrame = null;
+    }
+
+    var auxiliarySamples = new float[2_400];
+    for (var i = 0; i < auxiliarySamples.Length; i++)
+    {
+        auxiliarySamples[i] = (i / 4) % 2 == 0 ? 0.35f : -0.35f;
+    }
+
+    InvokeAdditionalCapture(service, auxiliaryRuntime, auxiliarySamples);
+    InvokePrimaryCapture(service, new float[384 * 2]);
+
+    Assert(
+        WaitForMicLine(line =>
+            line.ChannelNumber == 3
+            && line.SyncTargetLatencyMilliseconds >= 34d
+            && line.SyncBufferedMilliseconds >= 30d
+            && line.SyncUnderflowCount >= 1),
+        "auxiliary mic line should publish target latency, buffered latency, and accumulated sync events");
+
+    bool WaitForMicLine(Func<MicrophoneSpectrumLine, bool> predicate)
+    {
+        return System.Threading.SpinWait.SpinUntil(
+            () =>
+            {
+                lock (frameLock)
+                {
+                    return latestFrame?.MicrophoneLines.Any(predicate) == true;
+                }
+            },
+            2_000);
+    }
 }
 
 static void LiveServiceBusRecordsAuxiliaryMicInProgramMix()
