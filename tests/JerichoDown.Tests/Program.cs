@@ -48,6 +48,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
+    ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
@@ -1015,6 +1016,49 @@ static void LiveOutputProviderFollowsMixerGainPanPolarityAndDelay()
     Assert(lateLeftPeak > 0.20f, "per-mic delay should release the delayed live output after the requested time");
 }
 
+static void LiveServiceBusMixesAuxiliaryCaptureDevice()
+{
+    using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out var outputProvider);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                3,
+                7,
+                InputChannelMode.MonoSum,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                100d,
+                false,
+                false,
+                0d,
+                true,
+                false)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+
+    var auxiliaryCapture = new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 1));
+    var auxiliaryRuntime = CreateAdditionalCaptureRuntime(service, deviceNumber: 7, auxiliaryCapture);
+    var auxiliarySamples = new float[2_400];
+    for (var i = 0; i < auxiliarySamples.Length; i++)
+    {
+        auxiliarySamples[i] = (i / 4) % 2 == 0 ? 0.35f : -0.35f;
+    }
+
+    InvokeAdditionalCapture(service, auxiliaryRuntime, auxiliarySamples);
+
+    var primaryCapture = new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2));
+    SetPrivateField<IWaveIn?>(service, "_capture", primaryCapture);
+    InvokePrimaryCapture(service, new float[384 * 2]);
+
+    var outputSamples = ReadBufferedFloatSamples(outputProvider);
+    AssertStereoPeaks(
+        outputSamples,
+        "auxiliary capture device should feed the service output bus",
+        leftMaximum: 0.03f,
+        rightMinimum: 0.12f);
+}
+
 static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
 {
     using var service = CreateLiveOutputServiceForProvider(outputProvider);
@@ -1024,11 +1068,9 @@ static void FeedLiveOutputProvider(BufferedWaveProvider outputProvider)
 
 static MicrophoneSpectrumService CreateLiveOutputService(out BufferedWaveProvider outputProvider)
 {
-    outputProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2))
-    {
-        ReadFully = false
-    };
-    return CreateLiveOutputServiceForProvider(outputProvider);
+    var service = CreateLiveOutputServiceWithoutPrimaryCapture(out outputProvider);
+    SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+    return service;
 }
 
 static MicrophoneSpectrumService CreateLiveOutputServiceForProvider(BufferedWaveProvider outputProvider)
@@ -1037,6 +1079,21 @@ static MicrophoneSpectrumService CreateLiveOutputServiceForProvider(BufferedWave
     var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2);
     var capture = new FakeWaveIn(waveFormat);
     SetPrivateField<IWaveIn?>(service, "_capture", capture);
+    SetPrivateField(service, "_currentDeviceNumber", 0);
+    SetPrivateField(service, "_activeSampleRate", 48_000);
+    SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
+    SetPrivateField(service, "_processedOutputEnabled", 1);
+    SetPrivateField(service, "_processedOutputProvider", outputProvider);
+    return service;
+}
+
+static MicrophoneSpectrumService CreateLiveOutputServiceWithoutPrimaryCapture(out BufferedWaveProvider outputProvider)
+{
+    outputProvider = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2))
+    {
+        ReadFully = false
+    };
+    var service = new MicrophoneSpectrumService();
     SetPrivateField(service, "_currentDeviceNumber", 0);
     SetPrivateField(service, "_activeSampleRate", 48_000);
     SetPrivateField(service, "_inputChannelMode", InputChannelMode.MonoSum);
@@ -1104,11 +1161,52 @@ static void FeedAlternatingStereoBlock(MicrophoneSpectrumService service)
     }
 
     var buffer = MemoryMarshal.AsBytes(stereoSamples.AsSpan()).ToArray();
+    InvokePrimaryCaptureBytes(service, buffer);
+}
+
+static void InvokePrimaryCapture(MicrophoneSpectrumService service, float[] interleavedSamples)
+{
+    InvokePrimaryCaptureBytes(service, MemoryMarshal.AsBytes(interleavedSamples.AsSpan()).ToArray());
+}
+
+static void InvokePrimaryCaptureBytes(MicrophoneSpectrumService service, byte[] buffer)
+{
     var method = typeof(MicrophoneSpectrumService).GetMethod(
         "CaptureDataAvailable",
         BindingFlags.Instance | BindingFlags.NonPublic);
     Assert(method is not null, "capture callback should be available for output provider service integration test");
     method!.Invoke(service, [null, new WaveInEventArgs(buffer, buffer.Length)]);
+}
+
+static object CreateAdditionalCaptureRuntime(MicrophoneSpectrumService service, int deviceNumber, IWaveIn capture)
+{
+    var runtimeType = typeof(MicrophoneSpectrumService).GetNestedType(
+        "AdditionalCaptureRuntime",
+        BindingFlags.NonPublic);
+    Assert(runtimeType is not null, "additional capture runtime should be available for service integration test");
+    var runtime = Activator.CreateInstance(
+        runtimeType!,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        args: [service, deviceNumber],
+        culture: null);
+    Assert(runtime is not null, "additional capture runtime should be constructable for service integration test");
+    var captureProperty = runtimeType!.GetProperty(
+        "Capture",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+    Assert(captureProperty is not null, "additional capture runtime should expose capture property");
+    captureProperty!.SetValue(runtime, capture);
+    return runtime!;
+}
+
+static void InvokeAdditionalCapture(MicrophoneSpectrumService service, object runtime, float[] monoSamples)
+{
+    var buffer = MemoryMarshal.AsBytes(monoSamples.AsSpan()).ToArray();
+    var method = typeof(MicrophoneSpectrumService).GetMethod(
+        "AdditionalCaptureDataAvailable",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+    Assert(method is not null, "additional capture callback should be available for service integration test");
+    method!.Invoke(service, [runtime, new WaveInEventArgs(buffer, buffer.Length)]);
 }
 
 static float[] ReadBufferedFloatSamples(BufferedWaveProvider provider)
