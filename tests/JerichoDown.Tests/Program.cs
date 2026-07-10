@@ -91,6 +91,7 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
+    ("Audio recording exporter supports compressed targets", AudioRecordingExporterSupportsCompressedTargets),
     ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
     ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
     ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),
@@ -2501,7 +2502,7 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
 
 static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
 {
-    foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".flac", ".aiff", ".aif", ".wma" })
+    foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".flac", ".aiff", ".aif", ".wma" })
     {
         var path = Path.Combine(Path.GetTempPath(), "recording" + extension);
         var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", path);
@@ -2511,6 +2512,55 @@ static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
 
     var protectedPath = Path.Combine(Path.GetTempPath(), "recording.m4p");
     Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", protectedPath), "M4P should not be accepted as a recording playback format");
+}
+
+static void AudioRecordingExporterSupportsCompressedTargets()
+{
+    var extensions = AudioRecordingExporter.ExportFormats.Select(format => format.Extension).ToArray();
+    Assert(extensions.SequenceEqual(new[] { ".mp3", ".mp4", ".wma" }), "compressed export targets should be MP3, AAC-in-MP4, and WMA");
+    Assert(AudioRecordingExporter.TryGetFormatForExtension("mix.aac", out var aacInfo), "AAC files should map to the AAC exporter");
+    Assert(aacInfo.Format == AudioRecordingExportFormat.Aac, "AAC extension should use the AAC Media Foundation encoder");
+    Assert(!AudioRecordingExporter.TryGetFormatForExtension("protected.m4p", out _), "protected Apple Music M4P should not be an export target");
+
+    var defaultAacPath = AudioRecordingExporter.GetDefaultExportPath(@"C:\Sessions\mix_001.wav", AudioRecordingExportFormat.Aac);
+    Assert(defaultAacPath.EndsWith("mix_001_export.mp4", StringComparison.OrdinalIgnoreCase), "AAC export should default to the MP4 container extension");
+
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        var sourcePath = Path.Combine(folder, "source.wav");
+        using (var writer = new WaveFileWriter(sourcePath, WaveFormat.CreateIeeeFloatWaveFormat(44_100, 1)))
+        {
+            var samples = Enumerable.Range(0, 2_205)
+                .Select(i => (float)(Math.Sin(i * Math.PI * 2d * 440d / 44_100d) * 0.15d))
+                .ToArray();
+            writer.WriteSamples(samples, 0, samples.Length);
+        }
+
+        AudioRecordingExportFormatInfo? availableFormat = AudioRecordingExporter.ExportFormats.FirstOrDefault(format =>
+            AudioRecordingExporter.IsEncoderAvailable(format.Format, new WaveFormat(44_100, 16, 1)));
+        if (availableFormat is null)
+        {
+            return;
+        }
+
+        var targetPath = Path.Combine(folder, "source_export" + availableFormat.Extension);
+        AudioRecordingExporter.Export(sourcePath, targetPath, availableFormat.Format);
+        Assert(File.Exists(sourcePath), "export should leave the source recording intact");
+        Assert(File.Exists(targetPath), "export should create the compressed target file when the encoder is available");
+        Assert(new FileInfo(targetPath).Length > 0, "compressed export should not be empty");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
 }
 
 static void KaraokeBrowserDfsHidesM4pTracks()

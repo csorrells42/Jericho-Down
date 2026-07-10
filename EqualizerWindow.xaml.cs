@@ -1893,9 +1893,82 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void ExportSelectedRecordingMp3MenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedAudioRecording(AudioRecordingExportFormat.Mp3);
+    }
+
+    private void ExportSelectedRecordingAacMenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedAudioRecording(AudioRecordingExportFormat.Aac);
+    }
+
+    private void ExportSelectedRecordingWmaMenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedAudioRecording(AudioRecordingExportFormat.Wma);
+    }
+
+    private void ExportSelectedAudioRecording(AudioRecordingExportFormat format)
+    {
+        var selectedPath = GetSelectedAudioRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            AudioRecordingStatusText.Text = "Choose a saved recording above.";
+            return;
+        }
+
+        try
+        {
+            if (!TryChooseAudioExportPath(selectedPath, format, out var exportPath))
+            {
+                return;
+            }
+
+            var info = AudioRecordingExporter.GetFormatInfo(format);
+            AudioRecordingStatusText.Text = $"Exporting {info.DisplayName}: {System.IO.Path.GetFileName(selectedPath)}";
+            AudioRecordingExporter.Export(selectedPath, exportPath, format);
+            _lastAudioRecordingPath = exportPath;
+            RefreshAudioRecordingFiles(exportPath);
+            AudioRecordingStatusText.Text = $"Exported {info.DisplayName}: {System.IO.Path.GetFileName(exportPath)}.";
+        }
+        catch (Exception ex)
+        {
+            AudioRecordingStatusText.Text = $"Export failed: {ex.Message}";
+        }
+
+        UpdateStandaloneAudioRecordingTransportControls();
+    }
+
     private void DeleteSelectedRecordingMenuClicked(object sender, RoutedEventArgs e)
     {
         DeleteSelectedAudioRecording();
+    }
+
+    private bool TryChooseAudioExportPath(string sourcePath, AudioRecordingExportFormat format, out string exportPath)
+    {
+        var info = AudioRecordingExporter.GetFormatInfo(format);
+        var defaultPath = AudioRecordingExporter.GetDefaultExportPath(sourcePath, format);
+        var dialog = new SaveFileDialog
+        {
+            AddExtension = true,
+            DefaultExt = info.Extension.TrimStart('.'),
+            FileName = System.IO.Path.GetFileName(defaultPath),
+            Filter = $"{info.SaveDialogFilter}|All files|*.*",
+            InitialDirectory = System.IO.Path.GetDirectoryName(defaultPath),
+            OverwritePrompt = true,
+            Title = $"Export {info.DisplayName}"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            exportPath = string.Empty;
+            return false;
+        }
+
+        exportPath = AudioRecordingExporter.IsSupportedExportExtension(dialog.FileName)
+            ? dialog.FileName
+            : System.IO.Path.ChangeExtension(dialog.FileName, info.Extension);
+        return true;
     }
 
     private void OpenAudioRecordingLocationClicked(object sender, RoutedEventArgs e)
@@ -10033,6 +10106,52 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void ExportSelectedKaraokeRecordingMp3MenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedKaraokeRecording(AudioRecordingExportFormat.Mp3);
+    }
+
+    private void ExportSelectedKaraokeRecordingAacMenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedKaraokeRecording(AudioRecordingExportFormat.Aac);
+    }
+
+    private void ExportSelectedKaraokeRecordingWmaMenuClicked(object sender, RoutedEventArgs e)
+    {
+        ExportSelectedKaraokeRecording(AudioRecordingExportFormat.Wma);
+    }
+
+    private void ExportSelectedKaraokeRecording(AudioRecordingExportFormat format)
+    {
+        var selectedPath = GetSelectedKaraokeRecordingPath();
+        if (string.IsNullOrWhiteSpace(selectedPath) || !File.Exists(selectedPath))
+        {
+            KaraokeVocalStatusText.Text = "Choose a saved karaoke recording above.";
+            return;
+        }
+
+        try
+        {
+            if (!TryChooseAudioExportPath(selectedPath, format, out var exportPath))
+            {
+                return;
+            }
+
+            var info = AudioRecordingExporter.GetFormatInfo(format);
+            KaraokeVocalStatusText.Text = $"Exporting {info.DisplayName}: {System.IO.Path.GetFileName(selectedPath)}";
+            AudioRecordingExporter.Export(selectedPath, exportPath, format);
+            _lastKaraokeRecordingPath = exportPath;
+            RefreshKaraokeRecordingFiles(exportPath);
+            KaraokeVocalStatusText.Text = $"Exported {info.DisplayName}: {System.IO.Path.GetFileName(exportPath)}.";
+        }
+        catch (Exception ex)
+        {
+            KaraokeVocalStatusText.Text = $"Export failed: {ex.Message}";
+        }
+
+        UpdateKaraokeTransportControls();
+    }
+
     private void DeleteSelectedKaraokeRecordingMenuClicked(object sender, RoutedEventArgs e)
     {
         DeleteSelectedKaraokeRecording();
@@ -12751,6 +12870,7 @@ public partial class EqualizerWindow : Window
             || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".aac", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".aiff", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".aif", StringComparison.OrdinalIgnoreCase)

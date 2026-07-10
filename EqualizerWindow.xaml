@@ -1439,6 +1439,11 @@
                           <ContextMenu>
                             <MenuItem Header="Play" Click="PlaySelectedKaraokeRecordingMenuClicked" />
                             <MenuItem Header="Properties" Click="ShowSelectedKaraokeRecordingPropertiesMenuClicked" />
+                            <MenuItem Header="Export">
+                              <MenuItem Header="MP3..." Click="ExportSelectedKaraokeRecordingMp3MenuClicked" />
+                              <MenuItem Header="AAC..." Click="ExportSelectedKaraokeRecordingAacMenuClicked" />
+                              <MenuItem Header="WMA..." Click="ExportSelectedKaraokeRecordingWmaMenuClicked" />
+                            </MenuItem>
                             <Separator />
                             <MenuItem Header="Delete File" Click="DeleteSelectedKaraokeRecordingMenuClicked" />
                           </ContextMenu>
@@ -2444,6 +2449,11 @@
                           <ContextMenu>
                             <MenuItem Header="Play" Click="PlaySelectedRecordingMenuClicked" />
                             <MenuItem Header="Properties" Click="ShowSelectedRecordingPropertiesMenuClicked" />
+                            <MenuItem Header="Export">
+                              <MenuItem Header="MP3..." Click="ExportSelectedRecordingMp3MenuClicked" />
+                              <MenuItem Header="AAC..." Click="ExportSelectedRecordingAacMenuClicked" />
+                              <MenuItem Header="WMA..." Click="ExportSelectedRecordingWmaMenuClicked" />
+                            </MenuItem>
                             <Separator />
                             <MenuItem Header="Delete File" Click="DeleteSelectedRecordingMenuClicked" />
                           </ContextMenu>
