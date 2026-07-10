@@ -5,7 +5,9 @@ public enum ProcessedOutputRouteBackend
     WasapiFloat,
     WasapiPcm,
     WaveOutFloat,
-    WaveOutPcm
+    WaveOutPcm,
+    DirectSoundFloat,
+    DirectSoundPcm
 }
 
 public static class ProcessedOutputRoutePlanner
@@ -18,7 +20,9 @@ public static class ProcessedOutputRoutePlanner
                 ProcessedOutputRouteBackend.WasapiFloat,
                 ProcessedOutputRouteBackend.WasapiPcm,
                 ProcessedOutputRouteBackend.WaveOutFloat,
-                ProcessedOutputRouteBackend.WaveOutPcm
+                ProcessedOutputRouteBackend.WaveOutPcm,
+                ProcessedOutputRouteBackend.DirectSoundFloat,
+                ProcessedOutputRouteBackend.DirectSoundPcm
             ]
             :
             [

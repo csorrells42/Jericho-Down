@@ -535,11 +535,13 @@ static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
         ProcessedOutputRouteBackend.WasapiFloat,
         ProcessedOutputRouteBackend.WasapiPcm,
         ProcessedOutputRouteBackend.WaveOutFloat,
-        ProcessedOutputRouteBackend.WaveOutPcm
+        ProcessedOutputRouteBackend.WaveOutPcm,
+        ProcessedOutputRouteBackend.DirectSoundFloat,
+        ProcessedOutputRouteBackend.DirectSoundPcm
     };
     Assert(
         fullOrder.SequenceEqual(expectedFullOrder),
-        "default and endpoint output routes should try stable WASAPI before WaveOut fallback");
+        "default output routes should try stable WASAPI, then WaveOut, then DirectSound as the last-resort fallback");
 
     var endpointOnlyOrder = ProcessedOutputRoutePlanner.CreateAttemptOrder(canUseWaveOutFallback: false);
     var expectedEndpointOnlyOrder = new[]

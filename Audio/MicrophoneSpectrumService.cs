@@ -2129,7 +2129,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         player = null;
         playbackProvider = null;
-        provider = backend is ProcessedOutputRouteBackend.WasapiPcm or ProcessedOutputRouteBackend.WaveOutPcm
+        provider = backend is ProcessedOutputRouteBackend.WasapiPcm
+            or ProcessedOutputRouteBackend.WaveOutPcm
+            or ProcessedOutputRouteBackend.DirectSoundPcm
             ? pcmProvider
             : floatProvider;
         return backend switch
@@ -2138,6 +2140,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 => TryStartWasapiProcessedOutput(provider, out player, out playbackProvider),
             ProcessedOutputRouteBackend.WaveOutFloat or ProcessedOutputRouteBackend.WaveOutPcm
                 => TryStartWaveOutProcessedOutput(provider, out player),
+            ProcessedOutputRouteBackend.DirectSoundFloat or ProcessedOutputRouteBackend.DirectSoundPcm
+                => TryStartDirectSoundProcessedOutput(provider, out player),
             _ => false
         };
     }
@@ -2153,6 +2157,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             ProcessedOutputRouteBackend.WasapiPcm => $"{wasapiName} PCM",
             ProcessedOutputRouteBackend.WaveOutFloat => "WaveOut",
             ProcessedOutputRouteBackend.WaveOutPcm => "WaveOut PCM",
+            ProcessedOutputRouteBackend.DirectSoundFloat => "DirectSound",
+            ProcessedOutputRouteBackend.DirectSoundPcm => "DirectSound PCM",
             _ => "unknown output"
         };
     }
@@ -2294,6 +2300,35 @@ public sealed class MicrophoneSpectrumService : IDisposable
         waveOut.Init(provider);
         waveOut.Play();
         return waveOut;
+    }
+
+    private bool TryStartDirectSoundProcessedOutput(IWaveProvider provider, out IWavePlayer? player)
+    {
+        player = null;
+        if (!CanUseWaveOutProcessedOutputFallback())
+        {
+            return false;
+        }
+
+        try
+        {
+            player = StartDirectSoundProcessedOutput(provider);
+            return true;
+        }
+        catch
+        {
+            player?.Dispose();
+            player = null;
+            return false;
+        }
+    }
+
+    private static IWavePlayer StartDirectSoundProcessedOutput(IWaveProvider provider)
+    {
+        var directSound = new DirectSoundOut(WaveOutProcessedOutputLatencyMilliseconds);
+        directSound.Init(provider);
+        directSound.Play();
+        return directSound;
     }
 
     private void RestartProcessedOutput()
