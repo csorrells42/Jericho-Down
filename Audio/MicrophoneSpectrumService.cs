@@ -160,6 +160,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         public required ISampleProvider ProgramProvider { get; init; }
 
+        public required NaudioPeakMeterSampleProvider ProgramMeterProvider { get; init; }
+
         public required SpectrumAnalyzer Analyzer { get; init; }
 
         public required SpectrumAnalyzer RawAnalyzer { get; init; }
@@ -299,6 +301,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
         public required int SyncDriftTrimCount { get; init; }
 
         public required int SampleRate { get; init; }
+
+        public required double MeteredPeakLevel { get; init; }
     }
 
     public event EventHandler<SpectrumFrame>? SpectrumAvailable;
@@ -592,6 +596,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     programProvider = panProvider;
                 }
 
+                var programMeterProvider = new NaudioPeakMeterSampleProvider(
+                    programProvider,
+                    GetProgramMeterSamplesPerNotification(sampleRate));
+
                 return new LiveMicChannelRuntime
                 {
                     ChannelNumber = channel.ChannelNumber,
@@ -616,7 +624,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     StereoBalanceProvider = stereoBalanceProvider,
                     DelayLine = delayLine,
                     StereoDelayLine = stereoDelayLine,
-                    ProgramProvider = programProvider,
+                    ProgramProvider = programMeterProvider,
+                    ProgramMeterProvider = programMeterProvider,
                     Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
                     RawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
                     SyncBuffer = channel.DeviceNumber == _currentDeviceNumber
@@ -1648,11 +1657,18 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 SyncTargetLatencySamples = GetSyncFrameCount(channel, channel.SyncBuffer?.TargetLatencySamples ?? 0),
                 SyncUnderflowCount = channel.SyncBuffer?.UnderflowCount ?? 0,
                 SyncDriftTrimCount = channel.SyncBuffer?.DriftTrimCount ?? 0,
-                SampleRate = Math.Max(8000, _activeSampleRate)
+                SampleRate = Math.Max(8000, _activeSampleRate),
+                MeteredPeakLevel = channel.ProgramMeterProvider.PeakLevel
             });
         }
 
         return snapshots.ToArray();
+    }
+
+    private static int GetProgramMeterSamplesPerNotification(int sampleRate)
+    {
+        var framesPerNotification = Math.Max(1, sampleRate / 50);
+        return framesPerNotification * 2;
     }
 
     private static int GetSyncFrameCount(LiveMicChannelRuntime channel, int bufferedSamples)
@@ -1740,7 +1756,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     SamplesToMilliseconds(microphoneSample.SyncBufferedSamples, microphoneSample.SampleRate),
                     SamplesToMilliseconds(microphoneSample.SyncTargetLatencySamples, microphoneSample.SampleRate),
                     microphoneSample.SyncUnderflowCount,
-                    microphoneSample.SyncDriftTrimCount));
+                    microphoneSample.SyncDriftTrimCount,
+                    microphoneSample.MeteredPeakLevel));
             }
 
             microphoneLines = lines;

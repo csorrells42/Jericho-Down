@@ -68,6 +68,8 @@ var tests = new (string Name, Action Test)[]
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
     ("Mix bus processor scales and protects output", MixBusProcessorScalesAndProtectsOutput),
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
+    ("NAudio peak meter reports provider peaks", NAudioPeakMeterReportsProviderPeaks),
+    ("Spectrum lines carry NAudio metered peaks", SpectrumLinesCarryNaudioMeteredPeaks),
     ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
@@ -2039,6 +2041,33 @@ static void NAudioProgramBusMixesOneShotMicBlocks()
 
     Assert(Math.Abs(output[0] - 0.3f) < 0.0001f, "program mixer should sum active mic faders");
     Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "program mixer should sum each sample frame");
+}
+
+static void NAudioPeakMeterReportsProviderPeaks()
+{
+    var source = new ArraySampleProvider(
+        [-0.25f, 0.75f, 0.10f, -0.50f],
+        WaveFormat.CreateIeeeFloatWaveFormat(48_000, 1));
+    var meter = new NaudioPeakMeterSampleProvider(source, samplesPerNotification: 2);
+    var output = new float[2];
+
+    var read = meter.Read(output, 0, output.Length);
+
+    Assert(read == output.Length, "metered provider should read through the source provider");
+    Assert(Math.Abs(meter.PeakLevel - 0.75d) < 0.0001d, "NAudio meter should report the strongest absolute sample in the notification");
+}
+
+static void SpectrumLinesCarryNaudioMeteredPeaks()
+{
+    var line = new MicrophoneSpectrumLine(
+        1,
+        [0.2d],
+        0.4d,
+        rawPeakLevel: 0.9d,
+        meteredPeakLevel: 0.35d);
+
+    Assert(Math.Abs(line.MeteredPeakLevel - 0.35d) < 0.0001d, "spectrum line should carry NAudio metered channel peak separately from raw input peak");
+    Assert(Math.Abs(line.RawPeakLevel - 0.9d) < 0.0001d, "raw input peak should remain available for input coaching and fallback metering");
 }
 
 static void LiveProgramMixBusCombinesTenMicFeeds()

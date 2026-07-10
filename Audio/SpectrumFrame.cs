@@ -15,7 +15,8 @@ public sealed class MicrophoneSpectrumLine
         double syncBufferedMilliseconds = 0d,
         double syncTargetLatencyMilliseconds = 0d,
         int syncUnderflowCount = 0,
-        int syncDriftTrimCount = 0)
+        int syncDriftTrimCount = 0,
+        double meteredPeakLevel = 0d)
     {
         ChannelNumber = channelNumber;
         Magnitudes = magnitudes;
@@ -30,6 +31,7 @@ public sealed class MicrophoneSpectrumLine
         SyncTargetLatencyMilliseconds = syncTargetLatencyMilliseconds;
         SyncUnderflowCount = syncUnderflowCount;
         SyncDriftTrimCount = syncDriftTrimCount;
+        MeteredPeakLevel = meteredPeakLevel;
     }
 
     public int ChannelNumber { get; }
@@ -53,6 +55,8 @@ public sealed class MicrophoneSpectrumLine
     public int SyncUnderflowCount { get; }
 
     public int SyncDriftTrimCount { get; }
+
+    public double MeteredPeakLevel { get; }
 
     public float[] ProcessedSamples { get; }
 

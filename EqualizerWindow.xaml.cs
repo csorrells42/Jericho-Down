@@ -10696,7 +10696,10 @@ public partial class EqualizerWindow : Window
                 continue;
             }
 
-            channel.UpdateLevelMeter(line.RawPeakLevel, line.RawRmsLevel);
+            var meteredPeak = line.MeteredPeakLevel > 0d
+                ? line.MeteredPeakLevel
+                : line.RawPeakLevel;
+            channel.UpdateLevelMeter(meteredPeak, line.RawRmsLevel);
             channel.UpdateSyncStatus(
                 line.SyncBufferedMilliseconds,
                 line.SyncTargetLatencyMilliseconds,
