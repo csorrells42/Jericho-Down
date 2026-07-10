@@ -44,8 +44,7 @@ public partial class EqualizerWindow : Window
     private const double MaximumDisplayFrequency = 20000d;
     private const double EqualizerHoverQ = 1.35d;
     private const int MaximumMicChannelCount = 10;
-    private const double MicAnalysisDurationSeconds = 8d;
-    private const double SequentialMicAnalysisPhaseSeconds = 5d;
+    private const int SystemAudioLoopbackChannelNumber = MaximumMicChannelCount + 1;
     private const double ExpandedControlRailWidth = 360d;
     private const double CollapsedControlRailWidth = 44d;
     private const double RightControlRailWidth = 360d;
@@ -69,6 +68,16 @@ public partial class EqualizerWindow : Window
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
+    private static readonly string[] SupportedKaraokeTrackExtensions =
+    [
+        ".wav",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".wma",
+        ".flac"
+    ];
+    private static readonly string KaraokeTrackOpenFileFilter = $"Audio files|{string.Join(';', SupportedKaraokeTrackExtensions.Select(extension => $"*{extension}"))}|All files|*.*";
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
     private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
     private static readonly string KaraokeAiToolsFolder = System.IO.Path.Combine(AppStoragePaths.SettingsFolder, "Tools", "KaraokeAi");
@@ -103,7 +112,6 @@ public partial class EqualizerWindow : Window
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
-    private readonly object _micAnalysisLock = new();
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
     [
         new("Rumble", 40, 80, "Low thumps, desk vibration, plosives"),
@@ -330,7 +338,6 @@ public partial class EqualizerWindow : Window
     private DateTime _lastRecordingTimerUpdateUtc = DateTime.MinValue;
     private DateTime _lastRecordingHealthUpdateUtc = DateTime.MinValue;
     private DateTime _lastStandaloneRecordingSyncUtc = DateTime.MinValue;
-    private DateTime _lastMicAnalysisUiUpdateUtc = DateTime.MinValue;
     private string? _activeRecordingSessionFolder;
     private string? _lastSessionRecordingPath;
     private int _activeRecordingSetNumber;
@@ -343,16 +350,18 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingCameraControls;
     private bool _isLoadingCameraModes;
     private bool _isCameraServiceStopPending;
+    private bool _isCameraPreviewStartPending;
     private bool _isDirectShowPreviewActive;
     private int _cameraServiceStopOperationVersion;
+    private int _cameraPreviewStartOperationVersion;
     private bool _pendingVideoDenoiseEnabled;
     private double _pendingVideoDenoiseStrength = DenoiseDefaultStrength;
     private double _videoDenoiseSliderStrength = DenoiseDefaultStrength;
     private VideoFrameColorSettings _pendingVideoColorSettings = VideoFrameColorSettings.Off;
-    private readonly Dx12Camera.CpuPreviewFramePump _cpuPreviewFramePump;
+    private readonly CpuPreviewFramePump _cpuPreviewFramePump;
     private WriteableBitmap? _cameraPreviewBitmap;
     private Dx12Camera? _dx12Camera;
-    private readonly Dx12Camera.TextureNativeStatusPump _textureNativeStatusPump;
+    private readonly TextureNativeStatusPump _textureNativeStatusPump;
     private string? _lastTextureNativeCameraError;
     private TextureNativeCameraRecordingSession? _textureNativeRecordingSession;
     private TextureNativeRecordingResult? _lastTextureNativeRecordingResult;
@@ -390,22 +399,6 @@ public partial class EqualizerWindow : Window
     private bool _isSessionPlaybackPlaying;
     private bool _isSessionPlaybackEnded;
     private bool _startSessionPlaybackFromBeginning;
-    private bool _isMicAnalysisRunning;
-    private bool _micAnalysisReadyToFinalize;
-    private DateTime _micAnalysisStartedAt;
-    private double[] _micAnalysisInput1Sums = [];
-    private double[] _micAnalysisInput2Sums = [];
-    private int _micAnalysisInput1FrameCount;
-    private int _micAnalysisInput2FrameCount;
-    private double _micAnalysisInput1Squares;
-    private double _micAnalysisInput2Squares;
-    private long _micAnalysisInput1SampleCount;
-    private long _micAnalysisInput2SampleCount;
-    private double _micAnalysisInput1DisplayOffset;
-    private double _micAnalysisInput2DisplayOffset;
-    private bool _micAnalysisSequential;
-    private bool _micAnalysisNormalizeVolume = true;
-
     private static ShapePath[] CreateMixingMicSpectrumTraces()
     {
         var traces = new ShapePath[2];
@@ -428,14 +421,14 @@ public partial class EqualizerWindow : Window
     public EqualizerWindow()
     {
         InitializeComponent();
-        _cpuPreviewFramePump = new Dx12Camera.CpuPreviewFramePump(Dispatcher, ProcessPendingCameraPreviewFrame, CameraPumpWarningRaised);
-        _textureNativeStatusPump = new Dx12Camera.TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame, CameraPumpWarningRaised);
+        _cpuPreviewFramePump = new CpuPreviewFramePump(Dispatcher, ProcessPendingCameraPreviewFrame, CameraPumpWarningRaised);
+        _textureNativeStatusPump = new TextureNativeStatusPump(Dispatcher, ProcessPendingTextureNativeFrame, CameraPumpWarningRaised);
         ApplyPersistedWindowPlacement();
         _safeStartCameraRecoveryActive = _startupRecovery.PreviousRunDidNotCloseCleanly;
         _safeStartDx12Disabled = _startupRecovery.PreviousRunDidNotCloseCleanly;
         FreezeSharedBrushes();
         OrderMainTabs();
-        _activeMicChannel = _micChannels[0];
+        _activeMicChannel = GetDefaultActiveMicChannel() ?? _micChannels[0];
         UpdateActiveMicSelectionFlags();
         DataContext = Settings;
         EqBandPanel.ItemsSource = Bands;
@@ -619,7 +612,9 @@ public partial class EqualizerWindow : Window
         MicChannelComboBox.ItemsSource = _micChannels;
         MixingChannelsItemsControl.ItemsSource = _micChannels;
         UpdateMixingMicLegend();
-        MicChannelComboBox.SelectedItem = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
+        MicChannelComboBox.SelectedItem = FindMicChannel(_appSettings.SelectedMicChannelNumber)
+            ?? GetDefaultActiveMicChannel()
+            ?? _micChannels[0];
         ApplyMixerStateToUi();
         if (devices.Count > 0)
         {
@@ -652,12 +647,12 @@ public partial class EqualizerWindow : Window
         CameraProfileComboBox.ItemsSource = CameraProfileNames;
         LoadCameraProfileList();
 
-        var cameras = Dx12Camera.GetCameras();
+        var cameras = CameraSourceSelection.GetCameras();
 
         CameraComboBox.ItemsSource = cameras;
         if (cameras.Count > 0)
         {
-            CameraComboBox.SelectedItem = Dx12Camera.FindCamera(
+            CameraComboBox.SelectedItem = CameraSourceSelection.FindCamera(
                 cameras,
                 _appSettings.CameraDevicePath,
                 _appSettings.CameraSource,
@@ -798,15 +793,20 @@ public partial class EqualizerWindow : Window
         var availableChannels = GetAvailableInputChannelCount(device, deviceFormat);
         var options = new List<InputChannelOption>
         {
-            new(InputChannelMode.MonoSum, InputChannelModeInfo.GetDisplayLabel(InputChannelMode.MonoSum))
+            new(InputChannelMode.MonoSum, GetInputChannelDisplayLabel(InputChannelMode.MonoSum, availableChannels, device))
         };
+
+        if (availableChannels >= 2)
+        {
+            options.Add(new InputChannelOption(InputChannelMode.StereoPair, GetInputChannelDisplayLabel(InputChannelMode.StereoPair, availableChannels, device)));
+        }
 
         for (var channelIndex = 0; channelIndex < availableChannels; channelIndex++)
         {
             var mode = InputChannelModeInfo.GetChannelMode(channelIndex);
             if (mode is not null)
             {
-                options.Add(new InputChannelOption(mode.Value, GetInputChannelDisplayLabel(mode.Value, availableChannels)));
+                options.Add(new InputChannelOption(mode.Value, GetInputChannelDisplayLabel(mode.Value, availableChannels, device)));
             }
         }
 
@@ -839,7 +839,7 @@ public partial class EqualizerWindow : Window
         return Math.Clamp(channelCount, 0, MaximumMicChannelCount);
     }
 
-    private static string GetInputChannelDisplayLabel(InputChannelMode mode, int availableChannels)
+    private static string GetInputChannelDisplayLabel(InputChannelMode mode, int availableChannels, AudioInputDevice? device = null)
     {
         if (availableChannels <= 1 && mode == InputChannelMode.Input1Left)
         {
@@ -868,24 +868,31 @@ public partial class EqualizerWindow : Window
             ApplyMicChannelState(channel, state, devices);
         }
 
+        EnsureSystemAudioLoopbackChannel(devices);
+
         if (persistedChannels.Count == 0)
         {
-            var firstChannel = _micChannels[0];
-            firstChannel.SelectedDevice = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? devices.FirstOrDefault();
-            firstChannel.InputChannelMode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
-                ? parsedMode
-                : InputChannelMode.MonoSum;
-            firstChannel.ActivePresetName = string.IsNullOrWhiteSpace(_appSettings.ActivePresetName)
-                ? firstChannel.ActivePresetName
-                : _appSettings.ActivePresetName;
-            firstChannel.ActivePresetIsUserPreset = _appSettings.ActivePresetIsUserPreset;
+            var firstMicChannel = FindMicChannel(1) ?? GetDefaultActiveMicChannel();
+            if (firstMicChannel is not null)
+            {
+                firstMicChannel.SelectedDevice = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? GetDefaultPhysicalInputDevice(devices);
+                firstMicChannel.InputChannelMode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
+                    ? parsedMode
+                    : InputChannelMode.MonoSum;
+                firstMicChannel.ActivePresetName = string.IsNullOrWhiteSpace(_appSettings.ActivePresetName)
+                    ? firstMicChannel.ActivePresetName
+                    : _appSettings.ActivePresetName;
+                firstMicChannel.ActivePresetIsUserPreset = _appSettings.ActivePresetIsUserPreset;
+            }
         }
         else
         {
             CoercePersistedMicChannelModes(devices);
         }
 
-        _activeMicChannel = FindMicChannel(_appSettings.SelectedMicChannelNumber) ?? _micChannels[0];
+        _activeMicChannel = FindMicChannel(_appSettings.SelectedMicChannelNumber)
+            ?? GetDefaultActiveMicChannel()
+            ?? _micChannels[0];
         UpdateActiveMicSelectionFlags();
     }
 
@@ -900,7 +907,7 @@ public partial class EqualizerWindow : Window
     private void ApplyMicChannelState(MicChannelStrip channel, MicChannelSettingsState state, IReadOnlyList<AudioInputDevice> devices)
     {
         channel.DisplayName = string.IsNullOrWhiteSpace(state.DisplayName)
-            ? $"Mic {channel.ChannelNumber}"
+            ? channel.DefaultDisplayName
             : state.DisplayName.Trim();
         channel.SelectedDevice = ResolvePersistedMicChannelDevice(devices, state.MicrophoneName);
         channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
@@ -964,6 +971,31 @@ public partial class EqualizerWindow : Window
         return FindMicChannel(_micChannels, channelNumber);
     }
 
+    private MicChannelStrip? GetDefaultActiveMicChannel()
+    {
+        return FindMicChannel(1)
+            ?? _micChannels.FirstOrDefault(channel => !channel.IsSystemAudioLoopbackChannel)
+            ?? _micChannels.FirstOrDefault();
+    }
+
+    private void EnsureSystemAudioLoopbackChannel(IReadOnlyList<AudioInputDevice> devices)
+    {
+        var channel = FindMicChannel(SystemAudioLoopbackChannelNumber);
+        if (channel is null)
+        {
+            return;
+        }
+
+        var loopbackDevice = devices.FirstOrDefault(device => device.IsSystemAudioLoopback);
+        channel.SelectedDevice = loopbackDevice;
+        if (loopbackDevice is not null && channel.InputChannelMode == InputChannelMode.MonoSum)
+        {
+            channel.InputChannelMode = InputChannelMode.StereoPair;
+        }
+
+        channel.InputChannelMode = CoerceInputChannelModeForDevice(loopbackDevice, null, channel.InputChannelMode);
+    }
+
     private static AudioInputDevice? FindAudioInputDevice(
         IReadOnlyList<AudioInputDevice> devices,
         string? name)
@@ -983,7 +1015,13 @@ public partial class EqualizerWindow : Window
             return null;
         }
 
-        return FindAudioInputDevice(devices, name) ?? devices.FirstOrDefault();
+        return FindAudioInputDevice(devices, name) ?? GetDefaultPhysicalInputDevice(devices);
+    }
+
+    private static AudioInputDevice? GetDefaultPhysicalInputDevice(IReadOnlyList<AudioInputDevice> devices)
+    {
+        return devices.FirstOrDefault(device => !device.IsSystemAudioLoopback)
+            ?? devices.FirstOrDefault();
     }
 
     private static AudioOutputDevice? FindAudioOutputDevice(
@@ -1055,7 +1093,7 @@ public partial class EqualizerWindow : Window
             }
         }
 
-        LoadWarmRadioPreset();
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.WarmRadio);
     }
 
     private bool HasPersistedMicChannelState()
@@ -1065,43 +1103,14 @@ public partial class EqualizerWindow : Window
 
     private bool ApplyBuiltInPreset(string presetName)
     {
-        if (presetName.Equals("Flat", StringComparison.OrdinalIgnoreCase))
+        var preset = BuiltInVoicePresetCatalog.Find(presetName);
+        if (preset is null)
         {
-            FlatPresetClicked(this, new RoutedEventArgs());
-            return true;
+            return false;
         }
 
-        if (presetName.Equals("Podcast Clean", StringComparison.OrdinalIgnoreCase))
-        {
-            PodcastCleanPresetClicked(this, new RoutedEventArgs());
-            return true;
-        }
-
-        if (presetName.Equals("Warm Radio", StringComparison.OrdinalIgnoreCase))
-        {
-            LoadWarmRadioPreset();
-            return true;
-        }
-
-        if (presetName.Equals("Deep Warm", StringComparison.OrdinalIgnoreCase))
-        {
-            DeepWarmPresetClicked(this, new RoutedEventArgs());
-            return true;
-        }
-
-        if (presetName.Equals("Noisy Room", StringComparison.OrdinalIgnoreCase))
-        {
-            NoisyRoomPresetClicked(this, new RoutedEventArgs());
-            return true;
-        }
-
-        if (presetName.Equals("Bright Headset", StringComparison.OrdinalIgnoreCase))
-        {
-            BrightHeadsetPresetClicked(this, new RoutedEventArgs());
-            return true;
-        }
-
-        return false;
+        LoadBuiltInPreset(preset);
+        return true;
     }
 
     private void ApplyActiveMicPresetUiState()
@@ -1198,13 +1207,13 @@ public partial class EqualizerWindow : Window
     {
         var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
         var camera = CameraComboBox?.SelectedItem as CameraDevice;
-        var mode = Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox?.SelectedItem);
+        var mode = CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox?.SelectedItem);
         var selectedAudioPath = GetSelectedAudioRecordingPath();
         var selectedSessionPath = GetSelectedSessionRecordingPath();
         var selectedKaraokeRecordingPath = GetSelectedKaraokeRecordingPath();
         var karaokeTrackPath = _karaokeTrackPath;
         var karaokeTrackPaths = _karaokeQueue.Select(track => track.Path).ToList();
-        var activeMicChannel = _activeMicChannel ?? _micChannels.FirstOrDefault();
+        var activeMicChannel = _activeMicChannel ?? GetDefaultActiveMicChannel();
         if (karaokeTrackPaths.Count == 0
             && !_karaokeQueueExplicitlyCleared
             && _appSettings.KaraokeTrackPaths is { Count: > 0 })
@@ -1396,6 +1405,7 @@ public partial class EqualizerWindow : Window
         SaveAppStateNow();
         _isClosing = true;
         _audioStreamOperationVersion++;
+        System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
         CompositionTarget.Rendering -= CompositionTargetRendering;
         _audioDeviceFormatTimer.Stop();
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
@@ -2088,7 +2098,7 @@ public partial class EqualizerWindow : Window
             {
                 _textureNativeRecordingSession.Resume();
             }
-            else if (Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
+            else if (CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
             {
                 _directShowPreviewService.ResumeRecording();
             }
@@ -2111,7 +2121,7 @@ public partial class EqualizerWindow : Window
             {
                 _textureNativeRecordingSession.Pause();
             }
-            else if (Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
+            else if (CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
             {
                 _directShowPreviewService.PauseRecording();
             }
@@ -2175,15 +2185,15 @@ public partial class EqualizerWindow : Window
 
     private bool StartActivePreviewRecording(string videoPath)
     {
-        var mode = Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem);
-        return Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
+        var mode = CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem);
+        return CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
             ? _directShowPreviewService.StartRecording(videoPath, mode)
             : _cameraPreviewService.StartRecording(videoPath, mode);
     }
 
     private string? StopActivePreviewRecording()
     {
-        if (Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
+        if (CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice))
         {
             var path = _directShowPreviewService.StopRecording();
             _lastPreviewRecordingDiagnostics = _directShowPreviewService.LastRecordingDiagnostics;
@@ -2206,7 +2216,7 @@ public partial class EqualizerWindow : Window
             {
                 return _dx12Camera.WriteMP4(
                     videoPath,
-                    Dx12Camera.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength);
             }
@@ -2217,7 +2227,7 @@ public partial class EqualizerWindow : Window
             }
         }
 
-        if (!Dx12Camera.ShouldUseTextureNativeRecording()
+        if (!VideoRecordingPolicy.ShouldUseTextureNativeRecording()
             || !_isCameraEnabled
             || string.IsNullOrWhiteSpace(videoPath)
             || CameraComboBox.SelectedItem is not CameraDevice camera)
@@ -2225,7 +2235,7 @@ public partial class EqualizerWindow : Window
             return false;
         }
 
-        if (Dx12Camera.IsCpuCameraPreviewOwningCamera(
+        if (CameraSourceSelection.IsCpuCameraPreviewOwningCamera(
             _isCameraEnabled,
             _dx12Camera,
             _cameraPreviewService.IsRunning,
@@ -2240,10 +2250,10 @@ public partial class EqualizerWindow : Window
         {
             _textureNativeRecordingSession = TextureNativeCameraRecorder.StartSession(
                 camera.Name,
-                Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem),
+                CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem),
                 videoPath,
                 new TextureNativeRecordingOptions(
-                    Dx12Camera.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength));
             return true;
@@ -2324,6 +2334,11 @@ public partial class EqualizerWindow : Window
 
     private void CameraSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isCameraEnabled)
+        {
+            CancelPendingCameraPreviewStart();
+        }
+
         _ = LoadCameraModesAsync();
         ResetCameraControlPanel("Camera changed. Use Refresh after modes load if you want to query Windows camera controls.");
         UpdateCameraEnabledState();
@@ -2444,25 +2459,9 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        DisposeActiveCameraForReinitialize();
-        if (_dx12Camera is null)
-        {
-            StartCameraPreview();
-        }
-    }
-
-    private void DisposeActiveCameraForReinitialize()
-    {
-        StopTextureNativeCameraStream();
-        StopPreviewServices();
-
-        _dx12Camera = null;
-        _isDirectShowPreviewActive = false;
-        _cpuPreviewFramePump.Reset();
-        _textureNativeStatusPump.Reset();
-        ClearPodcastCameraPreviewSurface();
-        ClearKaraokeVideoPreviewBitmap();
+        StopCameraPreview("Restarting camera preview for the active tab.");
         Dx12Camera.CollectReleasedCamera();
+        StartCameraPreview();
     }
 
     private bool IsPodcastTabSelected()
@@ -2496,23 +2495,6 @@ public partial class EqualizerWindow : Window
             && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void SelectMainTab(string header)
-    {
-        if (MainTabControl is null)
-        {
-            return;
-        }
-
-        foreach (var item in MainTabControl.Items.OfType<TabItem>())
-        {
-            if (string.Equals(item.Header?.ToString(), header, StringComparison.OrdinalIgnoreCase))
-            {
-                MainTabControl.SelectedItem = item;
-                return;
-            }
-        }
-    }
-
     private void ConfigureMediaFoundationPreview(bool denoiseEnabled)
     {
         _cameraPreviewService.DenoiseEnabled = denoiseEnabled;
@@ -2534,20 +2516,28 @@ public partial class EqualizerWindow : Window
         ConfigureDirectShowPreview(_pendingVideoDenoiseEnabled);
     }
 
-    private bool TryStartMediaFoundationPreview(
+    private async Task<bool> TryStartMediaFoundationPreviewAsync(
         CameraDevice camera,
         CameraVideoMode mode,
         bool denoiseEnabled)
     {
         ConfigureMediaFoundationPreview(denoiseEnabled);
-        return _cameraPreviewService.Start(camera, mode);
+        return await Task.Run(() => _cameraPreviewService.Start(camera, mode));
     }
 
-    private bool TryStartDirectShowPreviewService(CameraDevice directShowCamera, CameraVideoMode mode)
+    private async Task<bool> TryStartDirectShowPreviewServiceAsync(CameraDevice directShowCamera, CameraVideoMode mode)
     {
-        _cameraPreviewService.Stop();
         ConfigureDirectShowPreview(_pendingVideoDenoiseEnabled);
-        return _directShowPreviewService.Start(directShowCamera, mode);
+        return await Task.Run(() =>
+        {
+            _cameraPreviewService.Stop();
+            return _directShowPreviewService.Start(directShowCamera, mode);
+        });
+    }
+
+    private static async Task StopPreviewServiceAsync(Action stop)
+    {
+        await Task.Run(() => TryStopPreviewService(stop));
     }
 
     private void StopPreviewServices()
@@ -2569,17 +2559,57 @@ public partial class EqualizerWindow : Window
 
     private void UpdateCameraEnabledState()
     {
-        if (CameraEnabledToggle is null || CameraPreviewStatusText is null || CameraComboBox is null || CameraModeComboBox is null)
+        if (!RefreshCameraEnabledUi())
         {
+            CancelPendingCameraPreviewStart();
             return;
         }
 
+        if (!_isCameraEnabled)
+        {
+            CancelPendingCameraPreviewStart();
+            if (!_isCameraServiceStopPending)
+            {
+                StopCameraPreview(CameraStatusText.FormatCameraDisabledStatus(CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem)));
+            }
+
+            UpdateKaraokeVideoPreviewState();
+            return;
+        }
+
+        if (_isLoadingCameraModes)
+        {
+            CameraPreviewStatusText.Text = CameraComboBox.SelectedItem is CameraDevice loadingCamera
+                ? $"Loading modes before preview: {loadingCamera.Name}"
+                : "Loading camera modes before preview";
+            UpdateKaraokeVideoPreviewState();
+            return;
+        }
+
+        if (_isCameraServiceStopPending || _isCameraPreviewStartPending)
+        {
+            UpdateKaraokeVideoPreviewState();
+            return;
+        }
+
+        StartCameraPreview();
+        UpdateKaraokeVideoPreviewState();
+    }
+
+    private bool RefreshCameraEnabledUi()
+    {
+        if (CameraEnabledToggle is null || CameraPreviewStatusText is null || CameraComboBox is null || CameraModeComboBox is null)
+        {
+            return false;
+        }
+
+        var cameraBusy = _isCameraServiceStopPending || _isCameraPreviewStartPending;
         _isUpdatingCameraUi = true;
         try
         {
-            CameraEnabledToggle.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
-            CameraComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending;
-            CameraModeComboBox.IsEnabled = _cameraAvailable && !_isCameraServiceStopPending && CameraModeComboBox.Items.Count > 0;
+            CameraEnabledToggle.IsEnabled = _cameraAvailable && !cameraBusy;
+            CameraComboBox.IsEnabled = _cameraAvailable && !cameraBusy;
+            CameraModeComboBox.IsEnabled = _cameraAvailable && !cameraBusy && CameraModeComboBox.Items.Count > 0;
 
             if (!_cameraAvailable)
             {
@@ -2591,43 +2621,96 @@ public partial class EqualizerWindow : Window
                 CameraModeComboBox.SelectedIndex = 0;
                 ClearPreviewSurface(CameraPreviewImage, CameraPlaceholder);
                 UpdateKaraokeVideoPreviewState();
-                return;
+                return false;
             }
 
             CameraEnabledToggle.IsChecked = _isCameraEnabled;
-            CameraEnabledToggle.Content = _isCameraEnabled ? "Camera On" : "Camera Off";
+            CameraEnabledToggle.Content = _isCameraServiceStopPending
+                ? "Stopping..."
+                : _isCameraPreviewStartPending
+                    ? "Starting..."
+                    : _isCameraEnabled
+                        ? "Camera On"
+                        : "Camera Off";
         }
         finally
         {
             _isUpdatingCameraUi = false;
         }
 
-        if (_isCameraServiceStopPending)
-        {
-            return;
-        }
+        return true;
+    }
 
-        if (_isCameraEnabled)
-        {
-            if (_isLoadingCameraModes)
-            {
-                CameraPreviewStatusText.Text = CameraComboBox.SelectedItem is CameraDevice loadingCamera
-                    ? $"Loading modes before preview: {loadingCamera.Name}"
-                    : "Loading camera modes before preview";
-                return;
-            }
-
-            StartCameraPreview();
-        }
-        else
-        {
-            StopCameraPreview(Dx12Camera.FormatCameraDisabledStatus(Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem)));
-        }
-
-        UpdateKaraokeVideoPreviewState();
+    private void CancelPendingCameraPreviewStart()
+    {
+        System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
     }
 
     private void StartCameraPreview()
+    {
+        var operationVersion = System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
+        if (_isCameraPreviewStartPending)
+        {
+            if (CameraPreviewStatusText is not null)
+            {
+                CameraPreviewStatusText.Text = "Camera preview restart queued.";
+            }
+
+            RefreshCameraEnabledUi();
+            return;
+        }
+
+        if (_isCameraServiceStopPending)
+        {
+            if (CameraPreviewStatusText is not null)
+            {
+                CameraPreviewStatusText.Text = "Waiting for camera preview to stop before restarting.";
+            }
+
+            RefreshCameraEnabledUi();
+            return;
+        }
+
+        _ = StartCameraPreviewAsync(operationVersion);
+    }
+
+    private async Task StartCameraPreviewAsync(int operationVersion)
+    {
+        _isCameraPreviewStartPending = true;
+        RefreshCameraEnabledUi();
+
+        try
+        {
+            await StartCameraPreviewCoreAsync(operationVersion);
+        }
+        catch (Exception ex)
+        {
+            AppStateStore.LogDiagnostic("camera-preview-start-failed", ex);
+            if (!_isClosing && operationVersion == System.Threading.Volatile.Read(ref _cameraPreviewStartOperationVersion))
+            {
+                _isCameraEnabled = false;
+                StopCameraPreview($"Could not start camera preview: {ex.Message}");
+            }
+        }
+        finally
+        {
+            _isCameraPreviewStartPending = false;
+            RefreshCameraEnabledUi();
+
+            if (!_isClosing
+                && _isCameraEnabled
+                && !_isLoadingCameraModes
+                && !_isCameraServiceStopPending
+                && operationVersion != System.Threading.Volatile.Read(ref _cameraPreviewStartOperationVersion))
+            {
+                StartCameraPreview();
+            }
+
+            UpdateKaraokeVideoPreviewState();
+        }
+    }
+
+    private async Task StartCameraPreviewCoreAsync(int operationVersion)
     {
         if (CameraComboBox.SelectedItem is not CameraDevice camera)
         {
@@ -2640,21 +2723,26 @@ public partial class EqualizerWindow : Window
         ShowPreviewSurface(CameraPreviewImage, CameraPlaceholder);
 
         var mode = CameraModeComboBox.SelectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
-        if (Dx12Camera.ShouldUseSharedTextureCameraStream(_safeStartDx12Disabled))
+        if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
         {
-            if (Dx12Camera.TryGetTextureNativePreviewFailure(camera, mode, out var cachedTextureFailure))
+            return;
+        }
+
+        if (TextureNativePreviewPolicy.ShouldUseSharedTextureCameraStream(_safeStartDx12Disabled))
+        {
+            if (TextureNativePreviewPolicy.TryGetPreviewFailure(camera, mode, out var cachedTextureFailure))
             {
                 _lastTextureNativeCameraError = cachedTextureFailure;
                 CameraPreviewStatusText.Text = $"Shared GPU stream skipped for {camera.Name}: {cachedTextureFailure}";
             }
             else if (StartTextureNativeCameraStream(camera, mode))
             {
-                Dx12Camera.ForgetTextureNativePreviewFailure(camera, mode);
+                TextureNativePreviewPolicy.ForgetPreviewFailure(camera, mode);
                 return;
             }
             else
             {
-                Dx12Camera.RememberTextureNativePreviewFailure(
+                TextureNativePreviewPolicy.RememberPreviewFailure(
                     camera,
                     mode,
                     _lastTextureNativeCameraError ?? "shared texture preview attempt failed");
@@ -2664,13 +2752,24 @@ public partial class EqualizerWindow : Window
         }
 
         StopTextureNativeCameraStream();
-        _directShowPreviewService.Stop();
+        await StopPreviewServiceAsync(_directShowPreviewService.Stop);
+        if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+        {
+            return;
+        }
+
+        ReleaseStaleCameraPreviewOwnershipIfNeeded("CPU preview startup");
         _isDirectShowPreviewActive = false;
         CameraPreviewImage.Visibility = Visibility.Visible;
 
-        if (Dx12Camera.IsDirectShowCamera(camera))
+        if (CameraSourceSelection.IsDirectShowCamera(camera))
         {
-            if (TryStartDirectShowPreview(camera, camera, mode, isFallback: false))
+            if (await TryStartDirectShowPreviewAsync(camera, camera, mode, isFallback: false, operationVersion))
+            {
+                return;
+            }
+
+            if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
             {
                 return;
             }
@@ -2683,7 +2782,12 @@ public partial class EqualizerWindow : Window
 
         if (!_cameraPreviewService.IsAvailable)
         {
-            if (TryStartDirectShowFallbackPreview(camera, mode))
+            if (await TryStartDirectShowFallbackPreviewAsync(camera, mode, operationVersion))
+            {
+                return;
+            }
+
+            if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
             {
                 return;
             }
@@ -2694,34 +2798,69 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (TryStartMediaFoundationPreview(camera, mode, _pendingVideoDenoiseEnabled))
+        if (await TryStartMediaFoundationPreviewAsync(camera, mode, _pendingVideoDenoiseEnabled))
         {
+            if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+            {
+                await StopPreviewServiceAsync(_cameraPreviewService.Stop);
+                return;
+            }
+
             _isDirectShowPreviewActive = false;
-            ClaimFallbackCameraOwner(
+            if (ClaimFallbackCameraOwner(
                 camera,
                 mode,
                 "Media Foundation CPU preview",
-                () => _cameraPreviewService.Stop());
-            CameraPreviewStatusText.Text = Dx12Camera.FormatCameraStatus("Starting", camera, mode);
+                () => _cameraPreviewService.Stop()))
+            {
+                CameraPreviewStatusText.Text = CameraStatusText.FormatCameraStatus("Starting", camera, mode);
+                return;
+            }
+
+            await StopPreviewServiceAsync(_cameraPreviewService.Stop);
+        }
+
+        if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+        {
             return;
         }
 
         if (_pendingVideoDenoiseEnabled)
         {
-            if (TryStartMediaFoundationPreview(camera, mode, denoiseEnabled: false))
+            if (await TryStartMediaFoundationPreviewAsync(camera, mode, denoiseEnabled: false))
             {
+                if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+                {
+                    await StopPreviewServiceAsync(_cameraPreviewService.Stop);
+                    return;
+                }
+
                 _isDirectShowPreviewActive = false;
-                ClaimFallbackCameraOwner(
+                if (ClaimFallbackCameraOwner(
                     camera,
                     mode,
                     "Media Foundation CPU preview with denoise bypassed",
-                    () => _cameraPreviewService.Stop());
-                CameraPreviewStatusText.Text = $"{Dx12Camera.FormatCameraStatus("Starting", camera, mode)} - denoise bypassed because the camera rejected it";
-                return;
+                    () => _cameraPreviewService.Stop()))
+                {
+                    CameraPreviewStatusText.Text = $"{CameraStatusText.FormatCameraStatus("Starting", camera, mode)} - denoise bypassed because the camera rejected it";
+                    return;
+                }
+
+                await StopPreviewServiceAsync(_cameraPreviewService.Stop);
             }
         }
 
-        if (TryStartDirectShowFallbackPreview(camera, mode))
+        if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+        {
+            return;
+        }
+
+        if (await TryStartDirectShowFallbackPreviewAsync(camera, mode, operationVersion))
+        {
+            return;
+        }
+
+        if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
         {
             return;
         }
@@ -2731,37 +2870,82 @@ public partial class EqualizerWindow : Window
         UpdateCameraEnabledState();
     }
 
-    private bool TryStartDirectShowFallbackPreview(CameraDevice primaryCamera, CameraVideoMode mode)
+    private async Task<bool> TryStartDirectShowFallbackPreviewAsync(CameraDevice primaryCamera, CameraVideoMode mode, int operationVersion)
     {
-        return Dx12Camera.TryGetDirectShowFallbackCamera(primaryCamera, out var fallback)
+        return CameraSourceSelection.TryGetDirectShowFallbackCamera(primaryCamera, out var fallback)
             && fallback is not null
-            && TryStartDirectShowPreview(primaryCamera, fallback, mode, isFallback: true);
+            && await TryStartDirectShowPreviewAsync(primaryCamera, fallback, mode, isFallback: true, operationVersion);
     }
 
-    private bool TryStartDirectShowPreview(
+    private async Task<bool> TryStartDirectShowPreviewAsync(
         CameraDevice displayCamera,
         CameraDevice directShowCamera,
         CameraVideoMode mode,
-        bool isFallback)
+        bool isFallback,
+        int operationVersion)
     {
         CameraPreviewStatusText.Text = isFallback
             ? $"Starting DirectShow fallback for {displayCamera.Name}"
             : $"Starting DirectShow preview for {directShowCamera.Name}";
-        if (TryStartDirectShowPreviewService(directShowCamera, mode))
+        if (await TryStartDirectShowPreviewServiceAsync(directShowCamera, mode))
         {
+            if (!IsCameraPreviewStartCurrent(operationVersion, displayCamera, mode))
+            {
+                await StopPreviewServiceAsync(_directShowPreviewService.Stop);
+                return false;
+            }
+
             _isDirectShowPreviewActive = true;
-            ClaimFallbackCameraOwner(
+            if (ClaimFallbackCameraOwner(
                 displayCamera,
                 mode,
                 isFallback ? "DirectShow CPU fallback preview" : "DirectShow CPU preview",
-                () => _directShowPreviewService.Stop());
-            CameraPreviewStatusText.Text = isFallback
-                ? $"{Dx12Camera.FormatCameraStatus("Starting", displayCamera, mode)} - DirectShow fallback"
-                : Dx12Camera.FormatCameraStatus("Starting", displayCamera, mode);
-            return true;
+                () => _directShowPreviewService.Stop()))
+            {
+                CameraPreviewStatusText.Text = isFallback
+                    ? $"{CameraStatusText.FormatCameraStatus("Starting", displayCamera, mode)} - DirectShow fallback"
+                    : CameraStatusText.FormatCameraStatus("Starting", displayCamera, mode);
+                return true;
+            }
+
+            _isDirectShowPreviewActive = false;
+            await StopPreviewServiceAsync(_directShowPreviewService.Stop);
         }
 
         return false;
+    }
+
+    private bool IsCameraPreviewStartCurrent(int operationVersion, CameraDevice camera, CameraVideoMode mode)
+    {
+        return !_isClosing
+            && _isCameraEnabled
+            && operationVersion == System.Threading.Volatile.Read(ref _cameraPreviewStartOperationVersion)
+            && CameraDevicesMatch(CameraComboBox.SelectedItem as CameraDevice, camera)
+            && CameraModesMatch(CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem), mode);
+    }
+
+    private static bool CameraDevicesMatch(CameraDevice? selectedCamera, CameraDevice expectedCamera)
+    {
+        return selectedCamera is not null
+            && selectedCamera.DeviceNumber == expectedCamera.DeviceNumber
+            && string.Equals(selectedCamera.Name, expectedCamera.Name, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(selectedCamera.DevicePath, expectedCamera.DevicePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(selectedCamera.Source, expectedCamera.Source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CameraModesMatch(CameraVideoMode selectedMode, CameraVideoMode expectedMode)
+    {
+        return selectedMode.IsAuto == expectedMode.IsAuto
+            && selectedMode.Width == expectedMode.Width
+            && selectedMode.Height == expectedMode.Height
+            && NullableDoublesMatch(selectedMode.FramesPerSecond, expectedMode.FramesPerSecond)
+            && string.Equals(selectedMode.InputFormat, expectedMode.InputFormat, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(selectedMode.Label, expectedMode.Label, StringComparison.Ordinal);
+    }
+
+    private static bool NullableDoublesMatch(double? first, double? second)
+    {
+        return first == second || first.HasValue && second.HasValue && Math.Abs(first.Value - second.Value) < 0.001d;
     }
 
     private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
@@ -2775,7 +2959,7 @@ public partial class EqualizerWindow : Window
             CameraPreviewImage,
             CameraPlaceholder,
             CameraPreviewStatusText,
-            $"{Dx12Camera.FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames");
+            $"{CameraStatusText.FormatCameraStatus("GPU stream starting", camera, mode)} - waiting for texture frames");
 
         try
         {
@@ -2789,8 +2973,21 @@ public partial class EqualizerWindow : Window
                 TextureNativeCameraFrameAvailable,
                 TextureNativeCameraStatusChanged))
             {
-                ShutDownBecauseCameraWasNotDead();
-                return false;
+                RecoverCameraLifecycleViolation("shared GPU preview");
+                if (!Dx12Camera.TryOpenTextureNativeIntoSlot(
+                    ref _dx12Camera,
+                    camera,
+                    mode,
+                    CreateActiveDx12CameraPreviewTarget(),
+                    _pendingVideoDenoiseEnabled,
+                    _pendingVideoDenoiseStrength,
+                    TextureNativeCameraFrameAvailable,
+                    TextureNativeCameraStatusChanged))
+                {
+                    _lastTextureNativeCameraError = "camera preview ownership was busy";
+                    CameraPreviewStatusText.Text = "Shared GPU stream unavailable: camera preview ownership was busy.";
+                    return false;
+                }
             }
 
             _isDirectShowPreviewActive = false;
@@ -2805,7 +3002,7 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void ClaimFallbackCameraOwner(
+    private bool ClaimFallbackCameraOwner(
         CameraDevice camera,
         CameraVideoMode mode,
         string fallbackDescription,
@@ -2821,21 +3018,36 @@ public partial class EqualizerWindow : Window
             TextureNativeCameraFrameAvailable,
             TextureNativeCameraStatusChanged))
         {
-            return;
+            return true;
         }
 
-        ShutDownBecauseCameraWasNotDead();
+        _lastTextureNativeCameraError = "camera preview ownership was busy";
+        CameraPreviewStatusText.Text = $"Could not claim camera preview ownership for {fallbackDescription}.";
+        return false;
     }
 
-    private void ShutDownBecauseCameraWasNotDead()
+    private void ReleaseStaleCameraPreviewOwnershipIfNeeded(string previewPath)
     {
-        MessageBox.Show(
-            this,
-            "camera was not extremely dead",
-            "Camera lifecycle violation",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
-        System.Windows.Application.Current.Shutdown();
+        if (_dx12Camera is not null)
+        {
+            RecoverCameraLifecycleViolation(previewPath);
+        }
+    }
+
+    private void RecoverCameraLifecycleViolation(string previewPath)
+    {
+        AppStateStore.LogDiagnostic(
+            "camera-lifecycle-recovery",
+            $"Camera preview ownership was busy while starting {previewPath}. Releasing stale camera ownership.");
+        _lastTextureNativeCameraError = "stale camera preview ownership was reset";
+        StopTextureNativeCameraStream();
+        _isDirectShowPreviewActive = false;
+        _cpuPreviewFramePump.Reset();
+        _textureNativeStatusPump.Reset();
+        if (CameraPreviewStatusText is not null)
+        {
+            CameraPreviewStatusText.Text = $"Recovered stale camera preview ownership while starting {previewPath}.";
+        }
     }
 
     private Dx12Camera.PreviewTarget CreateActiveDx12CameraPreviewTarget()
@@ -2866,16 +3078,6 @@ public partial class EqualizerWindow : Window
             CameraPreviewStatusText,
             1,
             "Podcast");
-    }
-
-    private void ClearPodcastCameraPreviewSurface()
-    {
-        _cameraPreviewBitmap = null;
-        ClearPreviewSurface(
-            CameraPreviewImage,
-            CameraPlaceholder,
-            CameraPreviewStatusText,
-            "Camera preview is owned by Karaoke.");
     }
 
     private void StopCameraPreview(string status)
@@ -2913,21 +3115,14 @@ public partial class EqualizerWindow : Window
                 }
 
                 _isCameraServiceStopPending = false;
-                _isUpdatingCameraUi = true;
-                try
+                RefreshCameraEnabledUi();
+                if (_isCameraEnabled)
                 {
-                    CameraEnabledToggle.IsEnabled = _cameraAvailable;
-                    CameraComboBox.IsEnabled = _cameraAvailable;
-                    CameraModeComboBox.IsEnabled = _cameraAvailable && CameraModeComboBox.Items.Count > 0;
-                    CameraEnabledToggle.IsChecked = _isCameraEnabled;
-                    CameraEnabledToggle.Content = _isCameraEnabled ? "Camera On" : _cameraAvailable ? "Camera Off" : "No Camera";
-                }
-                finally
-                {
-                    _isUpdatingCameraUi = false;
+                    UpdateCameraEnabledState();
+                    return;
                 }
 
-                if (!_isCameraEnabled)
+                if (CameraPreviewStatusText is not null)
                 {
                     CameraPreviewStatusText.Text = idleStatus;
                 }
@@ -2999,7 +3194,7 @@ public partial class EqualizerWindow : Window
         if (CameraComboBox.SelectedItem is CameraDevice camera)
         {
             var renderer = latestFrame.HasBgra ? "WPF BGRA" : "waiting for BGRA fallback";
-            var status = $"{Dx12Camera.FormatCameraStatus("Live", camera, Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {renderer}";
+            var status = $"{CameraStatusText.FormatCameraStatus("Live", camera, CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem))} - {renderer}";
             CameraPreviewStatusText.Text = status;
         }
     }
@@ -3134,14 +3329,14 @@ public partial class EqualizerWindow : Window
 
             if (CameraComboBox.SelectedItem is CameraDevice camera)
             {
-                CameraPreviewStatusText.Text = Dx12Camera.FormatTextureNativeCameraStatus(
+                CameraPreviewStatusText.Text = CameraStatusText.FormatTextureNativeCameraStatus(
                     _dx12Camera,
                     "GPU stream live",
                     camera,
                     frame,
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength,
-                    Dx12Camera.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled));
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled));
             }
         }
     }
@@ -3189,12 +3384,12 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (Dx12Camera.IsDirectShowCamera(camera))
+        if (CameraSourceSelection.IsDirectShowCamera(camera))
         {
             _isLoadingCameraModes = false;
             CameraModeComboBox.IsEnabled = true;
             SelectPendingCameraProfileMode();
-            CameraPreviewStatusText.Text = Dx12Camera.FormatDirectShowCameraSelectedStatus(camera);
+            CameraPreviewStatusText.Text = CameraStatusText.FormatDirectShowCameraSelectedStatus(camera);
             UpdateCameraEnabledState();
 
             return;
@@ -3202,9 +3397,9 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            CameraPreviewStatusText.Text = Dx12Camera.FormatLoadingCameraModesStatus(
+            CameraPreviewStatusText.Text = CameraStatusText.FormatLoadingCameraModesStatus(
                 camera,
-                Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
+                CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
             var modes = await _cameraModeService.GetModesAsync(camera, cancellationToken);
             if (cancellationToken.IsCancellationRequested)
             {
@@ -3235,19 +3430,19 @@ public partial class EqualizerWindow : Window
         {
             if (_isCameraEnabled)
             {
-                CameraPreviewStatusText.Text = Dx12Camera.FormatCameraPreviewStatus(
+                CameraPreviewStatusText.Text = CameraStatusText.FormatCameraPreviewStatus(
                     status,
                     CameraComboBox.SelectedItem as CameraDevice,
-                    Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
+                    CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
             }
         });
     }
 
     private void UpdateCameraIdleStatus()
     {
-        CameraPreviewStatusText.Text = Dx12Camera.FormatCameraIdleStatus(
+        CameraPreviewStatusText.Text = CameraStatusText.FormatCameraIdleStatus(
             _cameraAvailable,
-            Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
+            CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem));
     }
 
     private void LoadCameraControls()
@@ -3261,18 +3456,18 @@ public partial class EqualizerWindow : Window
 
         if (CameraComboBox.SelectedItem is not CameraDevice camera)
         {
-            CameraControlStatusText.Text = Dx12Camera.FormatChooseCameraControlsStatus();
+            CameraControlStatusText.Text = CameraControlText.FormatChooseCameraControlsStatus();
             return;
         }
 
         var controls = _cameraControlService.GetControls(camera);
         if (controls.Count == 0)
         {
-            CameraControlStatusText.Text = Dx12Camera.FormatNoCameraControlsStatus();
+            CameraControlStatusText.Text = CameraControlText.FormatNoCameraControlsStatus();
             return;
         }
 
-        CameraControlStatusText.Text = Dx12Camera.FormatCameraControlsLoadedStatus(camera, controls.Count);
+        CameraControlStatusText.Text = CameraControlText.FormatCameraControlsLoadedStatus(camera, controls.Count);
         RenderCameraControls(camera, controls);
     }
 
@@ -3350,7 +3545,7 @@ public partial class EqualizerWindow : Window
 
         var valueText = new TextBlock
         {
-            Text = Dx12Camera.FormatCameraControlValue(control.Value),
+            Text = CameraControlText.FormatCameraControlValue(control.Value),
             Foreground = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(8, 0, 0, 0),
@@ -3369,7 +3564,7 @@ public partial class EqualizerWindow : Window
             TickPlacement = TickPlacement.BottomRight,
             IsSnapToTickEnabled = false,
             Margin = new Thickness(0, 5, 0, 4),
-            SmallChange = Dx12Camera.GetCameraControlNudgeStep(control),
+            SmallChange = CameraControlText.GetCameraControlNudgeStep(control),
             ToolTip = CreateWrappedToolTip($"{control.Name}. Default: {control.DefaultValue}. Range: {control.Minimum} to {control.Maximum}. Drag near the tick to snap home.")
         };
         slider.Ticks.Add(control.DefaultValue);
@@ -3394,7 +3589,7 @@ public partial class EqualizerWindow : Window
             ToolTip = CreateWrappedToolTip("Lets the camera choose this value automatically when the driver supports it.")
         };
 
-        if (Dx12Camera.UsesCameraControlNudgeButtons(control))
+        if (CameraControlText.UsesCameraControlNudgeButtons(control))
         {
             var decreaseButton = CreateCameraNudgeButton("-", $"Nudge {control.Name} down/left slowly.");
             var increaseButton = CreateCameraNudgeButton("+", $"Nudge {control.Name} up/right slowly.");
@@ -3425,8 +3620,8 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
-            var rounded = Dx12Camera.ApplyCameraControlDefaultMagnet(Dx12Camera.RoundCameraControlToStep(e.NewValue, control), control);
-            valueText.Text = Dx12Camera.FormatCameraControlValue(rounded);
+            var rounded = CameraControlText.ApplyCameraControlDefaultMagnet(CameraControlText.RoundCameraControlToStep(e.NewValue, control), control);
+            valueText.Text = CameraControlText.FormatCameraControlValue(rounded);
             if (SetCameraControl(camera, control, rounded, isAuto: false))
             {
                 control.Value = rounded;
@@ -3468,7 +3663,7 @@ public partial class EqualizerWindow : Window
                 control.IsAuto = false;
                 slider.Value = control.DefaultValue;
                 autoCheckBox.IsChecked = false;
-                valueText.Text = Dx12Camera.FormatCameraControlValue(control.DefaultValue);
+                valueText.Text = CameraControlText.FormatCameraControlValue(control.DefaultValue);
                 _isUpdatingCameraControls = false;
             }
         };
@@ -3508,7 +3703,7 @@ public partial class EqualizerWindow : Window
         CheckBox autoCheckBox,
         int direction)
     {
-        var nextValue = Math.Clamp(control.Value + direction * Dx12Camera.GetCameraControlNudgeStep(control), control.Minimum, control.Maximum);
+        var nextValue = Math.Clamp(control.Value + direction * CameraControlText.GetCameraControlNudgeStep(control), control.Minimum, control.Maximum);
         if (nextValue == control.Value)
         {
             return;
@@ -3522,7 +3717,7 @@ public partial class EqualizerWindow : Window
         _isUpdatingCameraControls = true;
         slider.Value = nextValue;
         autoCheckBox.IsChecked = false;
-        valueText.Text = Dx12Camera.FormatCameraControlValue(nextValue);
+        valueText.Text = CameraControlText.FormatCameraControlValue(nextValue);
         _isUpdatingCameraControls = false;
     }
 
@@ -3531,13 +3726,13 @@ public partial class EqualizerWindow : Window
         var success = _cameraControlService.SetControl(camera, control, value, isAuto);
         if (!success)
         {
-            CameraControlStatusText.Text = Dx12Camera.FormatCameraControlSetStatus(control, value, isAuto, success: false);
+            CameraControlStatusText.Text = CameraControlText.FormatCameraControlSetStatus(control, value, isAuto, success: false);
             return false;
         }
 
         control.Value = value;
         control.IsAuto = isAuto;
-        CameraControlStatusText.Text = Dx12Camera.FormatCameraControlSetStatus(control, value, isAuto, success: true);
+        CameraControlStatusText.Text = CameraControlText.FormatCameraControlSetStatus(control, value, isAuto, success: true);
         return true;
     }
 
@@ -3583,7 +3778,7 @@ public partial class EqualizerWindow : Window
 
         if (_isCameraEnabled)
         {
-            CameraControlStatusText.Text = Dx12Camera.FormatVideoDenoiseStatus(
+            CameraControlStatusText.Text = CameraStatusText.FormatVideoDenoiseStatus(
                 _dx12Camera?.IsTextureNative == true,
                 _pendingVideoDenoiseEnabled);
         }
@@ -3620,7 +3815,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        CameraControlStatusText.Text = Dx12Camera.FormatVideoColorPolishStatus(
+        CameraControlStatusText.Text = CameraStatusText.FormatVideoColorPolishStatus(
             _dx12Camera?.IsTextureNative == true,
             _pendingVideoColorSettings);
     }
@@ -3797,7 +3992,7 @@ public partial class EqualizerWindow : Window
                 duration = FormatDuration(elapsed),
                 setNumber,
                 camera = CameraComboBox.SelectedItem is CameraDevice camera ? camera.Name : null,
-                mode = Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem).Label,
+                mode = CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem).Label,
                 denoiseEnabled = _pendingVideoDenoiseEnabled,
                 denoiseSliderStrength = _videoDenoiseSliderStrength,
                 denoiseStrength = _pendingVideoDenoiseStrength,
@@ -3806,17 +4001,17 @@ public partial class EqualizerWindow : Window
                     ? _dx12Camera?.IsTextureNative == true
                         ? "Windows Media Foundation shared texture-native GPU stream"
                         : "Windows Media Foundation texture-native GPU samples"
-                    : Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
+                    : CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
                         ? "DirectShow CPU frames with Media Foundation MP4 writer"
                         : "Windows Media Foundation CPU frames",
-                videoProcessing = Dx12Camera.BuildVideoProcessingMetadata(
+                videoProcessing = CameraStatusText.BuildVideoProcessingMetadata(
                     textureResult,
                     _dx12Camera,
                     _pendingVideoDenoiseEnabled,
                     _videoDenoiseSliderStrength,
                     _pendingVideoDenoiseStrength,
                     _pendingVideoColorSettings,
-                    Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
+                    CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
                     _dx12Camera?.IsReady == true),
                 textureNative = textureResult is null
                     ? null
@@ -3887,16 +4082,6 @@ public partial class EqualizerWindow : Window
         {
             _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
         }
-    }
-
-    private void MicCompareViewClicked(object sender, RoutedEventArgs e)
-    {
-        _showWaveform3D = false;
-        _spectrumService.StereoInputAnalysisEnabled = true;
-        UpdateGraphSurfaceVisibility();
-        NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        UpdateMicCompareUiState();
-        SelectMainTab("Mic Compare");
     }
 
     private void Waveform3DClicked(object sender, RoutedEventArgs e)
@@ -4125,7 +4310,6 @@ public partial class EqualizerWindow : Window
 
     private void UpdateMicCompareUiState()
     {
-        MicAnalysisPanel.Visibility = Visibility.Collapsed;
         EqBandPanel.IsEnabled = true;
         EqBandPanel.Opacity = 1d;
         EqVoiceZoneGuideCanvas.Opacity = 1d;
@@ -4821,13 +5005,19 @@ public partial class EqualizerWindow : Window
             }
 
             _spectrumService.ConfigureProcessedOutput(enabled, _selectedOutputDevice);
+            var outputFormatStatus = BuildOutputFormatStatus();
+            var loopbackFeedbackWarning = enabled ? BuildLoopbackFeedbackWarning() : null;
             OutputStatusText.Text = enabled
-                ? $"Sending program mix to selected output: {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
+                ? loopbackFeedbackWarning is null
+                    ? $"Sending program mix to selected output: {_selectedOutputDevice.Name}. {outputFormatStatus}"
+                    : $"{loopbackFeedbackWarning} {outputFormatStatus}"
                 : "Output off. Pick a virtual cable input when you want live or podcast routing.";
             if (KaraokeMonitorStatusText is not null)
             {
                 KaraokeMonitorStatusText.Text = enabled
-                    ? $"Live vocal monitor is feeding {_selectedOutputDevice.Name}. {BuildOutputFormatStatus()}"
+                    ? loopbackFeedbackWarning is null
+                        ? $"Live vocal monitor is feeding {_selectedOutputDevice.Name}. {outputFormatStatus}"
+                        : $"{loopbackFeedbackWarning} {outputFormatStatus}"
                     : "Live vocal monitor is off.";
             }
 
@@ -4844,6 +5034,41 @@ public partial class EqualizerWindow : Window
 
             UpdateAudioFormatRouteText();
         }
+    }
+
+    private string? BuildLoopbackFeedbackWarning()
+    {
+        if (!HasAudibleSystemAudioLoopbackChannel() || !IsSelectedOutputCapturedBySystemLoopback())
+        {
+            return null;
+        }
+
+        return "Loopback warning: Computer Audio captures the default playback device, and the program mix is routed back to that same playback path. Choose a virtual cable, headphones, or a second output to avoid recapturing the mix.";
+    }
+
+    private bool HasAudibleSystemAudioLoopbackChannel()
+    {
+        return _micChannels.Any(channel =>
+            channel.SelectedDevice?.IsSystemAudioLoopback == true
+            && !channel.IsMuted
+            && channel.VolumePercent > 0.1d);
+    }
+
+    private bool IsSelectedOutputCapturedBySystemLoopback()
+    {
+        if (_selectedOutputDevice is null)
+        {
+            return false;
+        }
+
+        if (_selectedOutputDevice.DeviceNumber < 0 && string.IsNullOrWhiteSpace(_selectedOutputDevice.EndpointId))
+        {
+            return true;
+        }
+
+        var defaultEndpointId = MicrophoneSpectrumService.GetDefaultPlaybackEndpointId();
+        return !string.IsNullOrWhiteSpace(defaultEndpointId)
+            && _selectedOutputDevice.EndpointId?.Equals(defaultEndpointId, StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private string BuildOutputFormatStatus()
@@ -5124,302 +5349,6 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private void StartMicAnalysisClicked(object sender, RoutedEventArgs e)
-    {
-        if (!IsMicCompareTabSelected())
-        {
-            SelectMainTab("Mic Compare");
-        }
-
-        if (_latestFrame is null || !CreateMicCompareFrame(_latestFrame).HasAnalysisSources)
-        {
-            MicAnalysisStatusText.Text = "No compare mic signal yet. Choose two mic sources and speak normally.";
-            MicAnalysisResultText.Text = "Waiting for both mic channels.";
-            return;
-        }
-
-        lock (_micAnalysisLock)
-        {
-            _micAnalysisStartedAt = DateTime.UtcNow;
-            _isMicAnalysisRunning = true;
-            _micAnalysisReadyToFinalize = false;
-            _micAnalysisSequential = MicAnalysisModeComboBox.SelectedIndex == 1;
-            _micAnalysisNormalizeVolume = MicAnalysisNormalizeCheckBox.IsChecked == true;
-            _micAnalysisInput1Sums = [];
-            _micAnalysisInput2Sums = [];
-            _micAnalysisInput1FrameCount = 0;
-            _micAnalysisInput2FrameCount = 0;
-            _micAnalysisInput1Squares = 0d;
-            _micAnalysisInput2Squares = 0d;
-            _micAnalysisInput1SampleCount = 0;
-            _micAnalysisInput2SampleCount = 0;
-        }
-
-        _micAnalysisInput1DisplayOffset = 0d;
-        _micAnalysisInput2DisplayOffset = 0d;
-        StartMicAnalysisButton.IsEnabled = false;
-        MicAnalysisModeComboBox.IsEnabled = false;
-        MicAnalysisNormalizeCheckBox.IsEnabled = false;
-        MicAnalysisProgressMeter.Width = 0;
-        MicAnalysisStatusText.Text = _micAnalysisSequential
-            ? "Sequential test: speak into mic 1 first."
-            : "Testing... speak normally toward both mics.";
-        MicAnalysisResultText.Text = _micAnalysisSequential
-            ? "Collecting mic 1, then mic 2."
-            : "Collecting raw mic 1 and mic 2 data.";
-    }
-
-    private void CollectMicAnalysisFrame(SpectrumFrame frame)
-    {
-        var compareFrame = CreateMicCompareFrame(frame);
-        if (!_isMicAnalysisRunning || !compareFrame.HasAnalysisSources)
-        {
-            return;
-        }
-
-        lock (_micAnalysisLock)
-        {
-            if (!_isMicAnalysisRunning)
-            {
-                return;
-            }
-
-            var compareLength = Math.Min(compareFrame.Mic1Magnitudes.Length, compareFrame.Mic2Magnitudes.Length);
-            if (compareLength <= 0)
-            {
-                return;
-            }
-
-            if (_micAnalysisInput1Sums.Length != compareLength)
-            {
-                _micAnalysisInput1Sums = new double[compareLength];
-                _micAnalysisInput2Sums = new double[compareLength];
-                _micAnalysisInput1FrameCount = 0;
-                _micAnalysisInput2FrameCount = 0;
-            }
-
-            var elapsed = (DateTime.UtcNow - _micAnalysisStartedAt).TotalSeconds;
-            var collectInput1 = !_micAnalysisSequential || elapsed < SequentialMicAnalysisPhaseSeconds;
-            var collectInput2 = !_micAnalysisSequential || elapsed >= SequentialMicAnalysisPhaseSeconds;
-
-            for (var i = 0; i < _micAnalysisInput1Sums.Length; i++)
-            {
-                if (collectInput1)
-                {
-                    _micAnalysisInput1Sums[i] += compareFrame.Mic1Magnitudes[i];
-                }
-
-                if (collectInput2)
-                {
-                    _micAnalysisInput2Sums[i] += compareFrame.Mic2Magnitudes[i];
-                }
-            }
-
-            if (collectInput1)
-            {
-                foreach (var sample in compareFrame.Mic1Samples)
-                {
-                    _micAnalysisInput1Squares += sample * sample;
-                }
-
-                _micAnalysisInput1SampleCount += compareFrame.Mic1Samples.Length;
-                _micAnalysisInput1FrameCount++;
-            }
-
-            if (collectInput2)
-            {
-                foreach (var sample in compareFrame.Mic2Samples)
-                {
-                    _micAnalysisInput2Squares += sample * sample;
-                }
-
-                _micAnalysisInput2SampleCount += compareFrame.Mic2Samples.Length;
-                _micAnalysisInput2FrameCount++;
-            }
-
-            var totalDuration = _micAnalysisSequential
-                ? SequentialMicAnalysisPhaseSeconds * 2d
-                : MicAnalysisDurationSeconds;
-            if (elapsed >= totalDuration)
-            {
-                _isMicAnalysisRunning = false;
-                _micAnalysisReadyToFinalize = true;
-            }
-        }
-    }
-
-    private void UpdateMicAnalysisProgress()
-    {
-        if (_isMicAnalysisRunning)
-        {
-            var elapsed = (DateTime.UtcNow - _micAnalysisStartedAt).TotalSeconds;
-            var totalDuration = _micAnalysisSequential
-                ? SequentialMicAnalysisPhaseSeconds * 2d
-                : MicAnalysisDurationSeconds;
-            var progress = Math.Clamp(elapsed / totalDuration, 0d, 1d);
-            MicAnalysisProgressMeter.Width = progress * Math.Max(1d, MicAnalysisProgressMeter.ActualWidth == 0 ? 280d : ((FrameworkElement)MicAnalysisProgressMeter.Parent).ActualWidth);
-            MicAnalysisStatusText.Text = _micAnalysisSequential
-                ? elapsed < SequentialMicAnalysisPhaseSeconds
-                    ? $"Sequential: speak into mic 1. {Math.Max(0d, SequentialMicAnalysisPhaseSeconds - elapsed):0.0}s left"
-                    : $"Sequential: now speak into mic 2. {Math.Max(0d, totalDuration - elapsed):0.0}s left"
-                : $"Testing both mics... {Math.Max(0d, totalDuration - elapsed):0.0}s left";
-        }
-
-        if (_micAnalysisReadyToFinalize)
-        {
-            FinalizeMicAnalysis();
-        }
-    }
-
-    private void FinalizeMicAnalysis()
-    {
-        double[] input1;
-        double[] input2;
-        int input1FrameCount;
-        int input2FrameCount;
-        double input1Squares;
-        double input2Squares;
-        long input1SampleCount;
-        long input2SampleCount;
-
-        lock (_micAnalysisLock)
-        {
-            if (!_micAnalysisReadyToFinalize)
-            {
-                return;
-            }
-
-            input1 = [.. _micAnalysisInput1Sums];
-            input2 = [.. _micAnalysisInput2Sums];
-            input1FrameCount = _micAnalysisInput1FrameCount;
-            input2FrameCount = _micAnalysisInput2FrameCount;
-            input1Squares = _micAnalysisInput1Squares;
-            input2Squares = _micAnalysisInput2Squares;
-            input1SampleCount = _micAnalysisInput1SampleCount;
-            input2SampleCount = _micAnalysisInput2SampleCount;
-            _micAnalysisReadyToFinalize = false;
-        }
-
-        StartMicAnalysisButton.IsEnabled = true;
-        MicAnalysisModeComboBox.IsEnabled = true;
-        MicAnalysisNormalizeCheckBox.IsEnabled = true;
-        MicAnalysisProgressMeter.Width = ((FrameworkElement)MicAnalysisProgressMeter.Parent).ActualWidth;
-
-        if (input1FrameCount < 8 || input2FrameCount < 8 || input1SampleCount == 0 || input2SampleCount == 0 || input1.Length == 0 || input2.Length == 0)
-        {
-            MicAnalysisStatusText.Text = "Test did not capture enough compare data.";
-            MicAnalysisResultText.Text = "Try again with both selected mics active.";
-            return;
-        }
-
-        for (var i = 0; i < input1.Length; i++)
-        {
-            input1[i] /= input1FrameCount;
-            input2[i] /= input2FrameCount;
-        }
-
-        var rms1 = Math.Sqrt(input1Squares / Math.Max(1, input1SampleCount));
-        var rms2 = Math.Sqrt(input2Squares / Math.Max(1, input2SampleCount));
-        var levelDeltaDb = 20d * Math.Log10((rms1 + 0.0000001d) / (rms2 + 0.0000001d));
-        ApplyMicCompareLevelMatch(_micAnalysisNormalizeVolume ? levelDeltaDb : 0d);
-
-        var result = BuildMicAnalysisResult(input1, input2, levelDeltaDb, _micAnalysisNormalizeVolume);
-        MicAnalysisStatusText.Text = _micAnalysisNormalizeVolume
-            ? "Analysis complete. Live compare lines are volume-normalized."
-            : "Analysis complete. Volume normalization was off.";
-        MicAnalysisResultText.Text = result;
-    }
-
-    private void ApplyMicCompareLevelMatch(double mic1MinusMic2Db)
-    {
-        _micAnalysisInput1DisplayOffset = 0d;
-        _micAnalysisInput2DisplayOffset = 0d;
-
-        var visualOffset = Math.Abs(mic1MinusMic2Db) / 70d;
-        if (mic1MinusMic2Db > 0.25d)
-        {
-            _micAnalysisInput1DisplayOffset = -visualOffset;
-        }
-        else if (mic1MinusMic2Db < -0.25d)
-        {
-            _micAnalysisInput2DisplayOffset = -visualOffset;
-        }
-    }
-
-    private string BuildMicAnalysisResult(double[] input1, double[] input2, double levelDeltaDb, bool normalizeVolume)
-    {
-        var lines = new List<string>();
-        var louder = Math.Abs(levelDeltaDb) < 0.6d
-            ? "Levels are very close."
-            : normalizeVolume
-                ? levelDeltaDb > 0d
-                    ? $"Mic 1 is {levelDeltaDb:0.0} dB louder; it was normalized down for comparison."
-                    : $"Mic 2 is {Math.Abs(levelDeltaDb):0.0} dB louder; it was normalized down for comparison."
-                : levelDeltaDb > 0d
-                    ? $"Mic 1 is {levelDeltaDb:0.0} dB louder; tone comparison includes that level difference."
-                    : $"Mic 2 is {Math.Abs(levelDeltaDb):0.0} dB louder; tone comparison includes that level difference.";
-        lines.Add(louder);
-
-        var comparisonLevelDeltaDb = normalizeVolume ? levelDeltaDb : 0d;
-        var zoneDifferences = _voiceZones
-            .Select(zone => CreateZoneDifference(zone, input1, input2, comparisonLevelDeltaDb))
-            .OrderByDescending(zone => Math.Abs(zone.DifferenceDb))
-            .ToList();
-
-        var strongest = zoneDifferences.FirstOrDefault(zone => Math.Abs(zone.DifferenceDb) >= 0.8d);
-        if (strongest is null)
-        {
-            lines.Add("After level matching, their spectral shape is extremely similar.");
-        }
-        else
-        {
-            lines.Add(strongest.DifferenceDb > 0d
-                ? $"Biggest split: Mic 1 has more {strongest.ZoneName.ToLowerInvariant()} by about {strongest.DifferenceDb:0.0} dB."
-                : $"Biggest split: Mic 2 has more {strongest.ZoneName.ToLowerInvariant()} by about {Math.Abs(strongest.DifferenceDb):0.0} dB.");
-        }
-
-        foreach (var zone in zoneDifferences.Where(zone => Math.Abs(zone.DifferenceDb) >= 0.8d).Take(3))
-        {
-            lines.Add(zone.DifferenceDb > 0d
-                ? $"Mic 1 +{zone.DifferenceDb:0.0} dB in {zone.ZoneName}."
-                : $"Mic 2 +{Math.Abs(zone.DifferenceDb):0.0} dB in {zone.ZoneName}.");
-        }
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private static MicZoneDifference CreateZoneDifference(VoiceZone zone, double[] input1, double[] input2, double levelDeltaDb)
-    {
-        var start = BarIndexForFrequency(zone.StartFrequencyHz, input1.Length);
-        var end = Math.Max(start + 1, BarIndexForFrequency(zone.EndFrequencyHz, input1.Length));
-        end = Math.Min(end, input1.Length);
-
-        var average1 = AverageRange(input1, start, end);
-        var average2 = AverageRange(input2, start, end);
-        var zoneDeltaDb = 70d * (average1 - average2) - levelDeltaDb;
-        return new MicZoneDifference(zone.Name, zoneDeltaDb);
-    }
-
-    private static int BarIndexForFrequency(double frequency, int barCount)
-    {
-        var clamped = Math.Clamp(frequency, MinimumDisplayFrequency, MaximumDisplayFrequency);
-        var position = Math.Log(clamped / MinimumDisplayFrequency) / Math.Log(MaximumDisplayFrequency / MinimumDisplayFrequency);
-        return Math.Clamp((int)Math.Round(position * Math.Max(1, barCount - 1)), 0, Math.Max(0, barCount - 1));
-    }
-
-    private static double AverageRange(double[] values, int start, int end)
-    {
-        var sum = 0d;
-        var count = 0;
-        for (var i = start; i < end && i < values.Length; i++)
-        {
-            sum += values[i];
-            count++;
-        }
-
-        return count == 0 ? 0d : sum / count;
-    }
-
     private void SpectrumAvailable(object? sender, SpectrumFrame frame)
     {
         AcceptSpectrumFrame(frame);
@@ -5459,7 +5388,6 @@ public partial class EqualizerWindow : Window
     private void AcceptSpectrumFrame(SpectrumFrame frame)
     {
         _latestFrame = frame;
-        CollectMicAnalysisFrame(frame);
     }
 
     private SpectrumFrame CreateSelectedMicFrame(SpectrumFrame frame)
@@ -5534,13 +5462,6 @@ public partial class EqualizerWindow : Window
         {
             _lastStandaloneRecordingSyncUtc = now;
             SyncStandaloneAudioRecordingState();
-        }
-
-        if ((_isMicAnalysisRunning || _micAnalysisReadyToFinalize)
-            && now - _lastMicAnalysisUiUpdateUtc >= TimeSpan.FromMilliseconds(100))
-        {
-            _lastMicAnalysisUiUpdateUtc = now;
-            UpdateMicAnalysisProgress();
         }
 
         if (_latestFrame is null)
@@ -5624,13 +5545,13 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var pipeline = Dx12Camera.FormatActiveVideoPipeline(
+        var pipeline = CameraStatusText.FormatActiveVideoPipeline(
             _cameraAvailable,
             _isCameraEnabled,
             _dx12Camera,
             _pendingVideoDenoiseEnabled,
             _pendingVideoColorSettings.HasVisibleAdjustments,
-            Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
+            CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice),
             _dx12Camera?.IsReady == true,
             _lastTextureNativeCameraError);
         var pumpWarningActive = !string.IsNullOrWhiteSpace(_cameraPumpWarningText)
@@ -5647,7 +5568,7 @@ public partial class EqualizerWindow : Window
         {
             VideoPipelineText.Text = pipelineText;
         }
-        var parity = Dx12Camera.FormatPreviewRecordParity(
+        var parity = CameraStatusText.FormatPreviewRecordParity(
             _isCameraEnabled,
             _dx12Camera,
             _pendingVideoDenoiseEnabled,
@@ -5723,7 +5644,7 @@ public partial class EqualizerWindow : Window
             return (written, written, 0);
         }
 
-        return Dx12Camera.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
+        return CameraSourceSelection.IsSelectedDirectShowCamera(_isDirectShowPreviewActive, CameraComboBox.SelectedItem as CameraDevice)
             ? (_directShowPreviewService.RecordingFramesOffered, _directShowPreviewService.RecordingFramesWritten, _directShowPreviewService.RecordingFramesSkipped)
             : (_cameraPreviewService.RecordingFramesOffered, _cameraPreviewService.RecordingFramesWritten, _cameraPreviewService.RecordingFramesSkipped);
     }
@@ -5927,7 +5848,7 @@ public partial class EqualizerWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Add karaoke backing tracks",
-            Filter = "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac|All files|*.*",
+            Filter = KaraokeTrackOpenFileFilter,
             CheckFileExists = true,
             Multiselect = true
         };
@@ -6003,7 +5924,7 @@ public partial class EqualizerWindow : Window
         {
             Title = "Choose root song folder",
             InitialDirectory = initialFolder,
-            Filter = "Audio files|*.wav;*.mp3;*.m4a;*.aac;*.wma;*.flac|All files|*.*",
+            Filter = KaraokeTrackOpenFileFilter,
             FileName = "Select this folder",
             CheckFileExists = false,
             ValidateNames = false,
@@ -6088,6 +6009,7 @@ public partial class EqualizerWindow : Window
 
         visitedFolders.Add(rootFullPath);
         pending.Push(rootFullPath);
+        var yieldedTrackCount = 0;
         while (pending.Count > 0)
         {
             var folder = pending.Pop();
@@ -6121,6 +6043,12 @@ public partial class EqualizerWindow : Window
 
                 if (yieldedFiles.Add(fullPath))
                 {
+                    if (yieldedTrackCount >= MaximumKaraokeBrowserTracks)
+                    {
+                        yield break;
+                    }
+
+                    yieldedTrackCount++;
                     yield return fullPath;
                 }
             }
@@ -6128,6 +6056,11 @@ public partial class EqualizerWindow : Window
             foreach (var childFolder in EnumerateKaraokeChildFolders(folder)
                          .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase))
             {
+                if (visitedFolders.Count >= MaximumKaraokeBrowserFolders)
+                {
+                    break;
+                }
+
                 if (TryNormalizeKaraokeChildFolder(childFolder, out var normalizedChild)
                     && visitedFolders.Add(normalizedChild))
                 {
@@ -6139,10 +6072,10 @@ public partial class EqualizerWindow : Window
 
     private static IEnumerable<string> EnumerateKaraokeFilesInFolder(string folder)
     {
-        IEnumerable<string> files;
+        string[] files;
         try
         {
-            files = Directory.EnumerateFiles(folder);
+            files = Directory.GetFiles(folder);
         }
         catch
         {
@@ -6157,10 +6090,10 @@ public partial class EqualizerWindow : Window
 
     private static IEnumerable<string> EnumerateKaraokeChildFolders(string folder)
     {
-        IEnumerable<string> folders;
+        string[] folders;
         try
         {
-            folders = Directory.EnumerateDirectories(folder);
+            folders = Directory.GetDirectories(folder);
         }
         catch
         {
@@ -6516,12 +6449,7 @@ public partial class EqualizerWindow : Window
     private static bool IsSupportedKaraokeTrackFile(string path)
     {
         var extension = System.IO.Path.GetExtension(path);
-        return extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".aac", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase);
+        return SupportedKaraokeTrackExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
     private void KaraokePlayPauseClicked(object sender, RoutedEventArgs e)
@@ -7376,25 +7304,6 @@ public partial class EqualizerWindow : Window
         }
 
         return false;
-    }
-
-    private void EnsureKaraokeLyricsForPlayback(string trackPath)
-    {
-        if (KaraokeLyricsTextBox is null
-            || !string.IsNullOrWhiteSpace(KaraokeLyricsTextBox.Text)
-            || string.IsNullOrWhiteSpace(trackPath)
-            || !File.Exists(trackPath))
-        {
-            return;
-        }
-
-        if (LoadKaraokeLyricsForTrack(trackPath))
-        {
-            PersistAppState();
-            return;
-        }
-
-        KaraokeStatusText.Text = "No local or embedded lyrics found. Use Detect Lyrics to analyze this song.";
     }
 
     private bool TryLoadEmbeddedKaraokeLyricsForTrack(string trackPath, bool replaceExisting = false)
@@ -10664,8 +10573,8 @@ public partial class EqualizerWindow : Window
         var smoothing = GetAnalyzerSmoothingCoefficient();
         for (var i = 0; i < compareLength; i++)
         {
-            var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic1Magnitudes[i]) + _micAnalysisInput1DisplayOffset, 0d, 1d));
-            var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic2Magnitudes[i]) + _micAnalysisInput2DisplayOffset, 0d, 1d));
+            var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic1Magnitudes[i]), 0d, 1d));
+            var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic2Magnitudes[i]), 0d, 1d));
             _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, smoothing);
             _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, smoothing);
 
@@ -11890,107 +11799,51 @@ public partial class EqualizerWindow : Window
 
     private void FlatPresetClicked(object sender, RoutedEventArgs e)
     {
-        ApplyPreset(
-            "Flat",
-            "Neutral reference. No EQ curve, gentle defaults, useful when you want to hear the mic without a voice style.",
-            80, 0, -55, 0, 0, -20, 2, 0, 0, -1,
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.Flat);
     }
 
     private void PodcastCleanPresetClicked(object sender, RoutedEventArgs e)
     {
-        ApplyPreset(
-            "Podcast Clean",
-            "Cuts rumble and mud, adds presence for clearer speech, and uses moderate compression for steady level.",
-            85, 4, -50, 4, 2, -18, 3, 4, 2.5, -1,
-            [-4, -3, -2, -1, 0, 0.5, 0, -1, -1.5, -1, 0, 1, 2, 2.5, 2, 1, 0.5, 0, -1, -2]);
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.PodcastClean);
     }
 
     private void WarmRadioPresetClicked(object sender, RoutedEventArgs e)
     {
-        LoadWarmRadioPreset();
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.WarmRadio);
     }
 
     private void DeepWarmPresetClicked(object sender, RoutedEventArgs e)
     {
-        const string description = "Leans into a deep, warm broadcast tone: strong chest and low-mid body, carved mud, softened bite, and dense compression.";
-
-        ApplyPreset(
-            "Deep Warm",
-            description,
-            58, 4.5, -52, 2.5, 1.5, -22, 4.2, 2.5, 2.5, -1,
-            [-6, -4, -1, 1.5, 3.5, 3, 2, 0.5, -1.5, -2, -1, -0.2, 0.6, 1, 0.5, -0.5, -1.5, -2, -2.5, -3]);
-
-        Settings.InputTrimDb = 0;
-        Settings.DePopperFrequencyHz = 150;
-        Settings.DePopperThresholdDb = -32;
-        Settings.ExpanderThresholdDb = -58;
-        Settings.ExpanderRatio = 1.45;
-        Settings.ExpanderRangeDb = 8;
-        Settings.NoiseGateThresholdDb = -52;
-        Settings.NoiseGateAttackMs = 8;
-        Settings.NoiseGateHoldMs = 130;
-        Settings.NoiseGateReleaseMs = 220;
-        Settings.NoiseGateRangeDb = 20;
-        Settings.NoiseSuppressionSensitivity = 3;
-        Settings.EchoReducerSensitivity = 3.5;
-        Settings.CompressorAttackMs = 16;
-        Settings.CompressorReleaseMs = 190;
-        Settings.CompressorKneeDb = 8;
-        Settings.DeEsserFrequencyHz = 5600;
-        Settings.DeEsserThresholdDb = -34;
-        Settings.DeEsserRangeDb = 6;
-        Settings.PresenceEnhancerAmountDb = 1.1;
-        Settings.PresenceEnhancerFrequencyHz = 2600;
-        Settings.PresenceEnhancerWidthHz = 1800;
-        Settings.SaturationEnabled = true;
-        Settings.SaturationAmount = 3.5;
-        Settings.LimiterSoftClipDriveDb = 1;
-        Settings.LimiterLookaheadMs = 3;
-        Settings.LimiterReleaseMs = 85;
-
-        SetProcessingSliderDefaults(description);
-        _activeMicChannel.PresetDescription = description;
-        _activeMicChannel.AnalyzerSmoothing = DefaultAnalyzerSmoothingPercent;
-        ConfigureLiveMixFromChannels();
-        StatusText.Text = "Deep Warm preset loaded";
-        PersistAppState();
-    }
-
-    private void LoadWarmRadioPreset()
-    {
-        const string description = "Adds body and warmth, gently tames harshness, and uses a slightly stronger compressor for a denser sound.";
-
-        ApplyPreset(
-            "Warm Radio",
-            description,
-            70, 3, -52, 3, 3, -20, 3.5, 3, 3, -1,
-            [-5, -3, -1, 0.5, 2, 2.5, 2, 1, 0, -1, -1.5, -1, 0, 1, 1.5, 1, 0, -0.5, -1, -2]);
-
-        Settings.SaturationEnabled = true;
-        Settings.SaturationAmount = 2.5;
-        SetProcessingSliderDefaults(description);
-        _activeMicChannel.PresetDescription = description;
-        ConfigureLiveMixFromChannels();
-        PersistAppState();
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.DeepWarm);
     }
 
     private void NoisyRoomPresetClicked(object sender, RoutedEventArgs e)
     {
-        ApplyPreset(
-            "Noisy Room",
-            "Raises the high-pass filter and tightens the gate to fight room noise, with firmer compression.",
-            110, 6, -42, 8, 4, -21, 4, 5, 1.5, -1,
-            [-8, -6, -4, -3, -2, -1, -1, -1.5, -2, -2, -1, 0, 1.5, 2, 1, 0, -1, -2, -3, -4]);
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.NoisyRoom);
     }
 
     private void BrightHeadsetPresetClicked(object sender, RoutedEventArgs e)
     {
+        LoadBuiltInPreset(BuiltInVoicePresetCatalog.BrightHeadset);
+    }
+
+    private void LoadBuiltInPreset(BuiltInVoicePreset preset)
+    {
         ApplyPreset(
-            "Bright Headset",
-            "Adds clarity and presence for darker headset mics while trimming low rumble and high fizz.",
-            95, 4, -48, 5, 2, -16, 2.5, 6, 1.5, -1,
-            [-5, -4, -3, -2, -1.5, -1, -1, -0.5, 0, 0.5, 1, 1.5, 2.5, 3, 2.5, 1.5, 0.5, -0.5, -1.5, -3]);
+            preset.Name,
+            preset.Description,
+            preset.HighPassFrequencyHz,
+            preset.DePopperAmountDb,
+            preset.GateThresholdDb,
+            preset.NoiseSuppressionAmountDb,
+            preset.EchoReducerAmountDb,
+            preset.CompressorThresholdDb,
+            preset.CompressorRatio,
+            preset.DeEsserAmountDb,
+            preset.MakeupGainDb,
+            preset.LimiterCeilingDb,
+            preset.Gains,
+            preset.ConfigureAdditionalSettings);
     }
 
     private void ApplyPreset(
@@ -12006,7 +11859,8 @@ public partial class EqualizerWindow : Window
         double deEsserAmountDb,
         double makeupGainDb,
         double limiterCeilingDb,
-        double[] gains)
+        IReadOnlyList<double> gains,
+        Action<VoiceProcessorSettings>? configureAdditionalSettings = null)
     {
         Settings.HighPassEnabled = true;
         Settings.LowPassEnabled = false;
@@ -12079,14 +11933,15 @@ public partial class EqualizerWindow : Window
         Settings.LimiterLookaheadEnabled = true;
         Settings.LimiterLookaheadMs = 3;
         Settings.LimiterReleaseMs = 60;
+        configureAdditionalSettings?.Invoke(Settings);
 
-        for (var i = 0; i < Bands.Count && i < gains.Length; i++)
+        for (var i = 0; i < Bands.Count && i < gains.Count; i++)
         {
             Bands[i].IsEnabled = true;
             Bands[i].GainDb = gains[i];
         }
 
-        for (var i = gains.Length; i < Bands.Count; i++)
+        for (var i = gains.Count; i < Bands.Count; i++)
         {
             Bands[i].IsEnabled = true;
             Bands[i].GainDb = 0;
@@ -12126,7 +11981,7 @@ public partial class EqualizerWindow : Window
         try
         {
             var profile = CaptureCameraProfile(name);
-            Dx12Camera.SaveCameraProfile(CameraProfileFolder, name, profile, UserPresetJsonOptions);
+            CameraProfileStore.Save(CameraProfileFolder, name, profile, UserPresetJsonOptions);
             LoadCameraProfileList();
             CameraProfileComboBox.SelectedItem = CameraProfileNames.FirstOrDefault(candidate =>
                 candidate.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -12176,7 +12031,7 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            var path = Dx12Camera.GetCameraProfilePath(CameraProfileFolder, name);
+            var path = CameraProfileStore.GetPath(CameraProfileFolder, name);
             if (File.Exists(path))
             {
                 File.Delete(path);
@@ -12756,12 +12611,12 @@ public partial class EqualizerWindow : Window
         return $"{kib / 1024d:0.0} MB";
     }
 
-    private Dx12Camera.CameraProfile CaptureCameraProfile(string name)
+    private CameraProfile CaptureCameraProfile(string name)
     {
-        return Dx12Camera.CaptureCameraProfile(
+        return CameraProfileStore.Capture(
             name,
             CameraComboBox.SelectedItem as CameraDevice,
-            Dx12Camera.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem),
+            CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem),
             _isCameraEnabled,
             VideoDenoiseCheckBox?.IsChecked == true,
             VideoDenoiseSlider?.Value ?? _videoDenoiseSliderStrength,
@@ -12774,15 +12629,15 @@ public partial class EqualizerWindow : Window
                 VideoWarmthSlider?.Value ?? _pendingVideoColorSettings.Warmth));
     }
 
-    private Dx12Camera.CameraProfile? LoadCameraProfile(string name)
+    private CameraProfile? LoadCameraProfile(string name)
     {
-        return Dx12Camera.LoadCameraProfile(CameraProfileFolder, name, UserPresetJsonOptions);
+        return CameraProfileStore.Load(CameraProfileFolder, name, UserPresetJsonOptions);
     }
 
-    private void ApplyCameraProfile(Dx12Camera.CameraProfile profile)
+    private void ApplyCameraProfile(CameraProfile profile)
     {
         var name = string.IsNullOrWhiteSpace(profile.Name) ? "Camera profile" : profile.Name.Trim();
-        var camera = Dx12Camera.FindCameraForProfile(
+        var camera = CameraProfileStore.FindCamera(
             CameraComboBox.Items.OfType<CameraDevice>(),
             profile);
         if (camera is null)
@@ -12874,7 +12729,7 @@ public partial class EqualizerWindow : Window
             Directory.CreateDirectory(CameraProfileFolder);
             foreach (var path in Directory.EnumerateFiles(CameraProfileFolder, "*.json").OrderBy(path => path))
             {
-                var name = Dx12Camera.ReadCameraProfileName(path, UserPresetJsonOptions);
+                var name = CameraProfileStore.ReadName(path, UserPresetJsonOptions);
                 if (!string.IsNullOrWhiteSpace(name)
                     && !CameraProfileNames.Any(existing => existing.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -13182,7 +13037,19 @@ public partial class EqualizerWindow : Window
 
     private static ObservableCollection<MicChannelStrip> CreateDefaultMicChannels()
     {
-        var channels = new ObservableCollection<MicChannelStrip>();
+        var channels = new ObservableCollection<MicChannelStrip>
+        {
+            new MicChannelStrip(
+                SystemAudioLoopbackChannelNumber,
+                "Computer Audio",
+                CreateDefaultEqualizerBands())
+            {
+                IsEnabled = true,
+                InputGainDb = -6d,
+                InputChannelMode = InputChannelMode.StereoPair
+            }
+        };
+
         for (var channelNumber = 1; channelNumber <= MaximumMicChannelCount; channelNumber++)
         {
             channels.Add(new MicChannelStrip(
@@ -13254,12 +13121,17 @@ public partial class EqualizerWindow : Window
         public MicChannelStrip(int channelNumber, string displayName, ObservableCollection<EqualizerBand> bands)
         {
             ChannelNumber = channelNumber;
+            DefaultDisplayName = displayName;
             _displayName = displayName;
             Bands = bands;
             ProcessorSettings = new VoiceProcessorSettings();
         }
 
         public int ChannelNumber { get; }
+
+        public string DefaultDisplayName { get; }
+
+        public bool IsSystemAudioLoopbackChannel => ChannelNumber == SystemAudioLoopbackChannelNumber;
 
         public ObservableCollection<EqualizerBand> Bands { get; }
 
@@ -13268,7 +13140,7 @@ public partial class EqualizerWindow : Window
         public string DisplayName
         {
             get => _displayName;
-            set => SetField(ref _displayName, string.IsNullOrWhiteSpace(value) ? $"Mic {ChannelNumber}" : value.Trim());
+            set => SetField(ref _displayName, string.IsNullOrWhiteSpace(value) ? DefaultDisplayName : value.Trim());
         }
 
         public AudioInputDevice? SelectedDevice
@@ -13416,7 +13288,7 @@ public partial class EqualizerWindow : Window
         public string PresetDescription
         {
             get => _presetDescription;
-            set => SetField(ref _presetDescription, string.IsNullOrWhiteSpace(value) ? $"Mic {ChannelNumber} preset" : value.Trim());
+            set => SetField(ref _presetDescription, string.IsNullOrWhiteSpace(value) ? $"{DefaultDisplayName} preset" : value.Trim());
         }
 
         public double AnalyzerSmoothing
@@ -13425,9 +13297,11 @@ public partial class EqualizerWindow : Window
             set => SetField(ref _analyzerSmoothing, Math.Clamp(double.IsFinite(value) ? value : 80d, 0d, 100d));
         }
 
+        private string RouteModeText => InputChannelModeInfo.GetDisplayLabel(InputChannelMode);
+
         public string RouteText => SelectedDevice is null
-            ? $"{InputChannelModeInfo.GetDisplayLabel(InputChannelMode)} | no source"
-            : $"{SelectedDevice.Name} | {InputChannelModeInfo.GetDisplayLabel(InputChannelMode)}";
+            ? $"{RouteModeText} | no source"
+            : $"{SelectedDevice.Name} | {RouteModeText}";
 
         public string VolumeDisplayText => $"{VolumePercent:0}%";
 
@@ -13595,8 +13469,6 @@ public partial class EqualizerWindow : Window
     }
 
     private sealed record VoiceZone(string Name, double StartFrequencyHz, double EndFrequencyHz, string Description);
-
-    private sealed record MicZoneDifference(string ZoneName, double DifferenceDb);
 
     private sealed record InputChannelOption(InputChannelMode Mode, string Label)
     {

@@ -3,6 +3,7 @@ namespace JerichoDown.Audio;
 public enum InputChannelMode
 {
     MonoSum,
+    StereoPair,
     Input1Left,
     Input2Right,
     Input3,
@@ -39,6 +40,7 @@ public static class InputChannelModeInfo
     {
         return mode switch
         {
+            InputChannelMode.StereoPair => null,
             InputChannelMode.Input1Left => 0,
             InputChannelMode.Input2Right => 1,
             InputChannelMode.Input3 => 2,
@@ -58,6 +60,7 @@ public static class InputChannelModeInfo
         return mode switch
         {
             InputChannelMode.MonoSum => "Mono sum",
+            InputChannelMode.StereoPair => "Stereo pair",
             InputChannelMode.Input1Left => "Input 1 L",
             InputChannelMode.Input2Right => "Input 2 R",
             InputChannelMode.Input3 => "Input 3",

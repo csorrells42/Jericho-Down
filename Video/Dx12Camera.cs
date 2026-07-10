@@ -1,5 +1,3 @@
-using System.IO;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -12,9 +10,6 @@ public sealed class Dx12Camera : IDisposable
 {
     private static readonly object ActiveLock = new();
     private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(2);
-    private const int PumpWarningFrameReplacementInterval = 50;
-    private static readonly long PumpWarningFrameReplacementWindowTicks = TimeSpan.FromSeconds(2).Ticks;
-    private static readonly Dictionary<string, string> TextureNativePreviewFailures = new(StringComparer.OrdinalIgnoreCase);
     private static Dx12Camera? _active;
 
     private readonly object _stateLock = new();
@@ -40,13 +35,13 @@ public sealed class Dx12Camera : IDisposable
     // var camera = Dx12Camera.Start(previewPanel, new Dx12CameraOptions { DenoiseEnabled = true });
     // camera.WriteMP4(path); camera.StopMP4(); camera.Close();
     public Dx12Camera(Panel previewWindow)
-        : this(RequireDefaultCamera(), CameraVideoMode.Auto, new PreviewTarget(previewWindow))
+        : this(CameraSourceSelection.RequireDefaultCamera(), CameraVideoMode.Auto, new PreviewTarget(previewWindow))
     {
     }
 
     public Dx12Camera(Panel previewWindow, Dx12CameraOptions? options)
         : this(
-            options?.Camera ?? RequireDefaultCamera(),
+            options?.Camera ?? CameraSourceSelection.RequireDefaultCamera(),
             options?.Mode ?? CameraVideoMode.Auto,
             new PreviewTarget(previewWindow))
     {
@@ -54,7 +49,7 @@ public sealed class Dx12Camera : IDisposable
     }
 
     public Dx12Camera(Panel previewWindow, CameraVideoMode? mode)
-        : this(RequireDefaultCamera(), mode, new PreviewTarget(previewWindow))
+        : this(CameraSourceSelection.RequireDefaultCamera(), mode, new PreviewTarget(previewWindow))
     {
     }
 
@@ -146,20 +141,17 @@ public sealed class Dx12Camera : IDisposable
 
     public static IReadOnlyList<CameraDevice> GetCameras()
     {
-        return CameraDeviceCatalog.MergeDevices(
-            MediaFoundationCameraEnumerator.GetVideoInputDevices(),
-            DirectShowCameraEnumerator.GetVideoInputDevices());
+        return CameraSourceSelection.GetCameras();
     }
 
     public static CameraDevice? GetDefaultCamera()
     {
-        return GetCameras().FirstOrDefault();
+        return CameraSourceSelection.GetDefaultCamera();
     }
 
     public static CameraDevice RequireDefaultCamera()
     {
-        return GetDefaultCamera()
-            ?? throw new InvalidOperationException("No camera devices were found.");
+        return CameraSourceSelection.RequireDefaultCamera();
     }
 
     public static CameraDevice? FindCamera(
@@ -168,528 +160,12 @@ public sealed class Dx12Camera : IDisposable
         string? source,
         string? name)
     {
-        if (!string.IsNullOrWhiteSpace(devicePath))
-        {
-            var pathMatch = cameras.FirstOrDefault(camera =>
-                camera.EnumerateSourceDevices().Any(sourceDevice =>
-                    sourceDevice.DevicePath.Equals(devicePath, StringComparison.OrdinalIgnoreCase)
-                    && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase)));
-            if (pathMatch is not null)
-            {
-                return pathMatch;
-            }
-        }
-
-        return string.IsNullOrWhiteSpace(name)
-            ? null
-            : cameras.FirstOrDefault(camera =>
-                camera.EnumerateSourceDevices().Any(sourceDevice =>
-                    sourceDevice.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
-                    && sourceDevice.Source.Equals(source ?? string.Empty, StringComparison.OrdinalIgnoreCase)))
-                ?? cameras.FirstOrDefault(camera =>
-                    camera.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return CameraSourceSelection.FindCamera(cameras, devicePath, source, name);
     }
 
     public static bool IsDirectShowCamera(CameraDevice camera)
     {
-        return string.Equals(camera.Source, "DirectShow", StringComparison.OrdinalIgnoreCase);
-    }
-
-    internal static bool IsSelectedDirectShowCamera(bool isDirectShowPreviewActive, CameraDevice? selectedCamera)
-    {
-        return isDirectShowPreviewActive
-            || selectedCamera is not null && IsDirectShowCamera(selectedCamera);
-    }
-
-    internal static bool IsCpuCameraPreviewOwningCamera(
-        bool isCameraEnabled,
-        Dx12Camera? activeCamera,
-        bool mediaFoundationPreviewIsRunning,
-        bool directShowPreviewIsRunning,
-        bool isDirectShowPreviewActive)
-    {
-        return isCameraEnabled
-            && activeCamera?.IsTextureNative != true
-            && (mediaFoundationPreviewIsRunning || directShowPreviewIsRunning || isDirectShowPreviewActive);
-    }
-
-    internal static string FormatCameraMode(CameraVideoMode mode)
-    {
-        return mode.IsAuto ? "Auto mode" : mode.Label;
-    }
-
-    internal static CameraVideoMode ResolveSelectedCameraMode(object? selectedItem)
-    {
-        return selectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
-    }
-
-    internal static string FormatCameraDisabledStatus(CameraVideoMode mode)
-    {
-        return $"Camera disabled - selected mode: {FormatCameraMode(mode)}";
-    }
-
-    internal static string FormatCameraStatus(string state, CameraDevice camera, CameraVideoMode mode)
-    {
-        return $"{state}: {camera.Name} at {FormatCameraMode(mode)}";
-    }
-
-    internal static string FormatDirectShowCameraSelectedStatus(CameraDevice camera)
-    {
-        return $"DirectShow camera selected: {camera.Name} - Auto uses the camera's current output";
-    }
-
-    internal static string FormatLoadingCameraModesStatus(CameraDevice camera, CameraVideoMode selectedMode)
-    {
-        return $"Loading modes: {camera.Name} - selected mode: {FormatCameraMode(selectedMode)}";
-    }
-
-    internal static string FormatCameraIdleStatus(bool cameraAvailable, CameraVideoMode mode)
-    {
-        return cameraAvailable
-            ? FormatCameraDisabledStatus(mode)
-            : "No camera source found";
-    }
-
-    internal static string FormatCameraPreviewStatus(string status, CameraDevice? camera, CameraVideoMode mode)
-    {
-        return camera is null
-            ? status
-            : $"{FormatCameraStatus("Preview", camera, mode)} - {status}";
-    }
-
-    internal static string FormatChooseCameraControlsStatus()
-    {
-        return "Choose a camera to load controls.";
-    }
-
-    internal static string FormatNoCameraControlsStatus()
-    {
-        return "No standard Windows camera controls were exposed by this source.";
-    }
-
-    internal static string FormatCameraControlsLoadedStatus(CameraDevice camera, int controlCount)
-    {
-        return $"{controlCount} Windows camera controls exposed by {camera.Name}.";
-    }
-
-    internal static string FormatCameraControlSetStatus(CameraControlItem control, int value, bool isAuto, bool success)
-    {
-        return success
-            ? $"{control.Name}: {(isAuto ? "Auto" : FormatCameraControlValue(value))}"
-            : $"Could not set {control.Name}. The camera may be busy or this control may be locked by its driver.";
-    }
-
-    internal static string FormatVideoDenoiseStatus(bool isTextureNative, bool denoiseEnabled)
-    {
-        if (isTextureNative)
-        {
-            return denoiseEnabled
-                ? "DX12 video grain reduction is live on the preview and will be included in texture-native recordings."
-                : "DX12 video grain reduction is off on the preview.";
-        }
-
-        return denoiseEnabled
-            ? "Video grain reduction is live on the preview and CPU recording path."
-            : "Video grain reduction is off on the preview and CPU recording path.";
-    }
-
-    internal static string FormatVideoColorPolishStatus(bool isTextureNative, VideoFrameColorSettings settings)
-    {
-        if (isTextureNative)
-        {
-            return settings.HasVisibleAdjustments
-                ? "Color polish is armed for CPU fallback/recording. The current DX12 texture preview remains raw."
-                : "Color polish is neutral.";
-        }
-
-        return settings.HasVisibleAdjustments
-            ? "Color polish is live on the DX12 preview shader and recording path."
-            : "Color polish is neutral on the preview and recording path.";
-    }
-
-    internal static object BuildVideoProcessingMetadata(
-        TextureNativeRecordingResult? textureResult,
-        Dx12Camera? activeCamera,
-        bool denoiseEnabled,
-        double denoiseSliderStrength,
-        double denoiseStrength,
-        VideoFrameColorSettings colorSettings,
-        bool isDirectShow,
-        bool isDirect3D12Ready)
-    {
-        if (textureResult is not null)
-        {
-            return new
-            {
-                previewPipeline = "Direct3D 12 NV12 shader preview",
-                previewRenderPath = activeCamera?.PreviewPathDescription ?? "DX12 preview path unavailable",
-                previewDenoiseApplied = denoiseEnabled,
-                previewDenoiseSliderStrength = denoiseSliderStrength,
-                previewDenoiseStrength = denoiseStrength,
-                previewColorPolishApplied = false,
-                previewColorPolish = CreateVideoColorMetadata(colorSettings),
-                recordingPipeline = textureResult.RecordingPipeline,
-                recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
-                recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
-                recordingColorPolishApplied = false,
-                recordingMatchesPreviewColor = !colorSettings.HasVisibleAdjustments,
-                note = colorSettings.HasVisibleAdjustments
-                    ? "Color polish is CPU-only in this build; the saved texture-native video is raw color output."
-                    : textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
-                        ? "Texture-native recording matched the preview denoise setting through the processed bridge."
-                        : denoiseEnabled
-                            ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
-                            : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
-            };
-        }
-
-        return new
-        {
-            previewPipeline = FormatCpuCameraPreviewPipeline(isDirectShow, isDirect3D12Ready),
-            previewDenoiseApplied = denoiseEnabled,
-            previewDenoiseSliderStrength = denoiseSliderStrength,
-            previewDenoiseStrength = denoiseStrength,
-            previewColorPolishApplied = colorSettings.HasVisibleAdjustments,
-            previewColorPolish = CreateVideoColorMetadata(colorSettings),
-            recordingPipeline = isDirectShow ? "DirectShow CPU frames to Media Foundation MP4 writer" : "Media Foundation CPU frame writer",
-            recordingDenoiseApplied = denoiseEnabled,
-            recordingMatchesPreviewDenoise = true,
-            recordingColorPolishApplied = colorSettings.HasVisibleAdjustments,
-            recordingMatchesPreviewColor = true,
-            note = denoiseEnabled && colorSettings.HasVisibleAdjustments
-                ? "Preview denoise and color polish were applied before recording frames were written."
-                : denoiseEnabled
-                    ? "Preview denoise was applied before recording frames were written."
-                    : colorSettings.HasVisibleAdjustments
-                        ? "Color polish was applied before recording frames were written."
-                        : "Preview denoise was off."
-        };
-    }
-
-    internal static object CreateVideoColorMetadata(VideoFrameColorSettings settings)
-    {
-        return new
-        {
-            settings.Enabled,
-            settings.Exposure,
-            settings.Contrast,
-            settings.Saturation,
-            settings.Warmth
-        };
-    }
-
-    internal static CameraProfile CaptureCameraProfile(
-        string name,
-        CameraDevice? camera,
-        CameraVideoMode mode,
-        bool cameraEnabled,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        bool colorPolishEnabled,
-        VideoFrameColorSettings colorSettings)
-    {
-        return new CameraProfile
-        {
-            Name = name,
-            CameraName = camera?.Name,
-            CameraSource = camera?.Source,
-            CameraDevicePath = camera?.DevicePath,
-            CameraEnabled = cameraEnabled,
-            ModeLabel = mode.Label,
-            ModeWidth = mode.Width,
-            ModeHeight = mode.Height,
-            ModeFramesPerSecond = mode.FramesPerSecond,
-            ModeInputFormat = mode.InputFormat,
-            DenoiseEnabled = denoiseEnabled,
-            DenoiseStrength = denoiseStrength,
-            ColorPolishEnabled = colorPolishEnabled,
-            Exposure = colorSettings.Exposure,
-            Contrast = colorSettings.Contrast,
-            Saturation = colorSettings.Saturation,
-            Warmth = colorSettings.Warmth
-        };
-    }
-
-    internal static void SaveCameraProfile(
-        string profileFolder,
-        string name,
-        CameraProfile profile,
-        JsonSerializerOptions jsonOptions)
-    {
-        Directory.CreateDirectory(profileFolder);
-        var json = JsonSerializer.Serialize(profile, jsonOptions);
-        File.WriteAllText(GetCameraProfilePath(profileFolder, name), json);
-    }
-
-    internal static CameraProfile? LoadCameraProfile(
-        string profileFolder,
-        string name,
-        JsonSerializerOptions jsonOptions)
-    {
-        var path = GetCameraProfilePath(profileFolder, name);
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<CameraProfile>(json, jsonOptions);
-    }
-
-    internal static CameraDevice? FindCameraForProfile(IEnumerable<CameraDevice> cameras, CameraProfile profile)
-    {
-        return FindCamera(
-            cameras.ToList(),
-            profile.CameraDevicePath,
-            profile.CameraSource,
-            profile.CameraName);
-    }
-
-    internal static string GetCameraProfilePath(string profileFolder, string name)
-    {
-        return Path.Combine(profileFolder, $"{SanitizeCameraProfileFileName(name)}.json");
-    }
-
-    internal static string ReadCameraProfileName(string path, JsonSerializerOptions jsonOptions)
-    {
-        try
-        {
-            var json = File.ReadAllText(path);
-            var profile = JsonSerializer.Deserialize<CameraProfile>(json, jsonOptions);
-            if (!string.IsNullOrWhiteSpace(profile?.Name))
-            {
-                return profile.Name.Trim();
-            }
-        }
-        catch
-        {
-        }
-
-        return Path.GetFileNameWithoutExtension(path);
-    }
-
-    private static string SanitizeCameraProfileFileName(string name)
-    {
-        var invalidCharacters = Path.GetInvalidFileNameChars();
-        var sanitized = new string(name
-            .Trim()
-            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
-            .ToArray());
-
-        sanitized = sanitized.Trim();
-        if (string.IsNullOrWhiteSpace(sanitized))
-        {
-            return "CameraProfile";
-        }
-
-        return sanitized.Length <= 80 ? sanitized : sanitized[..80].Trim();
-    }
-
-    internal static string FormatTextureNativeCameraStatus(
-        Dx12Camera? activeCamera,
-        string state,
-        CameraDevice camera,
-        TextureNativeFrameInfo frame,
-        bool denoiseEnabled,
-        double denoiseStrength,
-        bool recordProcessedTextureOutput)
-    {
-        var textureStatus = activeCamera?.TextureFrameLeaseActive == true ? "texture lease active" : "waiting for texture lease";
-        var presenterStatus = activeCamera?.IsReady == true ? "DX12 presenter active" : "DX12 presenter pending";
-        var previewPathStatus = activeCamera?.PreviewPathDescription ?? "DX12 preview path pending";
-        var denoiseStatus = denoiseEnabled
-            ? $"DX12 denoise {denoiseStrength:0.0}"
-            : "DX12 denoise off";
-        var recordingStatus = recordProcessedTextureOutput ? "recording follows denoise" : "raw recording";
-        return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
-    }
-
-    internal static string FormatCpuCameraPreviewPipeline(bool isDirectShow, bool isDirect3D12Ready)
-    {
-        var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation NV12/BGRA CPU frames";
-        var presentationPath = isDirect3D12Ready
-            ? isDirectShow ? "DX12 BGRA presentation" : "DX12 NV12/BGRA presentation"
-            : "WPF BGRA presentation";
-        return $"{capturePath} -> {presentationPath}";
-    }
-
-    internal static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled)
-    {
-        return denoiseEnabled;
-    }
-
-    internal static string FormatPreviewRecordParity(
-        bool isCameraEnabled,
-        Dx12Camera? activeCamera,
-        bool denoiseEnabled,
-        bool hasVisibleColorAdjustments,
-        out bool isGood)
-    {
-        if (!isCameraEnabled)
-        {
-            isGood = true;
-            return "camera idle";
-        }
-
-        if (activeCamera?.IsTextureNative == true)
-        {
-            if (hasVisibleColorAdjustments)
-            {
-                isGood = false;
-                return "DX12 texture preview color is raw";
-            }
-
-            isGood = true;
-            return ShouldRecordProcessedTextureOutput(denoiseEnabled)
-                ? "recording includes grain reduction"
-                : "preview = raw texture recording";
-        }
-
-        isGood = true;
-        if (denoiseEnabled && hasVisibleColorAdjustments)
-        {
-            return "preview matches recording with denoise + color";
-        }
-
-        if (denoiseEnabled)
-        {
-            return "preview matches recording with denoise";
-        }
-
-        return hasVisibleColorAdjustments
-            ? "preview matches recording with color"
-            : "preview matches recording";
-    }
-
-    internal static string FormatActiveVideoPipeline(
-        bool isCameraAvailable,
-        bool isCameraEnabled,
-        Dx12Camera? activeCamera,
-        bool denoiseEnabled,
-        bool hasVisibleColorAdjustments,
-        bool isSelectedDirectShowCamera,
-        bool isDirect3D12Ready,
-        string? lastTextureNativeCameraError)
-    {
-        if (!isCameraAvailable)
-        {
-            return "no camera";
-        }
-
-        if (!isCameraEnabled)
-        {
-            return "camera disabled";
-        }
-
-        if (activeCamera?.IsTextureNative == true)
-        {
-            var previewPath = activeCamera.PreviewPathDescription;
-            var colorStatus = hasVisibleColorAdjustments ? "; texture preview color raw" : string.Empty;
-            return $"{previewPath}; recording {(ShouldRecordProcessedTextureOutput(denoiseEnabled) ? "grain reduction bridge" : "raw texture-native")}{colorStatus}";
-        }
-
-        if (isSelectedDirectShowCamera)
-        {
-            return hasVisibleColorAdjustments
-                ? $"{FormatCpuCameraPreviewPipeline(isDirectShow: true, isDirect3D12Ready)} + color; Media Foundation MP4 writer"
-                : $"{FormatCpuCameraPreviewPipeline(isDirectShow: true, isDirect3D12Ready)}; Media Foundation MP4 writer";
-        }
-
-        var fallback = string.IsNullOrWhiteSpace(lastTextureNativeCameraError)
-            ? string.Empty
-            : $" after DX12 shared stream fallback ({lastTextureNativeCameraError})";
-        var color = hasVisibleColorAdjustments ? " + color" : string.Empty;
-        return $"{FormatCpuCameraPreviewPipeline(isDirectShow: false, isDirect3D12Ready)}{color}; Media Foundation MP4 writer{fallback}";
-    }
-
-    internal static int RoundCameraControlToStep(double value, CameraControlItem control)
-    {
-        var step = Math.Max(1, control.Step);
-        var rounded = control.Minimum + (int)Math.Round((value - control.Minimum) / step) * step;
-        return Math.Clamp(rounded, control.Minimum, control.Maximum);
-    }
-
-    internal static int ApplyCameraControlDefaultMagnet(int value, CameraControlItem control)
-    {
-        var snapDistance = Math.Max(control.Step * 1.25d, (control.Maximum - control.Minimum) * 0.025d);
-        return Math.Abs(value - control.DefaultValue) <= snapDistance
-            ? control.DefaultValue
-            : value;
-    }
-
-    internal static int GetCameraControlNudgeStep(CameraControlItem control)
-    {
-        return Math.Max(1, control.Step);
-    }
-
-    internal static bool UsesCameraControlNudgeButtons(CameraControlItem control)
-    {
-        return control.Kind == CameraControlKind.Camera
-            && (control.PropertyId == 0 || control.PropertyId == 1 || control.PropertyId == 2);
-    }
-
-    internal static string FormatCameraControlValue(int value)
-    {
-        return value.ToString("0");
-    }
-
-    internal static bool ShouldUseTextureNativeRecording()
-    {
-        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
-        return IsEnabledEnvironmentValue(value);
-    }
-
-    internal static bool ShouldUseSharedTextureCameraStream(bool safeStartDx12Disabled)
-    {
-        if (safeStartDx12Disabled)
-        {
-            return false;
-        }
-
-        var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_SHARED_TEXTURE_CAMERA");
-        return string.Equals(value, "force", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsEnabledEnvironmentValue(string? value)
-    {
-        return string.Equals(value, "1", StringComparison.Ordinal)
-            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
-    }
-
-    internal static bool TryGetTextureNativePreviewFailure(
-        CameraDevice camera,
-        CameraVideoMode mode,
-        out string reason)
-    {
-        return TextureNativePreviewFailures.TryGetValue(CreateTextureNativePreviewFailureKey(camera, mode), out reason!);
-    }
-
-    internal static void RememberTextureNativePreviewFailure(
-        CameraDevice camera,
-        CameraVideoMode mode,
-        string reason)
-    {
-        TextureNativePreviewFailures[CreateTextureNativePreviewFailureKey(camera, mode)] = string.IsNullOrWhiteSpace(reason)
-            ? "previous shared texture preview attempt failed"
-            : reason;
-    }
-
-    internal static void ForgetTextureNativePreviewFailure(CameraDevice camera, CameraVideoMode mode)
-    {
-        TextureNativePreviewFailures.Remove(CreateTextureNativePreviewFailureKey(camera, mode));
-    }
-
-    private static string CreateTextureNativePreviewFailureKey(CameraDevice camera, CameraVideoMode mode)
-    {
-        var cameraKey = string.IsNullOrWhiteSpace(camera.DevicePath)
-            ? $"{camera.Source}|{camera.Name}"
-            : $"{camera.Source}|{camera.DevicePath}";
-        var modeKey = mode.IsAuto
-            ? "auto"
-            : $"{mode.Width}x{mode.Height}@{mode.FramesPerSecond:0.###}";
-        return $"{cameraKey}|{modeKey}";
+        return CameraSourceSelection.IsDirectShowCamera(camera);
     }
 
     internal static Dx12Camera GetOrCreate(CameraDevice camera, CameraVideoMode mode, PreviewTarget target)
@@ -733,7 +209,7 @@ public sealed class Dx12Camera : IDisposable
         double denoiseStrength = 2d)
     {
         return OpenTextureNative(
-            RequireDefaultCamera(),
+            CameraSourceSelection.RequireDefaultCamera(),
             mode ?? CameraVideoMode.Auto,
             target,
             denoiseEnabled,
@@ -753,7 +229,7 @@ public sealed class Dx12Camera : IDisposable
     public static Dx12Camera Start(PreviewTarget target, Dx12CameraOptions? options)
     {
         var dx12Camera = OpenTextureNative(
-            options?.Camera ?? RequireDefaultCamera(),
+            options?.Camera ?? CameraSourceSelection.RequireDefaultCamera(),
             options?.Mode ?? CameraVideoMode.Auto,
             target,
             options?.DenoiseEnabled == true,
@@ -933,214 +409,12 @@ public sealed class Dx12Camera : IDisposable
 
     public bool IsReady => _previewHost?.IsReady == true;
 
-    internal static bool TryGetDirectShowFallbackCamera(CameraDevice primaryCamera, out CameraDevice? directShowFallback)
-    {
-        directShowFallback = primaryCamera.FallbackDevice;
-        return directShowFallback is not null && IsDirectShowCamera(directShowFallback);
-    }
-
     internal static void CollectReleasedCamera()
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
     }
-
-    // there be dragons here
-    internal sealed class TextureNativeStatusPump
-    {
-        private readonly Dispatcher _dispatcher;
-        private readonly Action<TextureNativeFrameInfo> _processFrame;
-        private readonly Action<string>? _warningSink;
-        private TextureNativeFrameInfo? _pendingFrame;
-        private int _frameUpdateQueued;
-        private int _framesReplacedSinceWarning;
-        private long _replacementWindowStartTicks;
-        private int _warningQueued;
-
-        public TextureNativeStatusPump(
-            Dispatcher dispatcher,
-            Action<TextureNativeFrameInfo> processFrame,
-            Action<string>? warningSink = null)
-        {
-            _dispatcher = dispatcher;
-            _processFrame = processFrame;
-            _warningSink = warningSink;
-        }
-
-        public void FrameAvailable(TextureNativeFrameInfo frame)
-        {
-            if (Interlocked.Exchange(ref _pendingFrame, frame) is not null)
-            {
-                TrackFrameReplacement("DX12 status");
-            }
-
-            if (Interlocked.Exchange(ref _frameUpdateQueued, 1) != 0)
-            {
-                return;
-            }
-
-            _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
-        }
-
-        public void Reset()
-        {
-            _pendingFrame = null;
-            Volatile.Write(ref _frameUpdateQueued, 0);
-            Volatile.Write(ref _framesReplacedSinceWarning, 0);
-            Volatile.Write(ref _replacementWindowStartTicks, 0);
-        }
-
-        private void ProcessPendingFrame()
-        {
-            var frame = Interlocked.Exchange(ref _pendingFrame, null);
-            if (frame is not null)
-            {
-                _processFrame(frame);
-            }
-
-            Volatile.Write(ref _frameUpdateQueued, 0);
-            if (Volatile.Read(ref _pendingFrame) is not null
-                && Interlocked.Exchange(ref _frameUpdateQueued, 1) == 0)
-            {
-                _dispatcher.BeginInvoke((Action)ProcessPendingFrame, DispatcherPriority.Background);
-            }
-        }
-
-        private void TrackFrameReplacement(string pumpName)
-        {
-            var nowTicks = DateTime.UtcNow.Ticks;
-            if (Volatile.Read(ref _replacementWindowStartTicks) == 0)
-            {
-                Interlocked.CompareExchange(ref _replacementWindowStartTicks, nowTicks, 0);
-            }
-
-            var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
-            if (replaced < PumpWarningFrameReplacementInterval)
-            {
-                return;
-            }
-
-            var startTicks = Volatile.Read(ref _replacementWindowStartTicks);
-            var elapsedTicks = Math.Max(0, nowTicks - startTicks);
-            Interlocked.Exchange(ref _framesReplacedSinceWarning, 0);
-            Volatile.Write(ref _replacementWindowStartTicks, nowTicks);
-
-            if (elapsedTicks <= PumpWarningFrameReplacementWindowTicks)
-            {
-                var elapsedSeconds = TimeSpan.FromTicks(elapsedTicks).TotalSeconds;
-                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames in {elapsedSeconds:0.0}s before the UI caught up.");
-            }
-        }
-
-        private void QueueWarning(string warning)
-        {
-            if (_warningSink is null || Interlocked.Exchange(ref _warningQueued, 1) != 0)
-            {
-                return;
-            }
-
-            _dispatcher.BeginInvoke(() =>
-            {
-                Volatile.Write(ref _warningQueued, 0);
-                _warningSink(warning);
-            }, DispatcherPriority.Background);
-        }
-    }
-
-    internal sealed class CpuPreviewFramePump
-    {
-        private readonly Dispatcher _dispatcher;
-        private readonly Action<CameraFrame> _processFrame;
-        private readonly Action<string>? _warningSink;
-        private CameraFrame? _pendingFrame;
-        private bool _frameUpdateQueued;
-        private int _framesReplacedSinceWarning;
-        private long _replacementWindowStartTicks;
-        private int _warningQueued;
-
-        public CpuPreviewFramePump(
-            Dispatcher dispatcher,
-            Action<CameraFrame> processFrame,
-            Action<string>? warningSink = null)
-        {
-            _dispatcher = dispatcher;
-            _processFrame = processFrame;
-            _warningSink = warningSink;
-        }
-
-        public void FrameAvailable(CameraFrame frame)
-        {
-            _pendingFrame = frame;
-            if (_frameUpdateQueued)
-            {
-                TrackFrameReplacement("CPU preview");
-                return;
-            }
-
-            _frameUpdateQueued = true;
-            _dispatcher.BeginInvoke(() =>
-            {
-                var latestFrame = _pendingFrame;
-                _pendingFrame = null;
-                _frameUpdateQueued = false;
-
-                if (latestFrame is not null)
-                {
-                    _processFrame(latestFrame);
-                }
-            });
-        }
-
-        public void Reset()
-        {
-            _frameUpdateQueued = false;
-            _pendingFrame = null;
-            Volatile.Write(ref _framesReplacedSinceWarning, 0);
-            Volatile.Write(ref _replacementWindowStartTicks, 0);
-        }
-
-        private void TrackFrameReplacement(string pumpName)
-        {
-            var nowTicks = DateTime.UtcNow.Ticks;
-            if (Volatile.Read(ref _replacementWindowStartTicks) == 0)
-            {
-                Interlocked.CompareExchange(ref _replacementWindowStartTicks, nowTicks, 0);
-            }
-
-            var replaced = Interlocked.Increment(ref _framesReplacedSinceWarning);
-            if (replaced < PumpWarningFrameReplacementInterval)
-            {
-                return;
-            }
-
-            var startTicks = Volatile.Read(ref _replacementWindowStartTicks);
-            var elapsedTicks = Math.Max(0, nowTicks - startTicks);
-            Interlocked.Exchange(ref _framesReplacedSinceWarning, 0);
-            Volatile.Write(ref _replacementWindowStartTicks, nowTicks);
-
-            if (elapsedTicks <= PumpWarningFrameReplacementWindowTicks)
-            {
-                var elapsedSeconds = TimeSpan.FromTicks(elapsedTicks).TotalSeconds;
-                QueueWarning($"{pumpName} camera pump replaced {PumpWarningFrameReplacementInterval} frames in {elapsedSeconds:0.0}s before the UI caught up.");
-            }
-        }
-
-        private void QueueWarning(string warning)
-        {
-            if (_warningSink is null || Interlocked.Exchange(ref _warningQueued, 1) != 0)
-            {
-                return;
-            }
-
-            _dispatcher.BeginInvoke(() =>
-            {
-                Volatile.Write(ref _warningQueued, 0);
-                _warningSink(warning);
-            }, DispatcherPriority.Background);
-        }
-    }
-    // dragons all gone home
 
     public bool TextureFrameLeaseActive => _textureFrameLeaseActive;
 
@@ -1810,60 +1084,4 @@ public sealed class Dx12Camera : IDisposable
 
         public string Name { get; }
     }
-
-    public sealed class CameraProfile
-    {
-        public int Version { get; set; } = 1;
-
-        public string Name { get; set; } = string.Empty;
-
-        public string? CameraName { get; set; }
-
-        public string? CameraSource { get; set; }
-
-        public string? CameraDevicePath { get; set; }
-
-        public bool CameraEnabled { get; set; }
-
-        public string ModeLabel { get; set; } = CameraVideoMode.Auto.Label;
-
-        public int? ModeWidth { get; set; }
-
-        public int? ModeHeight { get; set; }
-
-        public double? ModeFramesPerSecond { get; set; }
-
-        public string? ModeInputFormat { get; set; }
-
-        public bool DenoiseEnabled { get; set; }
-
-        public double DenoiseStrength { get; set; } = 2d;
-
-        public bool ColorPolishEnabled { get; set; }
-
-        public double Exposure { get; set; }
-
-        public double Contrast { get; set; }
-
-        public double Saturation { get; set; }
-
-        public double Warmth { get; set; }
-    }
-}
-
-public sealed class Dx12CameraOptions
-{
-    public CameraDevice? Camera { get; init; }
-
-    public CameraVideoMode? Mode { get; init; }
-
-    public bool DenoiseEnabled { get; init; }
-
-    public double DenoiseStrength { get; init; } = 2d;
-
-    public EventHandler<TextureNativeFrameInfo>? FrameAvailable { get; init; }
-
-    public EventHandler<TextureNativeFrameLease>? TextureFrameAvailable { get; init; }
-
-    public EventHandler<string>? StatusChanged { get; init; }
 }

@@ -35,11 +35,15 @@ var tests = new (string Name, Action Test)[]
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
-    ("Processed monitor uses low-latency buffering", ProcessedMonitorUsesLowLatencyBuffering),
+    ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("System audio loopback is selectable but not default mic fallback", SystemAudioLoopbackIsSelectableButNotDefaultMicFallback),
+    ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
+    ("Stereo input DSP applies independently per channel", StereoInputDspAppliesIndependentlyPerChannel),
+    ("System audio loopback stereo provider preserves channels", SystemAudioLoopbackStereoProviderPreservesChannels),
     ("Blank mixer channels restore without fallback input", BlankMixerChannelsRestoreWithoutFallbackInput),
     ("App settings roundtrip preserves mic mixer routing state", AppSettingsRoundtripPreservesMicMixerRoutingState),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
@@ -68,7 +72,9 @@ var tests = new (string Name, Action Test)[]
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
+    ("Stereo audio delay line preserves left and right", StereoAudioDelayLinePreservesLeftAndRight),
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
+    ("Audio sync buffer preserves interleaved stereo", AudioSyncBufferPreservesInterleavedStereo),
     ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
     ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
     ("Enhanced karaoke LRC parses inline timings", EnhancedKaraokeLrcParsesInlineTimings),
@@ -76,6 +82,7 @@ var tests = new (string Name, Action Test)[]
     ("Short karaoke words stay visible across close timestamps", ShortKaraokeWordsStayVisibleAcrossCloseTimestamps),
     ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
+    ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
     ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
     ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),
     ("Karaoke line grouping keeps detected lyrics readable", KaraokeLineGroupingKeepsDetectedLyricsReadable),
@@ -483,19 +490,21 @@ static void AudioDeviceFormatDisplayText()
     Assert(format.ToString() == "48 kHz, 2 ch, 24-bit", "audio format display text changed unexpectedly");
 }
 
-static void ProcessedMonitorUsesLowLatencyBuffering()
+static void ProcessedMonitorUsesStabilityFirstBuffering()
 {
     var wasapiLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WasapiProcessedOutputLatencyMilliseconds");
     var waveOutLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WaveOutProcessedOutputLatencyMilliseconds");
+    var providerBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "ProcessedOutputBufferDuration");
     var initialBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "InitialLiveOutputBufferedDuration");
     var targetBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "TargetLiveOutputBufferedDuration");
     var maximumBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "MaximumLiveOutputBufferedDuration");
 
-    Assert(wasapiLatency <= 20, "WASAPI live monitor latency should stay singing-friendly");
-    Assert(waveOutLatency <= 50, "WaveOut fallback latency should stay below the old speaker-safe path");
-    Assert(initialBuffer <= TimeSpan.FromMilliseconds(20), "initial live monitor buffer should stay low");
-    Assert(targetBuffer <= TimeSpan.FromMilliseconds(20), "target live monitor buffer should stay low");
-    Assert(maximumBuffer <= TimeSpan.FromMilliseconds(70), "maximum live monitor buffer should trim latency buildup");
+    Assert(wasapiLatency >= 100 && wasapiLatency <= 180, "WASAPI monitor latency should favor reliability over minimum delay");
+    Assert(waveOutLatency >= 120 && waveOutLatency <= 220, "WaveOut fallback latency should give physical devices room to stay smooth");
+    Assert(initialBuffer >= TimeSpan.FromMilliseconds(100), "initial live monitor buffer should absorb startup jitter");
+    Assert(targetBuffer >= TimeSpan.FromMilliseconds(100), "target live monitor buffer should absorb callback jitter");
+    Assert(maximumBuffer >= TimeSpan.FromMilliseconds(300), "maximum live monitor buffer should avoid over-trimming on slower computers");
+    Assert(providerBuffer >= maximumBuffer, "processed output provider must be able to hold the stability buffer");
 }
 
 static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
@@ -510,7 +519,7 @@ static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
     };
     Assert(
         fullOrder.SequenceEqual(expectedFullOrder),
-        "default and endpoint output routes should try low-latency WASAPI before WaveOut fallback");
+        "default and endpoint output routes should try stable WASAPI before WaveOut fallback");
 
     var endpointOnlyOrder = ProcessedOutputRoutePlanner.CreateAttemptOrder(canUseWaveOutFallback: false);
     var expectedEndpointOnlyOrder = new[]
@@ -553,9 +562,11 @@ static void InputChannelModesMapInterfaceLanes()
     Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.Input2Right) == 1, "input 2 should map to channel index 1");
     Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.Input10) == 9, "input 10 should map to channel index 9");
     Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.MonoSum) is null, "mono sum should not pick one channel");
+    Assert(InputChannelModeInfo.GetSelectedChannelIndex(InputChannelMode.StereoPair) is null, "stereo pair should not collapse to one selected channel");
     Assert(InputChannelModeInfo.GetChannelMode(0) == InputChannelMode.Input1Left, "channel index 0 should map back to input 1");
     Assert(InputChannelModeInfo.GetChannelMode(9) == InputChannelMode.Input10, "channel index 9 should map back to input 10");
     Assert(InputChannelModeInfo.GetChannelMode(10) is null, "channel index 10 should be outside the supported strip inputs");
+    Assert(InputChannelModeInfo.GetDisplayLabel(InputChannelMode.StereoPair) == "Stereo pair", "stereo pair label should be stable");
     Assert(InputChannelModeInfo.GetDisplayLabel(InputChannelMode.Input2Right).Contains("2", StringComparison.Ordinal), "input 2 label should be stable");
 }
 
@@ -568,8 +579,104 @@ static void InputChannelModeFallsBackForMonoDevices()
 
     var headset = new AudioInputDevice(0, "Mono headset", 1);
     var coerced = (InputChannelMode)method!.Invoke(null, [headset, null, InputChannelMode.Input2Right])!;
+    var coercedStereo = (InputChannelMode)method.Invoke(null, [headset, null, InputChannelMode.StereoPair])!;
 
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
+    Assert(coercedStereo == InputChannelMode.MonoSum, "a mono headset should not keep unavailable stereo-pair routing");
+}
+
+static void SystemAudioLoopbackIsSelectableButNotDefaultMicFallback()
+{
+    var loopback = AudioInputDevice.CreateSystemAudioLoopback();
+    Assert(loopback.IsSystemAudioLoopback, "system audio loopback should identify itself");
+    Assert(loopback.MaximumInputChannels == 2, "system audio loopback should expose stereo channel options");
+
+    var method = typeof(EqualizerWindow).GetMethod(
+        "ResolvePersistedMicChannelDevice",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "persisted mic device resolver should be available");
+
+    var physical = new AudioInputDevice(0, "Interface input", 2);
+    var devices = new[] { loopback, physical };
+    var restoredLoopback = (AudioInputDevice?)method!.Invoke(null, [devices, AudioInputDevice.SystemAudioLoopbackDeviceName]);
+    var missingPhysical = (AudioInputDevice?)method.Invoke(null, [devices, "Old unplugged mic"]);
+
+    Assert(restoredLoopback?.IsSystemAudioLoopback == true, "saved loopback channels should restore exactly");
+    Assert(missingPhysical?.DeviceNumber == physical.DeviceNumber, "missing saved mics should fall back to a physical input instead of loopback");
+}
+
+static void SystemAudioLoopbackMixerStripIsLeftOfMics()
+{
+    var method = typeof(EqualizerWindow).GetMethod(
+        "CreateDefaultMicChannels",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "default mixer channel factory should be available");
+
+    var channels = (IList)method!.Invoke(null, [])!;
+    Assert(channels.Count >= 2, "default mixer should include loopback plus mic channels");
+
+    var first = channels[0]!;
+    var second = channels[1]!;
+    Assert((bool)GetProperty(first, "IsSystemAudioLoopbackChannel")!, "computer audio strip should render before mic strips");
+    Assert((string)GetProperty(first, "DisplayName")! == "Computer Audio", "computer audio strip should have a clear label");
+    Assert((double)GetProperty(first, "InputGainDb")! == -6d, "computer audio should start with safe gain staging");
+    Assert(((string)GetProperty(first, "RouteText")!).Contains("Stereo pair", StringComparison.Ordinal), "computer audio should default to stereo pair routing");
+    Assert((int)GetProperty(second, "ChannelNumber")! == 1, "Mic 1 should render immediately after computer audio");
+
+    static object? GetProperty(object target, string propertyName)
+    {
+        return target.GetType().GetProperty(propertyName)!.GetValue(target);
+    }
+}
+
+static void StereoInputDspAppliesIndependentlyPerChannel()
+{
+    var sourceSamples = new float[1024];
+    for (var i = 0; i < sourceSamples.Length; i += 2)
+    {
+        sourceSamples[i] = 0.5f;
+        sourceSamples[i + 1] = -0.25f;
+    }
+
+    var source = new ArraySampleProvider(sourceSamples, WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2));
+    var settings = CreateTransparentVoiceSettings();
+    settings.InputTrimDb = -18;
+    var provider = new StereoVoiceProcessorSampleProvider(
+        source,
+        new VoiceSampleProcessor(settings, 48_000),
+        new VoiceSampleProcessor(settings, 48_000));
+    var output = new float[sourceSamples.Length];
+
+    var read = provider.Read(output, 0, output.Length);
+
+    Assert(read == sourceSamples.Length, "stereo DSP provider should read the source block");
+    Assert(output[^2] > 0f && output[^2] < sourceSamples[^2] * 0.6f, "left stereo channel should receive DSP input trim");
+    Assert(output[^1] < 0f && Math.Abs(output[^1]) < Math.Abs(sourceSamples[^1]) * 0.6f, "right stereo channel should receive DSP input trim");
+    Assert(Math.Abs(output[^2] / output[^1] + 2d) < 0.2d, "stereo DSP should preserve independent left/right proportions");
+}
+
+static void SystemAudioLoopbackStereoProviderPreservesChannels()
+{
+    var source = new LiveStereoBlockSampleProvider(48_000);
+    var volume = new VolumeSampleProvider(source) { Volume = 1f };
+    var balance = new StereoBalanceSampleProvider(volume);
+    var bus = new LiveProgramMixBus(48_000);
+    bus.AddMicInput(balance);
+
+    source.SetBlock([0.8f, -0.4f, 0.1f, -0.2f]);
+    var output = new float[4];
+    var read = bus.Read(output, 0, output.Length);
+
+    Assert(read == output.Length, "loopback stereo source should keep the live bus full");
+    AssertSequenceEqual([0.8f, -0.4f, 0.1f, -0.2f], output, "loopback stereo source should preserve left and right channels");
+
+    balance.Balance = -0.5d;
+    source.SetBlock([0.6f, 0.6f]);
+    output = new float[2];
+    bus.Read(output, 0, output.Length);
+
+    Assert(Math.Abs(output[0] - 0.6f) < 0.0001f, "left balance should leave the left side intact");
+    Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "left balance should reduce the right side without summing to mono");
 }
 
 static void BlankMixerChannelsRestoreWithoutFallbackInput()
@@ -2054,6 +2161,22 @@ static void AudioDelayLineDelaysAndResetsSamples()
     AssertSequenceEqual(new[] { 5f, 6f }, samples, "zero delay after reset should pass samples through");
 }
 
+static void StereoAudioDelayLinePreservesLeftAndRight()
+{
+    var delay = new AudioStereoDelayLine(8_000, 10d);
+    var samples = new[] { 1f, 10f, 2f, 20f, 3f, 30f };
+
+    delay.Process(samples, 0.25d);
+
+    AssertSequenceEqual([0f, 0f, 0f, 0f, 1f, 10f], samples, "stereo delay should delay by frames without swapping channels");
+
+    delay.Reset();
+    samples = [4f, 40f];
+    delay.Process(samples, 0d);
+
+    AssertSequenceEqual([4f, 40f], samples, "zero stereo delay after reset should pass both channels through");
+}
+
 static void AudioSyncBufferHoldsTargetLatency()
 {
     var buffer = new AudioSyncBuffer(48_000, TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(40));
@@ -2067,6 +2190,17 @@ static void AudioSyncBufferHoldsTargetLatency()
     Assert(buffer.ReadAligned(output), "buffer should read after target latency is available");
     Assert(Math.Abs(output[0] - 0.1f) < 0.0001f, "first delayed sample should be preserved");
     Assert(buffer.UnderflowCount == 1, "underflow should be counted once");
+}
+
+static void AudioSyncBufferPreservesInterleavedStereo()
+{
+    var buffer = new AudioSyncBuffer(48_000, TimeSpan.Zero, TimeSpan.FromMilliseconds(40), channelCount: 2);
+    var output = new float[8];
+
+    buffer.Write([0.1f, -0.1f, 0.2f, -0.2f, 0.3f, -0.3f, 0.4f, -0.4f], 48_000);
+    Assert(buffer.ReadAligned(output), "stereo sync buffer should read when enough stereo frames are available");
+
+    AssertSequenceEqual([0.1f, -0.1f, 0.2f, -0.2f, 0.3f, -0.3f, 0.4f, -0.4f], output, "stereo sync buffer should keep left and right interleaved");
 }
 
 static void AudioSyncBufferResamplesAndTrimsDrift()
@@ -2195,6 +2329,36 @@ static void KaraokeM4aDurationReadsMovieHeader()
 
         Assert(TryReadKaraokeTrackDuration(path, out var duration), "synthetic M4A should expose duration from mvhd");
         Assert(Math.Abs((duration - TimeSpan.FromSeconds(187)).TotalMilliseconds) < 1d, "M4A movie header duration should be decoded");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static void KaraokeBrowserDfsHidesM4pTracks()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    var nested = Path.Combine(folder, "iTunes", "iTunes Media", "Music", "Artist", "Album");
+    Directory.CreateDirectory(nested);
+    try
+    {
+        var m4pPath = Path.Combine(nested, "01 Protected Song.m4p");
+        var ignoredPath = Path.Combine(nested, "cover.jpg");
+        File.WriteAllBytes(m4pPath, CreateMinimalM4aWithDuration(44100, 44100));
+        File.WriteAllBytes(ignoredPath, [1, 2, 3, 4]);
+
+        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath);
+        var files = ((IEnumerable<string>)InvokeEqualizerWindowPrivateStatic("EnumerateKaraokeTrackFiles", folder)).ToList();
+
+        Assert(!isSupported, "M4P tracks should stay hidden because protected Apple Music files are not reliably playable");
+        Assert(files.Count == 0, "DFS should hide unsupported nested M4P tracks");
     }
     finally
     {
@@ -2960,5 +3124,32 @@ sealed class FakeWaveIn : IWaveIn
 
     public void Dispose()
     {
+    }
+}
+
+sealed class ArraySampleProvider : ISampleProvider
+{
+    private readonly float[] _samples;
+    private int _position;
+
+    public ArraySampleProvider(IEnumerable<float> samples, WaveFormat waveFormat)
+    {
+        _samples = samples.ToArray();
+        WaveFormat = waveFormat;
+    }
+
+    public WaveFormat WaveFormat { get; }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        var read = Math.Min(count, _samples.Length - _position);
+        if (read <= 0)
+        {
+            return 0;
+        }
+
+        Array.Copy(_samples, _position, buffer, offset, read);
+        _position += read;
+        return read;
     }
 }

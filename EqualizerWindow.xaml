@@ -1676,33 +1676,6 @@
                       </Border>
                     </StackPanel>
                   </Border>
-                  <Border x:Name="MicAnalysisPanel" Style="{StaticResource DspBubble}" Visibility="Collapsed">
-                    <StackPanel>
-                      <TextBlock Text="Mic Analysis" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
-                      <TextBlock Text="Test mode" Foreground="#B8C7D9" />
-                      <ComboBox x:Name="MicAnalysisModeComboBox" SelectedIndex="0" Margin="0,2,0,8">
-                        <ComboBoxItem Content="Simultaneous" />
-                        <ComboBoxItem Content="Sequential" />
-                      </ComboBox>
-                      <CheckBox x:Name="MicAnalysisNormalizeCheckBox" Content="Normalize volume" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
-                        <CheckBox.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Level-matches the louder microphone downward before drawing conclusions, so the report focuses on tone instead of gain mismatch." />
-                        </CheckBox.ToolTip>
-                      </CheckBox>
-                      <Button x:Name="StartMicAnalysisButton" Content="Start mic test" Click="StartMicAnalysisClicked" Margin="0,0,0,8">
-                        <Button.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Simultaneous mode compares both raw mic channels while you speak once. Sequential mode prompts mic 1 first, then mic 2, and compares the two passes after level matching." />
-                        </Button.ToolTip>
-                      </Button>
-                      <TextBlock x:Name="MicAnalysisStatusText" Text="Use Mic Compare, then start a test and speak normally." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,8" />
-                      <Border Height="14" Background="#18222B" BorderBrush="#536575" BorderThickness="1" Margin="0,0,0,8">
-                        <Grid>
-                          <Rectangle x:Name="MicAnalysisProgressMeter" Fill="#00BEE6" HorizontalAlignment="Left" Width="0" />
-                        </Grid>
-                      </Border>
-                      <TextBlock x:Name="MicAnalysisResultText" Text="No analysis yet." Foreground="#F8FAFC" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
                       <TextBlock Text="Presets" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -2280,7 +2253,7 @@
               </Grid>
             </Border>
           </Grid>
-          <ScrollViewer Grid.Row="2" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <ScrollViewer Grid.Row="2" Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
             <Border Style="{StaticResource DspBubble}" Margin="18" Padding="12">
               <ItemsControl x:Name="MixingChannelsItemsControl">
                 <ItemsControl.ItemsPanel>
@@ -2290,7 +2263,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border MinHeight="490" BorderThickness="1" CornerRadius="6" Padding="7" Margin="3" SnapsToDevicePixels="True" UseLayoutRounding="True" PreviewMouseLeftButtonDown="MixerChannelStripPreviewMouseLeftButtonDown">
+                    <Border MinHeight="490" MinWidth="92" BorderThickness="1" CornerRadius="6" Padding="7" Margin="3" SnapsToDevicePixels="True" UseLayoutRounding="True" PreviewMouseLeftButtonDown="MixerChannelStripPreviewMouseLeftButtonDown">
                       <Border.Style>
                         <Style TargetType="Border">
                           <Setter Property="Background" Value="#071017" />
@@ -2515,7 +2488,7 @@
               <StackPanel DataContext="{Binding ElementName=MicChannelComboBox, Path=SelectedItem}">
                 <Border Style="{StaticResource DspBubble}">
                   <StackPanel>
-                    <TextBlock Text="Selected Mic" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Selected Input" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding RouteText}" Foreground="#8DA2B7" TextWrapping="Wrap" Margin="0,3,0,10" />
                     <TextBlock Text="Sync" Foreground="#B8C7D9" />
@@ -2574,12 +2547,12 @@
                       <CheckBox Content="Solo" IsChecked="{Binding IsSoloed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="8,0,0,6" />
                       <CheckBox Content="Invert" IsChecked="{Binding PolarityInverted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" Margin="0,0,8,0">
                         <CheckBox.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Flips polarity for this mic before DSP. Useful when two nearby mics cancel each other." />
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Flips polarity for this input before mixing. Useful when nearby sources cancel each other." />
                         </CheckBox.ToolTip>
                       </CheckBox>
                       <Button Content="Reset" Style="{StaticResource ConsolePushButton}" Padding="10,4" Margin="8,0,0,0" Click="ResetSelectedMixerChannelClicked">
                         <Button.ToolTip>
-                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Returns this mic's mixer controls to center: unmuted, not soloed, normal polarity, 100% volume, 0 dB gain, centered pan, and no delay." />
+                          <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Returns this input's mixer controls to center: unmuted, not soloed, normal polarity, 100% volume, 0 dB gain, centered pan, and no delay." />
                         </Button.ToolTip>
                       </Button>
                     </UniformGrid>

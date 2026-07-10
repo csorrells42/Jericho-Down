@@ -18,16 +18,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
     private const int SpectrumAnalysisIntervalMilliseconds = 24;
     private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(SpectrumAnalysisIntervalMilliseconds).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
-    private const int WasapiProcessedOutputLatencyMilliseconds = 18;
-    private const int WaveOutProcessedOutputLatencyMilliseconds = 45;
+    private const int WasapiProcessedOutputLatencyMilliseconds = 120;
+    private const int WaveOutProcessedOutputLatencyMilliseconds = 160;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
-    private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(18);
-    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(18);
-    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(64);
+    private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
+    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AuxiliaryCaptureTargetLatency = TimeSpan.FromMilliseconds(35);
     private static readonly TimeSpan AuxiliaryCaptureMaximumLatency = TimeSpan.FromMilliseconds(140);
     private const double ProcessedOutputRecoveryRampMilliseconds = 6d;
@@ -78,6 +78,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private float[] _mixOutputSamples = [];
     private float[] _mixOutputMonoSamples = [];
     private float[] _mixChannelInputSamples = [];
+    private float[] _mixChannelStereoInputSamples = [];
     private float[] _rawSpectrumResampleBuffer = [];
     private float[] _processedSpectrumResampleBuffer = [];
     private float[] _input1SpectrumResampleBuffer = [];
@@ -137,15 +138,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         public required VoiceSampleProcessor Processor { get; init; }
 
-        public required LiveMicBlockSampleProvider SourceProvider { get; init; }
+        public required bool PreservesStereo { get; init; }
 
-        public required VoiceProcessorSampleProvider DspProvider { get; init; }
+        public LiveMicBlockSampleProvider? SourceProvider { get; init; }
+
+        public LiveStereoBlockSampleProvider? StereoSourceProvider { get; init; }
+
+        public VoiceProcessorSampleProvider? DspProvider { get; init; }
+
+        public StereoVoiceProcessorSampleProvider? StereoDspProvider { get; init; }
 
         public required VolumeSampleProvider VolumeProvider { get; init; }
 
-        public required StereoPanSampleProvider PanProvider { get; init; }
+        public StereoPanSampleProvider? PanProvider { get; init; }
 
-        public required AudioDelayLine DelayLine { get; init; }
+        public StereoBalanceSampleProvider? StereoBalanceProvider { get; init; }
+
+        public AudioDelayLine? DelayLine { get; init; }
+
+        public AudioStereoDelayLine? StereoDelayLine { get; init; }
+
+        public required ISampleProvider ProgramProvider { get; init; }
 
         public required SpectrumAnalyzer Analyzer { get; init; }
 
@@ -501,12 +514,22 @@ public sealed class MicrophoneSpectrumService : IDisposable
             runtime.IsMuted = channel.IsMuted;
             runtime.IsSoloed = channel.IsSoloed;
             runtime.IsPolarityInverted = channel.IsPolarityInverted;
-            runtime.PanProvider.Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d);
+            if (runtime.PanProvider is not null)
+            {
+                runtime.PanProvider.Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d);
+            }
+
+            if (runtime.StereoBalanceProvider is not null)
+            {
+                runtime.StereoBalanceProvider.Balance = Math.Clamp(channel.Pan / 100d, -1d, 1d);
+            }
+
             var delayMilliseconds = Math.Clamp(channel.DelayMilliseconds, 0d, 250d);
             if (Math.Abs(runtime.DelayMilliseconds - delayMilliseconds) > 0.01d
                 && delayMilliseconds <= 0.01d)
             {
-                runtime.DelayLine.Reset();
+                runtime.DelayLine?.Reset();
+                runtime.StereoDelayLine?.Reset();
             }
 
             runtime.DelayMilliseconds = delayMilliseconds;
@@ -521,18 +544,53 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _liveMixChannels = _configuredLiveMixChannels
             .Select(channel =>
             {
-                var sourceProvider = new LiveMicBlockSampleProvider(sampleRate);
                 var processor = new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate);
-                var dspProvider = new VoiceProcessorSampleProvider(sourceProvider, processor);
+                var preserveStereo = channel.InputChannelMode == InputChannelMode.StereoPair;
                 var volumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent);
-                var volumeProvider = new VolumeSampleProvider(dspProvider)
+                LiveMicBlockSampleProvider? sourceProvider = null;
+                LiveStereoBlockSampleProvider? stereoSourceProvider = null;
+                VoiceProcessorSampleProvider? dspProvider = null;
+                StereoVoiceProcessorSampleProvider? stereoDspProvider = null;
+                StereoPanSampleProvider? panProvider = null;
+                StereoBalanceSampleProvider? stereoBalanceProvider = null;
+                AudioDelayLine? delayLine = null;
+                AudioStereoDelayLine? stereoDelayLine = null;
+                ISampleProvider programProvider;
+                VolumeSampleProvider volumeProvider;
+
+                if (preserveStereo)
                 {
-                    Volume = 0f
-                };
-                var panProvider = new StereoPanSampleProvider(volumeProvider)
+                    stereoSourceProvider = new LiveStereoBlockSampleProvider(sampleRate);
+                    stereoDspProvider = new StereoVoiceProcessorSampleProvider(
+                        stereoSourceProvider,
+                        processor,
+                        new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate));
+                    volumeProvider = new VolumeSampleProvider(stereoDspProvider)
+                    {
+                        Volume = 0f
+                    };
+                    stereoBalanceProvider = new StereoBalanceSampleProvider(volumeProvider)
+                    {
+                        Balance = Math.Clamp(channel.Pan / 100d, -1d, 1d)
+                    };
+                    stereoDelayLine = new AudioStereoDelayLine(sampleRate, 250d);
+                    programProvider = stereoBalanceProvider;
+                }
+                else
                 {
-                    Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d)
-                };
+                    sourceProvider = new LiveMicBlockSampleProvider(sampleRate);
+                    dspProvider = new VoiceProcessorSampleProvider(sourceProvider, processor);
+                    volumeProvider = new VolumeSampleProvider(dspProvider)
+                    {
+                        Volume = 0f
+                    };
+                    panProvider = new StereoPanSampleProvider(volumeProvider)
+                    {
+                        Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d)
+                    };
+                    delayLine = new AudioDelayLine(sampleRate, 250d);
+                    programProvider = panProvider;
+                }
 
                 return new LiveMicChannelRuntime
                 {
@@ -548,23 +606,29 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     IsPolarityInverted = channel.IsPolarityInverted,
                     DelayMilliseconds = Math.Clamp(channel.DelayMilliseconds, 0d, 250d),
                     Processor = processor,
+                    PreservesStereo = preserveStereo,
                     SourceProvider = sourceProvider,
+                    StereoSourceProvider = stereoSourceProvider,
                     DspProvider = dspProvider,
+                    StereoDspProvider = stereoDspProvider,
                     VolumeProvider = volumeProvider,
                     PanProvider = panProvider,
-                    DelayLine = new AudioDelayLine(sampleRate, 250d),
+                    StereoBalanceProvider = stereoBalanceProvider,
+                    DelayLine = delayLine,
+                    StereoDelayLine = stereoDelayLine,
+                    ProgramProvider = programProvider,
                     Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
                     RawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
                     SyncBuffer = channel.DeviceNumber == _currentDeviceNumber
                         ? null
-                        : new AudioSyncBuffer(sampleRate, AuxiliaryCaptureTargetLatency, AuxiliaryCaptureMaximumLatency)
+                        : new AudioSyncBuffer(sampleRate, AuxiliaryCaptureTargetLatency, AuxiliaryCaptureMaximumLatency, preserveStereo ? 2 : 1)
                 };
             })
             .ToArray();
         var programMixer = new LiveProgramMixBus(sampleRate);
         foreach (var channel in _liveMixChannels.Where(channel => channel.IsEnabled))
         {
-            programMixer.AddMicInput(channel.PanProvider);
+            programMixer.AddMicInput(channel.ProgramProvider);
         }
 
         _programMixer = programMixer;
@@ -595,6 +659,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             devices.Add(new AudioInputDevice(deviceNumber, capabilities.ProductName, capabilities.Channels));
         }
 
+        devices.Add(AudioInputDevice.CreateSystemAudioLoopback());
         return devices;
     }
 
@@ -626,8 +691,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return devices;
     }
 
+    public static string? GetDefaultPlaybackEndpointId()
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var endpoint = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            return endpoint.ID;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static AudioDeviceFormat? TryGetInputDeviceFormat(AudioInputDevice device)
     {
+        if (device.IsSystemAudioLoopback)
+        {
+            return TryGetSystemAudioLoopbackFormat();
+        }
+
         try
         {
             using var enumerator = new MMDeviceEnumerator();
@@ -641,6 +725,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 var format = endpoint.AudioClient.MixFormat;
                 return new AudioDeviceFormat(format.SampleRate, format.Channels, format.BitsPerSample);
             }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static AudioDeviceFormat? TryGetSystemAudioLoopbackFormat()
+    {
+        try
+        {
+            using var endpoint = WasapiLoopbackCapture.GetDefaultLoopbackCaptureDevice();
+            var format = endpoint.AudioClient.MixFormat;
+            return new AudioDeviceFormat(format.SampleRate, format.Channels, format.BitsPerSample);
         }
         catch
         {
@@ -976,14 +1075,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     _additionalCaptures[deviceNumber] = runtime;
                 }
 
-                ReportStreamStatus($"Aux mic device {deviceNumber + 1} listening via {runtime.BackendDescription}.");
+                ReportStreamStatus($"{DescribeInputDeviceNumber(deviceNumber)} listening via {runtime.BackendDescription}.");
             }
             catch (Exception ex)
             {
                 runtime.Dispose();
-                ReportStreamStatus($"Aux mic device {deviceNumber + 1} unavailable: {ex.Message}");
+                ReportStreamStatus($"{DescribeInputDeviceNumber(deviceNumber)} unavailable: {ex.Message}");
             }
         }
+    }
+
+    private static string DescribeInputDeviceNumber(int deviceNumber)
+    {
+        return IsSystemAudioLoopbackDeviceNumber(deviceNumber)
+            ? "Computer audio loopback"
+            : $"Aux mic device {deviceNumber + 1}";
     }
 
     public void ConfigureProcessedRecordingSource(ProcessedRecordingSource source, int selectedChannelNumber)
@@ -1180,16 +1286,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        if (runtime.ScratchSamples.Length < frameCount)
+        var needsStereoScratch = channels.Any(channel => channel.PreservesStereo);
+        var scratchSampleCount = needsStereoScratch ? frameCount * 2 : frameCount;
+        if (runtime.ScratchSamples.Length < scratchSampleCount)
         {
-            runtime.ScratchSamples = new float[frameCount];
+            runtime.ScratchSamples = new float[scratchSampleCount];
         }
 
-        var scratch = runtime.ScratchSamples.AsSpan(0, frameCount);
         foreach (var channel in channels)
         {
-            FillMonoSamples(buffer, captureFormat, channel.InputChannelMode, scratch);
-            channel.SyncBuffer!.Write(scratch, captureFormat.SampleRate);
+            if (channel.PreservesStereo)
+            {
+                var stereoScratch = runtime.ScratchSamples.AsSpan(0, frameCount * 2);
+                FillStereoSamples(buffer, captureFormat, channel.InputChannelMode, stereoScratch);
+                channel.SyncBuffer!.Write(stereoScratch, captureFormat.SampleRate);
+            }
+            else
+            {
+                var monoScratch = runtime.ScratchSamples.AsSpan(0, frameCount);
+                FillMonoSamples(buffer, captureFormat, channel.InputChannelMode, monoScratch);
+                channel.SyncBuffer!.Write(monoScratch, captureFormat.SampleRate);
+            }
         }
     }
 
@@ -1255,6 +1372,36 @@ public sealed class MicrophoneSpectrumService : IDisposable
             }
 
             var channelInputSamples = _mixChannelInputSamples.AsSpan(0, fallbackRawSamples.Length);
+            if (channel.PreservesStereo)
+            {
+                var channelStereoSamples = _mixChannelStereoInputSamples.AsSpan(0, stereoSampleCount);
+                if (channel.DeviceNumber == _currentDeviceNumber)
+                {
+                    FillStereoSamples(buffer, captureFormat, channel.InputChannelMode, channelStereoSamples);
+                }
+                else if (channel.SyncBuffer is not null)
+                {
+                    channel.SyncBuffer.ReadAligned(channelStereoSamples);
+                }
+                else
+                {
+                    channelStereoSamples.Clear();
+                }
+
+                DownmixStereoToMono(channelStereoSamples, channelInputSamples);
+                if (!hasRawPrimarySamples)
+                {
+                    channelInputSamples.CopyTo(rawPrimarySamples);
+                    hasRawPrimarySamples = true;
+                }
+
+                CaptureLastMicSamples(channel, channelInputSamples, ReadOnlySpan<float>.Empty);
+                ApplyPreDspLiveStereoChannelControls(channel, channelStereoSamples);
+                channel.StereoSourceProvider?.SetBlock(channelStereoSamples);
+                includedChannelCount++;
+                continue;
+            }
+
             if (channel.DeviceNumber == _currentDeviceNumber)
             {
                 FillMonoSamples(buffer, captureFormat, channel.InputChannelMode, channelInputSamples);
@@ -1276,7 +1423,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
             CaptureLastMicSamples(channel, channelInputSamples, ReadOnlySpan<float>.Empty);
             ApplyPreDspLiveChannelControls(channel, channelInputSamples);
-            channel.SourceProvider.SetBlock(channelInputSamples);
+            channel.SourceProvider?.SetBlock(channelInputSamples);
             includedChannelCount++;
         }
 
@@ -1297,8 +1444,20 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 continue;
             }
 
-            CaptureLastMicSamples(channel, ReadOnlySpan<float>.Empty, channel.DspProvider.LastProcessedSamples);
-            primaryTelemetry ??= channel.DspProvider.Processor.Telemetry.Snapshot();
+            if (channel.DspProvider is not null)
+            {
+                CaptureLastMicSamples(channel, ReadOnlySpan<float>.Empty, channel.DspProvider.LastProcessedSamples);
+                primaryTelemetry ??= channel.DspProvider.Processor.Telemetry.Snapshot();
+            }
+            else if (channel.StereoDspProvider is not null)
+            {
+                var stereoProcessedSamples = channel.StereoDspProvider.LastProcessedSamples;
+                var processedSampleCount = Math.Min(fallbackRawSamples.Length, stereoProcessedSamples.Length / 2);
+                var processedMonoSamples = _mixChannelInputSamples.AsSpan(0, processedSampleCount);
+                DownmixStereoToMono(stereoProcessedSamples, processedMonoSamples);
+                CaptureLastMicSamples(channel, ReadOnlySpan<float>.Empty, processedMonoSamples);
+                primaryTelemetry ??= channel.StereoDspProvider.LeftProcessor.Telemetry.Snapshot();
+            }
         }
 
         if (includedChannelCount == 0)
@@ -1358,7 +1517,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return;
         }
 
-        channel.DelayLine.Process(samples, channel.DelayMilliseconds);
+        channel.DelayLine?.Process(samples, channel.DelayMilliseconds);
+        var gain = channel.InputGainLinear * (channel.IsPolarityInverted ? -1d : 1d);
+        if (Math.Abs(gain - 1d) < 0.0001d)
+        {
+            return;
+        }
+
+        for (var i = 0; i < samples.Length; i++)
+        {
+            samples[i] = (float)Math.Clamp(samples[i] * gain, -1d, 1d);
+        }
+    }
+
+    private static void ApplyPreDspLiveStereoChannelControls(LiveMicChannelRuntime channel, Span<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return;
+        }
+
+        channel.StereoDelayLine?.Process(samples, channel.DelayMilliseconds);
         var gain = channel.InputGainLinear * (channel.IsPolarityInverted ? -1d : 1d);
         if (Math.Abs(gain - 1d) < 0.0001d)
         {
@@ -1465,8 +1644,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 RawSampleCount = rawSampleCount,
                 ProcessedSamples = RentAndCopySamples(channel.LastProcessedSamples.AsSpan(0, processedSampleCount)),
                 ProcessedSampleCount = processedSampleCount,
-                SyncBufferedSamples = channel.SyncBuffer?.BufferedSamples ?? 0,
-                SyncTargetLatencySamples = channel.SyncBuffer?.TargetLatencySamples ?? 0,
+                SyncBufferedSamples = GetSyncFrameCount(channel, channel.SyncBuffer?.BufferedSamples ?? 0),
+                SyncTargetLatencySamples = GetSyncFrameCount(channel, channel.SyncBuffer?.TargetLatencySamples ?? 0),
                 SyncUnderflowCount = channel.SyncBuffer?.UnderflowCount ?? 0,
                 SyncDriftTrimCount = channel.SyncBuffer?.DriftTrimCount ?? 0,
                 SampleRate = Math.Max(8000, _activeSampleRate)
@@ -1474,6 +1653,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         return snapshots.ToArray();
+    }
+
+    private static int GetSyncFrameCount(LiveMicChannelRuntime channel, int bufferedSamples)
+    {
+        return channel.PreservesStereo
+            ? bufferedSamples / 2
+            : bufferedSamples;
     }
 
     private void PublishSpectrumFrame(
@@ -1700,6 +1886,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         EventHandler<WaveInEventArgs> dataAvailable,
         EventHandler<StoppedEventArgs> recordingStopped)
     {
+        if (IsSystemAudioLoopbackDeviceNumber(deviceNumber))
+        {
+            return StartSystemAudioLoopbackCapture(dataAvailable, recordingStopped);
+        }
+
         Exception? startException = null;
         Exception? wasapiException = null;
         if (!ShouldPreferWaveInCapture()
@@ -1735,6 +1926,30 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         throw startException ?? new InvalidOperationException("Could not start microphone capture.");
+    }
+
+    private static bool IsSystemAudioLoopbackDeviceNumber(int deviceNumber)
+    {
+        return deviceNumber == AudioInputDevice.SystemAudioLoopbackDeviceNumber;
+    }
+
+    private IWaveIn StartSystemAudioLoopbackCapture(
+        EventHandler<WaveInEventArgs> dataAvailable,
+        EventHandler<StoppedEventArgs> recordingStopped)
+    {
+        var capture = new WasapiLoopbackCapture();
+        AttachCaptureEvents(capture, dataAvailable, recordingStopped);
+        try
+        {
+            capture.StartRecording();
+            return capture;
+        }
+        catch
+        {
+            DetachCaptureEvents(capture, dataAvailable, recordingStopped);
+            capture.Dispose();
+            throw;
+        }
     }
 
     private bool TryStartWasapiCapture(
@@ -1913,8 +2128,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private string DescribeProcessedOutputBackend(ProcessedOutputRouteBackend backend)
     {
         var wasapiName = CanUseWasapiProcessedOutput()
-            ? "low-latency WASAPI endpoint"
-            : "default WASAPI";
+            ? "stable WASAPI endpoint"
+            : "stable default WASAPI";
         return backend switch
         {
             ProcessedOutputRouteBackend.WasapiFloat => wasapiName,
@@ -2326,6 +2541,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         return capture switch
         {
+            WasapiLoopbackCapture => "WASAPI loopback",
             WasapiCapture => "WASAPI",
             WaveInEvent => "WaveIn",
             _ => capture.GetType().Name
@@ -2605,6 +2821,36 @@ public sealed class MicrophoneSpectrumService : IDisposable
         samples.Clear();
     }
 
+    private static void FillStereoSamples(ReadOnlySpan<byte> buffer, WaveFormat format, InputChannelMode channelMode, Span<float> samples)
+    {
+        var channels = Math.Max(1, format.Channels);
+        if (IsFloatCaptureFormat(format) && format.BitsPerSample == 32)
+        {
+            FillFloatStereoSamples(buffer, samples, channels, channelMode);
+            return;
+        }
+
+        if (IsPcmCaptureFormat(format) && format.BitsPerSample == 16)
+        {
+            FillPcm16StereoSamples(buffer, samples, channels, channelMode);
+            return;
+        }
+
+        if (IsPcmCaptureFormat(format) && format.BitsPerSample == 32)
+        {
+            FillPcm32StereoSamples(buffer, samples, channels, channelMode);
+            return;
+        }
+
+        if (IsPcmCaptureFormat(format) && format.BitsPerSample == 24)
+        {
+            FillPcm24StereoSamples(buffer, samples, channels, channelMode);
+            return;
+        }
+
+        samples.Clear();
+    }
+
     private static int GetWholeFrameCount(int bufferLength, int channels, int bytesPerSample)
     {
         var frameBytes = Math.Max(1, channels) * Math.Max(1, bytesPerSample);
@@ -2656,6 +2902,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             _mixChannelInputSamples = new float[length];
         }
+
+        if (_mixChannelStereoInputSamples.Length < stereoLength)
+        {
+            _mixChannelStereoInputSamples = new float[stereoLength];
+        }
     }
 
     private void ResetSampleBuffers()
@@ -2666,6 +2917,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _mixOutputSamples = [];
         _mixOutputMonoSamples = [];
         _mixChannelInputSamples = [];
+        _mixChannelStereoInputSamples = [];
     }
 
     private static (float[] Input1Samples, float[] Input2Samples) ExtractStereoChannelSamples(ReadOnlySpan<byte> buffer, WaveFormat format)
@@ -2802,6 +3054,53 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    private static void FillFloatStereoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
+    {
+        var floatSamples = MemoryMarshal.Cast<byte, float>(buffer);
+        var frameCount = Math.Min(samples.Length / 2, floatSamples.Length / channels);
+        if (TryGetSelectedChannel(channelMode, channels, out var selectedChannel))
+        {
+            FillSelectedFloatChannelAsStereo(floatSamples, samples, channels, selectedChannel, frameCount);
+        }
+        else if (channels == 1)
+        {
+            FillSelectedFloatChannelAsStereo(floatSamples, samples, channels, 0, frameCount);
+        }
+        else
+        {
+            var inputOffset = 0;
+            var outputOffset = 0;
+            for (var frame = 0; frame < frameCount; frame++)
+            {
+                samples[outputOffset] = SanitizeCaptureSample(floatSamples[inputOffset]);
+                samples[outputOffset + 1] = SanitizeCaptureSample(floatSamples[inputOffset + 1]);
+                inputOffset += channels;
+                outputOffset += 2;
+            }
+        }
+
+        ClearUnusedStereoSamples(samples, frameCount);
+    }
+
+    private static void FillSelectedFloatChannelAsStereo(
+        ReadOnlySpan<float> inputSamples,
+        Span<float> samples,
+        int channels,
+        int selectedChannel,
+        int frameCount)
+    {
+        var inputOffset = selectedChannel;
+        var outputOffset = 0;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var sample = SanitizeCaptureSample(inputSamples[inputOffset]);
+            samples[outputOffset] = sample;
+            samples[outputOffset + 1] = sample;
+            inputOffset += channels;
+            outputOffset += 2;
+        }
+    }
+
     private static void FillPcm16MonoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
     {
         var pcmSamples = MemoryMarshal.Cast<byte, short>(buffer);
@@ -2842,6 +3141,53 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    private static void FillPcm16StereoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
+    {
+        var pcmSamples = MemoryMarshal.Cast<byte, short>(buffer);
+        var frameCount = Math.Min(samples.Length / 2, pcmSamples.Length / channels);
+        if (TryGetSelectedChannel(channelMode, channels, out var selectedChannel))
+        {
+            FillSelectedPcm16ChannelAsStereo(pcmSamples, samples, channels, selectedChannel, frameCount);
+        }
+        else if (channels == 1)
+        {
+            FillSelectedPcm16ChannelAsStereo(pcmSamples, samples, channels, 0, frameCount);
+        }
+        else
+        {
+            var inputOffset = 0;
+            var outputOffset = 0;
+            for (var frame = 0; frame < frameCount; frame++)
+            {
+                samples[outputOffset] = SanitizeCaptureSample(pcmSamples[inputOffset] / 32768f);
+                samples[outputOffset + 1] = SanitizeCaptureSample(pcmSamples[inputOffset + 1] / 32768f);
+                inputOffset += channels;
+                outputOffset += 2;
+            }
+        }
+
+        ClearUnusedStereoSamples(samples, frameCount);
+    }
+
+    private static void FillSelectedPcm16ChannelAsStereo(
+        ReadOnlySpan<short> inputSamples,
+        Span<float> samples,
+        int channels,
+        int selectedChannel,
+        int frameCount)
+    {
+        var inputOffset = selectedChannel;
+        var outputOffset = 0;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var sample = SanitizeCaptureSample(inputSamples[inputOffset] / 32768f);
+            samples[outputOffset] = sample;
+            samples[outputOffset + 1] = sample;
+            inputOffset += channels;
+            outputOffset += 2;
+        }
+    }
+
     private static void FillPcm32MonoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
     {
         var pcmSamples = MemoryMarshal.Cast<byte, int>(buffer);
@@ -2879,6 +3225,53 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             samples[frame] = SanitizeCaptureSample(Pcm32ToFloat(inputSamples[offset]));
             offset += channels;
+        }
+    }
+
+    private static void FillPcm32StereoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
+    {
+        var pcmSamples = MemoryMarshal.Cast<byte, int>(buffer);
+        var frameCount = Math.Min(samples.Length / 2, pcmSamples.Length / channels);
+        if (TryGetSelectedChannel(channelMode, channels, out var selectedChannel))
+        {
+            FillSelectedPcm32ChannelAsStereo(pcmSamples, samples, channels, selectedChannel, frameCount);
+        }
+        else if (channels == 1)
+        {
+            FillSelectedPcm32ChannelAsStereo(pcmSamples, samples, channels, 0, frameCount);
+        }
+        else
+        {
+            var inputOffset = 0;
+            var outputOffset = 0;
+            for (var frame = 0; frame < frameCount; frame++)
+            {
+                samples[outputOffset] = SanitizeCaptureSample(Pcm32ToFloat(pcmSamples[inputOffset]));
+                samples[outputOffset + 1] = SanitizeCaptureSample(Pcm32ToFloat(pcmSamples[inputOffset + 1]));
+                inputOffset += channels;
+                outputOffset += 2;
+            }
+        }
+
+        ClearUnusedStereoSamples(samples, frameCount);
+    }
+
+    private static void FillSelectedPcm32ChannelAsStereo(
+        ReadOnlySpan<int> inputSamples,
+        Span<float> samples,
+        int channels,
+        int selectedChannel,
+        int frameCount)
+    {
+        var inputOffset = selectedChannel;
+        var outputOffset = 0;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var sample = SanitizeCaptureSample(Pcm32ToFloat(inputSamples[inputOffset]));
+            samples[outputOffset] = sample;
+            samples[outputOffset + 1] = sample;
+            inputOffset += channels;
+            outputOffset += 2;
         }
     }
 
@@ -2924,6 +3317,65 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             samples[frame] = SanitizeCaptureSample(ReadPcm24SampleRaw(buffer, offset));
             offset += frameStride;
+        }
+    }
+
+    private static void FillPcm24StereoSamples(ReadOnlySpan<byte> buffer, Span<float> samples, int channels, InputChannelMode channelMode)
+    {
+        const int bytesPerSample = 3;
+        var frameStride = channels * bytesPerSample;
+        var frameCount = Math.Min(samples.Length / 2, buffer.Length / frameStride);
+        if (TryGetSelectedChannel(channelMode, channels, out var selectedChannel))
+        {
+            FillSelectedPcm24ChannelAsStereo(buffer, samples, channels, selectedChannel, frameCount);
+        }
+        else if (channels == 1)
+        {
+            FillSelectedPcm24ChannelAsStereo(buffer, samples, channels, 0, frameCount);
+        }
+        else
+        {
+            var inputOffset = 0;
+            var outputOffset = 0;
+            for (var frame = 0; frame < frameCount; frame++)
+            {
+                samples[outputOffset] = SanitizeCaptureSample(ReadPcm24SampleRaw(buffer, inputOffset));
+                samples[outputOffset + 1] = SanitizeCaptureSample(ReadPcm24SampleRaw(buffer, inputOffset + bytesPerSample));
+                inputOffset += frameStride;
+                outputOffset += 2;
+            }
+        }
+
+        ClearUnusedStereoSamples(samples, frameCount);
+    }
+
+    private static void FillSelectedPcm24ChannelAsStereo(
+        ReadOnlySpan<byte> buffer,
+        Span<float> samples,
+        int channels,
+        int selectedChannel,
+        int frameCount)
+    {
+        const int bytesPerSample = 3;
+        var inputOffset = selectedChannel * bytesPerSample;
+        var frameStride = channels * bytesPerSample;
+        var outputOffset = 0;
+        for (var frame = 0; frame < frameCount; frame++)
+        {
+            var sample = SanitizeCaptureSample(ReadPcm24SampleRaw(buffer, inputOffset));
+            samples[outputOffset] = sample;
+            samples[outputOffset + 1] = sample;
+            inputOffset += frameStride;
+            outputOffset += 2;
+        }
+    }
+
+    private static void ClearUnusedStereoSamples(Span<float> samples, int filledFrameCount)
+    {
+        var filledSamples = Math.Clamp(filledFrameCount * 2, 0, samples.Length);
+        if (filledSamples < samples.Length)
+        {
+            samples[filledSamples..].Clear();
         }
     }
 

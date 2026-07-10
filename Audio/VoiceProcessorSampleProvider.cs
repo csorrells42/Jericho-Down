@@ -5,13 +5,15 @@ namespace JerichoDown.Audio;
 public sealed class VoiceProcessorSampleProvider : ISampleProvider
 {
     private readonly ISampleProvider _source;
+    private readonly bool _bypassProcessing;
     private float[] _inputScratch = [];
     private float[] _lastProcessedSamples = [];
 
-    public VoiceProcessorSampleProvider(ISampleProvider source, VoiceSampleProcessor processor)
+    public VoiceProcessorSampleProvider(ISampleProvider source, VoiceSampleProcessor processor, bool bypassProcessing = false)
     {
         _source = source;
         Processor = processor;
+        _bypassProcessing = bypassProcessing;
     }
 
     public VoiceSampleProcessor Processor { get; }
@@ -41,7 +43,15 @@ public sealed class VoiceProcessorSampleProvider : ISampleProvider
             return 0;
         }
 
-        Processor.Process(_inputScratch.AsSpan(0, read), buffer.AsSpan(offset, read));
+        if (_bypassProcessing)
+        {
+            _inputScratch.AsSpan(0, read).CopyTo(buffer.AsSpan(offset, read));
+        }
+        else
+        {
+            Processor.Process(_inputScratch.AsSpan(0, read), buffer.AsSpan(offset, read));
+        }
+
         if (_lastProcessedSamples.Length < read)
         {
             _lastProcessedSamples = new float[read];
