@@ -75,7 +75,9 @@ public partial class EqualizerWindow : Window
         ".m4a",
         ".aac",
         ".wma",
-        ".flac"
+        ".flac",
+        ".aiff",
+        ".aif"
     ];
     private static readonly string KaraokeTrackOpenFileFilter = $"Audio files|{string.Join(';', SupportedKaraokeTrackExtensions.Select(extension => $"*{extension}"))}|All files|*.*";
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
@@ -12593,6 +12595,9 @@ public partial class EqualizerWindow : Window
         var extension = System.IO.Path.GetExtension(path);
         return extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".aac", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".aiff", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".aif", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase);
@@ -13520,25 +13525,26 @@ public partial class EqualizerWindow : Window
 
         public static KaraokeTrackAudioReader Open(string path)
         {
-            var extension = System.IO.Path.GetExtension(path);
-            if (extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase))
+            if (!CanUseSampleReader(path))
             {
-                return OpenWaveStream(new Mp3FileReader(path));
+                var extension = System.IO.Path.GetExtension(path);
+                throw new NotSupportedException($"{extension} backing tracks are not supported by the sample playback path.");
             }
 
-            if (extension.Equals(".wav", StringComparison.OrdinalIgnoreCase))
-            {
-                return OpenWaveStream(new WaveFileReader(path));
-            }
-
-            throw new NotSupportedException($"{extension} backing tracks use Windows media fallback playback. Use WAV or MP3 for key, tempo, vocal reduction, and auto-timing.");
+            return OpenWaveStream(new AudioFileReader(path));
         }
 
         public static bool CanUseSampleReader(string path)
         {
             var extension = System.IO.Path.GetExtension(path);
             return extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
-                || extension.Equals(".wav", StringComparison.OrdinalIgnoreCase);
+                || extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".aac", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".wma", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".flac", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".aiff", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".aif", StringComparison.OrdinalIgnoreCase);
         }
 
         public static bool TryReadDuration(string path, out TimeSpan duration)
@@ -13557,7 +13563,7 @@ public partial class EqualizerWindow : Window
             }
             catch
             {
-                return false;
+                return TryReadMpeg4Duration(path, out duration);
             }
         }
 

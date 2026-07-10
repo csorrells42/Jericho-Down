@@ -34,6 +34,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
+    ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
@@ -84,6 +85,8 @@ var tests = new (string Name, Action Test)[]
     ("Short karaoke words stay visible across close timestamps", ShortKaraokeWordsStayVisibleAcrossCloseTimestamps),
     ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
+    ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
+    ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
     ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
     ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
     ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),
@@ -483,6 +486,21 @@ static void EqualizerBandRaisesNotifications()
     Assert(names.Contains(nameof(EqualizerBand.GainDb)), "gain change should notify GainDb");
     Assert(names.Count(name => name == nameof(EqualizerBand.DisplayValue)) >= 2, "display should update for gain and enabled changes");
     Assert(names.Contains(nameof(EqualizerBand.IsEnabled)), "enabled change should notify IsEnabled");
+}
+
+static void EqScreenBindsEveryVoiceProcessorSetting()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var missing = typeof(VoiceProcessorSettings)
+        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+        .Where(property => property.CanRead
+            && property.CanWrite
+            && (property.PropertyType == typeof(bool) || property.PropertyType == typeof(double)))
+        .Where(property => !xaml.Contains(property.Name, StringComparison.Ordinal))
+        .Select(property => property.Name)
+        .ToArray();
+
+    Assert(missing.Length == 0, $"EQ screen is missing DSP bindings: {string.Join(", ", missing)}");
 }
 
 static void AudioDeviceFormatDisplayText()
@@ -2371,6 +2389,37 @@ static void KaraokeM4aDurationReadsMovieHeader()
     }
 }
 
+static void KaraokeSampleReaderAcceptsExtendedFormats()
+{
+    foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".wma", ".flac", ".aiff", ".aif" })
+    {
+        var path = Path.Combine(Path.GetTempPath(), "track" + extension);
+        var isSupported = (bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", path);
+        var isVisible = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", path);
+
+        Assert(isSupported, $"{extension} should use the NAudio sample reader path when the local codec can decode it");
+        Assert(isVisible, $"{extension} should be visible in the karaoke track browser");
+    }
+
+    var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
+    Assert(!(bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", m4pPath), "protected Apple Music M4P should not use the sample reader path");
+    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
+}
+
+static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
+{
+    foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".flac", ".aiff", ".aif", ".wma" })
+    {
+        var path = Path.Combine(Path.GetTempPath(), "recording" + extension);
+        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", path);
+
+        Assert(isSupported, $"{extension} should be accepted by the recording browser playback filter");
+    }
+
+    var protectedPath = Path.Combine(Path.GetTempPath(), "recording.m4p");
+    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", protectedPath), "M4P should not be accepted as a recording playback format");
+}
+
 static void KaraokeBrowserDfsHidesM4pTracks()
 {
     var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
@@ -2725,6 +2774,23 @@ static bool TryReadKaraokeTrackDuration(string path, out TimeSpan duration)
     return result;
 }
 
+static object InvokeKaraokeTrackAudioReaderPrivateStatic(string methodName, params object?[] args)
+{
+    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
+    if (readerType is null)
+    {
+        throw new InvalidOperationException("KaraokeTrackAudioReader type was not found");
+    }
+
+    var method = readerType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+    if (method is null)
+    {
+        throw new InvalidOperationException($"KaraokeTrackAudioReader.{methodName} was not found");
+    }
+
+    return method.Invoke(null, args) ?? throw new InvalidOperationException($"{methodName} returned null");
+}
+
 static byte[] CreateMinimalM4aWithDuration(uint timescale, uint duration)
 {
     using var stream = new MemoryStream();
@@ -2784,6 +2850,23 @@ static object InvokeEqualizerWindowPrivateStaticWithArgs(string methodName, obje
     }
 
     return method.Invoke(null, args) ?? throw new InvalidOperationException($"EqualizerWindow.{methodName} returned null");
+}
+
+static string FindRepoFile(string relativePath)
+{
+    var directory = new DirectoryInfo(Environment.CurrentDirectory);
+    while (directory is not null)
+    {
+        var candidate = Path.Combine(directory.FullName, relativePath);
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        directory = directory.Parent;
+    }
+
+    throw new FileNotFoundException($"Could not find {relativePath} from {Environment.CurrentDirectory}");
 }
 
 static T GetProperty<T>(object target, string name)
