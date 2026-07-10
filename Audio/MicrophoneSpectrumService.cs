@@ -782,6 +782,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return null;
     }
 
+    public static IReadOnlyList<CoreAudioSessionSnapshot> GetOutputAudioSessions(AudioOutputDevice? device)
+    {
+        return CoreAudioSessionCatalog.GetRenderSessions(device);
+    }
+
     private static bool DeviceNamesMatch(string waveInName, string endpointName)
     {
         var normalizedWaveInName = NormalizeDeviceName(waveInName);

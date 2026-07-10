@@ -113,6 +113,7 @@ public partial class EqualizerWindow : Window
     private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _audioDeviceRefreshTimer = new();
+    private readonly DispatcherTimer _outputAudioSessionTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
@@ -461,6 +462,8 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
         _audioDeviceRefreshTimer.Interval = TimeSpan.FromMilliseconds(500);
         _audioDeviceRefreshTimer.Tick += AudioDeviceRefreshTimerTick;
+        _outputAudioSessionTimer.Interval = TimeSpan.FromSeconds(2);
+        _outputAudioSessionTimer.Tick += OutputAudioSessionTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
         _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(45);
@@ -701,7 +704,9 @@ public partial class EqualizerWindow : Window
         RestorePersistedPresetOrDefault();
         StartAudioDeviceNotificationWatcher();
         _audioDeviceFormatTimer.Start();
+        _outputAudioSessionTimer.Start();
         UpdateAudioFormatRouteText();
+        UpdateOutputAudioSessionText();
         if (_startupRecovery.PreviousRunDidNotCloseCleanly)
         {
             CameraPreviewStatusText.Text = "Safe start: previous run did not close cleanly. Camera auto-start, DX12 preview, and video denoise are disabled for this run.";
@@ -1459,6 +1464,11 @@ public partial class EqualizerWindow : Window
         RefreshAudioDevicesFromSystem();
     }
 
+    private void OutputAudioSessionTimerTick(object? sender, EventArgs e)
+    {
+        UpdateOutputAudioSessionText();
+    }
+
     private void RefreshAudioDevicesFromSystem()
     {
         var inputDevices = MicrophoneSpectrumService.GetInputDevices();
@@ -1503,6 +1513,8 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
         _audioDeviceRefreshTimer.Stop();
         _audioDeviceRefreshTimer.Tick -= AudioDeviceRefreshTimerTick;
+        _outputAudioSessionTimer.Stop();
+        _outputAudioSessionTimer.Tick -= OutputAudioSessionTimerTick;
         DisposeAudioDeviceNotificationWatcher();
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
@@ -5004,6 +5016,8 @@ public partial class EqualizerWindow : Window
         {
             _isUpdatingOutputRoutingUi = false;
         }
+
+        UpdateOutputAudioSessionText();
     }
 
     private void SetProcessedOutputToggleState(bool enabled)
@@ -5180,6 +5194,45 @@ public partial class EqualizerWindow : Window
         return inputFormat.Value.SampleRate == outputFormat.Value.SampleRate
             ? $"{_spectrumService.ProcessedOutputFormatStatus} Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling."
             : $"{_spectrumService.ProcessedOutputFormatStatus} High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
+    }
+
+    private void UpdateOutputAudioSessionText()
+    {
+        if (OutputAudioSessionsText is null)
+        {
+            return;
+        }
+
+        var sessions = _selectedOutputDevice?.IsAsio == true
+            ? []
+            : MicrophoneSpectrumService.GetOutputAudioSessions(_selectedOutputDevice);
+        OutputAudioSessionsText.Text = BuildOutputAudioSessionText(_selectedOutputDevice, sessions);
+    }
+
+    private static string BuildOutputAudioSessionText(
+        AudioOutputDevice? selectedOutputDevice,
+        IReadOnlyList<CoreAudioSessionSnapshot> sessions)
+    {
+        if (selectedOutputDevice is null)
+        {
+            return "Apps on selected output: no output selected.";
+        }
+
+        if (selectedOutputDevice.IsAsio)
+        {
+            return "Apps on selected output: ASIO bypasses Windows app sessions.";
+        }
+
+        var activeSessions = sessions
+            .Where(session => session.State.Equals("Active", StringComparison.OrdinalIgnoreCase)
+                || session.PeakLevel > 0.0001f)
+            .Take(5)
+            .Select(CoreAudioSessionCatalog.FormatSessionSummary)
+            .ToArray();
+
+        return activeSessions.Length == 0
+            ? "Apps on selected output: none active."
+            : $"Apps on selected output: {string.Join("; ", activeSessions)}";
     }
 
     private void UpdateAudioFormatRouteText()

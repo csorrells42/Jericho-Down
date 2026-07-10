@@ -41,6 +41,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
+    ("CoreAudio session catalog skips ASIO outputs", CoreAudioSessionCatalogSkipsAsioOutputs),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
@@ -598,6 +599,50 @@ static void AsioOutputRoutingIsOptIn()
 
     var asioDevice = new AudioOutputDevice(-1, "ASIO: Interface ASIO Driver", endpointId, AudioOutputBackend.Asio);
     Assert(asioDevice.IsAsio, "ASIO output devices should be identifiable without inspecting display text");
+}
+
+static void CoreAudioSessionCatalogSkipsAsioOutputs()
+{
+    var asioDevice = new AudioOutputDevice(
+        -1,
+        "ASIO: Interface ASIO Driver",
+        MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver"),
+        AudioOutputBackend.Asio);
+    var sessions = MicrophoneSpectrumService.GetOutputAudioSessions(asioDevice);
+    Assert(sessions.Count == 0, "ASIO drivers should not be queried as Windows CoreAudio app sessions");
+
+    Assert(
+        CoreAudioSessionCatalog.CreateDisplayTitle(string.Empty, "MusicApp", 1200, isSystemSoundsSession: false) == "MusicApp",
+        "session display names should fall back to process names");
+    Assert(
+        CoreAudioSessionCatalog.CreateDisplayTitle(string.Empty, string.Empty, 1200, isSystemSoundsSession: false) == "PID 1200",
+        "session display names should fall back to process IDs");
+    Assert(
+        CoreAudioSessionCatalog.CreateDisplayTitle("Browser audio", "Browser", 1200, isSystemSoundsSession: true) == "System Sounds",
+        "system sounds should use the stable Windows label");
+
+    var windowsDevice = new AudioOutputDevice(-1, "Default playback device");
+    var activeSession = new CoreAudioSessionSnapshot(
+        string.Empty,
+        "MusicApp",
+        1200,
+        IsSystemSoundsSession: false,
+        IsMuted: false,
+        Volume: 0.5f,
+        PeakLevel: 0.25f,
+        State: "Active",
+        SessionIdentifier: "session",
+        SessionInstanceIdentifier: "instance");
+    var text = (string)InvokeEqualizerWindowPrivateStaticWithArgs(
+        "BuildOutputAudioSessionText",
+        [windowsDevice, new[] { activeSession }]);
+    Assert(text.Contains("MusicApp", StringComparison.Ordinal), "output panel should show active app session names");
+    Assert(text.Contains("Active", StringComparison.Ordinal), "output panel should show active app session state");
+
+    var asioText = (string)InvokeEqualizerWindowPrivateStaticWithArgs(
+        "BuildOutputAudioSessionText",
+        [asioDevice, Array.Empty<CoreAudioSessionSnapshot>()]);
+    Assert(asioText.Contains("ASIO", StringComparison.Ordinal), "output panel should explain ASIO session visibility");
 }
 
 static void ProcessedOutputStatusReportsActualPlaybackFormat()

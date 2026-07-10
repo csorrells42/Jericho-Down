@@ -2407,6 +2407,7 @@
                     <TextBlock x:Name="FeedbackRiskText" Text="Feedback: clear" Foreground="#8DA2B7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock x:Name="OutputStatusText" Text="Output off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock x:Name="AudioFormatRouteText" Text="Receiving: not open | Trying output: not ready" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <TextBlock x:Name="OutputAudioSessionsText" Text="Apps on selected output: not checked" Foreground="#8DA2B7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                   </StackPanel>
                 </Border>
                 <Border Style="{StaticResource DspBubble}">
