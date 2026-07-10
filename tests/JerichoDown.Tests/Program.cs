@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text;
+using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Video;
@@ -35,6 +36,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
+    ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
@@ -492,16 +494,41 @@ static void EqualizerBandRaisesNotifications()
 static void EqScreenBindsEveryVoiceProcessorSetting()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    var missing = typeof(VoiceProcessorSettings)
-        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
-        .Where(property => property.CanRead
-            && property.CanWrite
-            && (property.PropertyType == typeof(bool) || property.PropertyType == typeof(double)))
-        .Where(property => !xaml.Contains(property.Name, StringComparison.Ordinal))
+    var missing = GetVoiceProcessorDspSettingProperties()
+        .Where(property => !HasDirectBinding(xaml, property.Name))
         .Select(property => property.Name)
         .ToArray();
 
     Assert(missing.Length == 0, $"EQ screen is missing DSP bindings: {string.Join(", ", missing)}");
+}
+
+static void VoiceProcessorUsesEveryDspSetting()
+{
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs")));
+    var missing = GetVoiceProcessorDspSettingProperties()
+        .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
+        .Select(property => property.Name)
+        .ToArray();
+
+    Assert(missing.Length == 0, $"Voice processor is missing DSP setting usage: {string.Join(", ", missing)}");
+}
+
+static IEnumerable<PropertyInfo> GetVoiceProcessorDspSettingProperties()
+{
+    return typeof(VoiceProcessorSettings)
+        .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+        .Where(property => property.CanRead
+            && property.CanWrite
+            && (property.PropertyType == typeof(bool) || property.PropertyType == typeof(double)));
+}
+
+static bool HasDirectBinding(string xaml, string propertyName)
+{
+    var escapedPropertyName = Regex.Escape(propertyName);
+    return Regex.IsMatch(
+        xaml,
+        $@"\{{Binding\s+(?:Path\s*=\s*)?{escapedPropertyName}(?:\s|,|\}})",
+        RegexOptions.CultureInvariant);
 }
 
 static void AudioDeviceFormatDisplayText()
