@@ -38,6 +38,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
+    ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
@@ -552,6 +553,24 @@ static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
     Assert(
         endpointOnlyOrder.SequenceEqual(expectedEndpointOnlyOrder),
         "endpoint routes without a matching WaveOut device should still try both WASAPI formats");
+}
+
+static void AsioOutputRoutingIsOptIn()
+{
+    var asioOrder = ProcessedOutputRoutePlanner.CreateAttemptOrder(canUseWaveOutFallback: false, useAsioOutput: true);
+    var expectedAsioOrder = new[]
+    {
+        ProcessedOutputRouteBackend.AsioFloat,
+        ProcessedOutputRouteBackend.AsioPcm
+    };
+    Assert(asioOrder.SequenceEqual(expectedAsioOrder), "ASIO output should use only the explicitly selected ASIO driver route");
+
+    var endpointId = MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver");
+    Assert(MicrophoneSpectrumService.TryGetAsioDriverName(endpointId, out var driverName), "ASIO endpoint IDs should round-trip through the parser");
+    Assert(driverName == "Interface ASIO Driver", "ASIO endpoint ID should preserve the driver name");
+
+    var asioDevice = new AudioOutputDevice(-1, "ASIO: Interface ASIO Driver", endpointId, AudioOutputBackend.Asio);
+    Assert(asioDevice.IsAsio, "ASIO output devices should be identifiable without inspecting display text");
 }
 
 static void ProcessedOutputStatusReportsActualPlaybackFormat()

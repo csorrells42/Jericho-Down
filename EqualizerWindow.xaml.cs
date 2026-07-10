@@ -280,12 +280,12 @@ public partial class EqualizerWindow : Window
     private readonly ObservableCollection<AudioRecordingFileItem> _audioRecordingFiles = [];
     private FileBrowserWatcher? _audioRecordingFolderWatcher;
     private int _audioRecordingFolderRefreshQueued;
-    private WaveOutEvent? _audioPlaybackOutput;
+    private IWavePlayer? _audioPlaybackOutput;
     private AudioFileReader? _audioPlaybackReader;
     private string? _audioPlaybackPath;
     private bool _isStoppingAudioPlayback;
     private readonly DispatcherTimer _karaokePlaybackPositionTimer = new();
-    private WaveOutEvent? _karaokeTrackOutput;
+    private IWavePlayer? _karaokeTrackOutput;
     private KaraokeTrackAudioReader? _karaokeTrackReader;
     private MediaPlayer? _karaokeTrackMediaPlayer;
     private KaraokeRateSampleProvider? _karaokeTrackRateProvider;
@@ -316,7 +316,7 @@ public partial class EqualizerWindow : Window
     private readonly ObservableCollection<AudioRecordingFileItem> _karaokeRecordingFiles = [];
     private FileBrowserWatcher? _karaokeRecordingFolderWatcher;
     private int _karaokeRecordingFolderRefreshQueued;
-    private WaveOutEvent? _karaokeRecordingPlaybackOutput;
+    private IWavePlayer? _karaokeRecordingPlaybackOutput;
     private AudioFileReader? _karaokeRecordingPlaybackReader;
     private string? _karaokeRecordingPlaybackPath;
     private bool _isStoppingKaraokeRecordingPlayback;
@@ -5855,9 +5855,8 @@ public partial class EqualizerWindow : Window
             StopAudioPlayback();
 
             var reader = new AudioFileReader(path);
-            var output = new WaveOutEvent();
+            var output = CreateSelectedPlaybackOutput(reader.ToWaveProvider(), desiredLatency: 90);
             output.PlaybackStopped += AudioPlaybackStopped;
-            output.Init(reader);
 
             _audioPlaybackReader = reader;
             _audioPlaybackOutput = output;
@@ -5876,6 +5875,25 @@ public partial class EqualizerWindow : Window
         }
 
         UpdateStandaloneAudioRecordingTransportControls();
+    }
+
+    private IWavePlayer CreateSelectedPlaybackOutput(IWaveProvider provider, int desiredLatency)
+    {
+        if (_selectedOutputDevice?.IsAsio == true
+            && MicrophoneSpectrumService.TryGetAsioDriverName(_selectedOutputDevice.EndpointId, out var asioDriverName))
+        {
+            var asioOutput = new AsioOut(asioDriverName);
+            asioOutput.Init(provider);
+            return asioOutput;
+        }
+
+        var output = new WaveOutEvent
+        {
+            DeviceNumber = _selectedOutputDevice?.DeviceNumber ?? -1,
+            DesiredLatency = desiredLatency
+        };
+        output.Init(provider);
+        return output;
     }
 
     private void AudioPlaybackStopped(object? sender, StoppedEventArgs e)
@@ -6620,13 +6638,8 @@ public partial class EqualizerWindow : Window
                     PitchFactor = (float)GetKaraokePitchFactor()
                 };
                 var vocalReductionProvider = new KaraokeVocalReductionSampleProvider(pitchProvider, _karaokeVocalReductionEnabled);
-                var output = new WaveOutEvent
-                {
-                    DeviceNumber = _selectedOutputDevice?.DeviceNumber ?? -1,
-                    DesiredLatency = 90
-                };
+                var output = CreateSelectedPlaybackOutput(vocalReductionProvider.ToWaveProvider(), desiredLatency: 90);
                 output.PlaybackStopped += KaraokePlaybackStopped;
-                output.Init(vocalReductionProvider);
                 _karaokeTrackReader = reader;
                 _karaokeTrackRateProvider = rateProvider;
                 _karaokeTrackPitchProvider = pitchProvider;
@@ -10049,13 +10062,8 @@ public partial class EqualizerWindow : Window
             StopKaraokeRecordingPlayback();
 
             var reader = new AudioFileReader(path);
-            var output = new WaveOutEvent
-            {
-                DeviceNumber = _selectedOutputDevice?.DeviceNumber ?? -1,
-                DesiredLatency = 90
-            };
+            var output = CreateSelectedPlaybackOutput(reader.ToWaveProvider(), desiredLatency: 90);
             output.PlaybackStopped += KaraokeRecordingPlaybackStopped;
-            output.Init(reader);
 
             _karaokeRecordingPlaybackReader = reader;
             _karaokeRecordingPlaybackOutput = output;

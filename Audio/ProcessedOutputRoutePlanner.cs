@@ -2,6 +2,8 @@ namespace JerichoDown.Audio;
 
 public enum ProcessedOutputRouteBackend
 {
+    AsioFloat,
+    AsioPcm,
     WasapiFloat,
     WasapiPcm,
     WaveOutFloat,
@@ -12,8 +14,17 @@ public enum ProcessedOutputRouteBackend
 
 public static class ProcessedOutputRoutePlanner
 {
-    public static ProcessedOutputRouteBackend[] CreateAttemptOrder(bool canUseWaveOutFallback)
+    public static ProcessedOutputRouteBackend[] CreateAttemptOrder(bool canUseWaveOutFallback, bool useAsioOutput = false)
     {
+        if (useAsioOutput)
+        {
+            return
+            [
+                ProcessedOutputRouteBackend.AsioFloat,
+                ProcessedOutputRouteBackend.AsioPcm
+            ];
+        }
+
         return canUseWaveOutFallback
             ?
             [

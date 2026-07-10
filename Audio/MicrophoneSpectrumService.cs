@@ -22,6 +22,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int WaveOutProcessedOutputLatencyMilliseconds = 160;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
+    private const string AsioEndpointPrefix = "asio:";
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
     private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(500);
@@ -697,6 +698,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             AddWaveOutDevices(devices);
         }
 
+        AddAsioOutputDevices(devices);
         return devices;
     }
 
@@ -759,6 +761,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     public static AudioDeviceFormat? TryGetOutputDeviceFormat(AudioOutputDevice device)
     {
+        if (device.IsAsio)
+        {
+            return null;
+        }
+
         try
         {
             using var enumerator = new MMDeviceEnumerator();
@@ -804,6 +811,52 @@ public sealed class MicrophoneSpectrumService : IDisposable
             var capabilities = WaveOut.GetCapabilities(deviceNumber);
             devices.Add(new AudioOutputDevice(deviceNumber, capabilities.ProductName));
         }
+    }
+
+    private static void AddAsioOutputDevices(List<AudioOutputDevice> devices)
+    {
+        try
+        {
+            if (!AsioOut.isSupported())
+            {
+                return;
+            }
+
+            foreach (var driverName in AsioOut.GetDriverNames())
+            {
+                if (string.IsNullOrWhiteSpace(driverName))
+                {
+                    continue;
+                }
+
+                devices.Add(new AudioOutputDevice(
+                    -1,
+                    $"ASIO: {driverName}",
+                    CreateAsioEndpointId(driverName),
+                    AudioOutputBackend.Asio));
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    public static string CreateAsioEndpointId(string driverName)
+    {
+        return AsioEndpointPrefix + (driverName ?? string.Empty);
+    }
+
+    public static bool TryGetAsioDriverName(string? endpointId, out string driverName)
+    {
+        driverName = string.Empty;
+        if (string.IsNullOrWhiteSpace(endpointId)
+            || !endpointId.StartsWith(AsioEndpointPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        driverName = endpointId[AsioEndpointPrefix.Length..];
+        return !string.IsNullOrWhiteSpace(driverName);
     }
 
     private static int FindMatchingWaveOutDeviceNumber(string endpointName)
@@ -2096,7 +2149,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
         _processedOutputSampleRate = _activeSampleRate;
         var floatProvider = CreateProcessedOutputProvider(WaveFormat.CreateIeeeFloatWaveFormat(_activeSampleRate, 2));
         var pcmProvider = CreateProcessedOutputProvider(new WaveFormat(_activeSampleRate, 16, 2));
-        foreach (var backend in ProcessedOutputRoutePlanner.CreateAttemptOrder(CanUseWaveOutProcessedOutputFallback()))
+        foreach (var backend in ProcessedOutputRoutePlanner.CreateAttemptOrder(
+            CanUseWaveOutProcessedOutputFallback(),
+            IsProcessedOutputAsio()))
         {
             if (TryStartProcessedOutputBackend(
                 backend,
@@ -2136,6 +2191,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             : floatProvider;
         return backend switch
         {
+            ProcessedOutputRouteBackend.AsioFloat or ProcessedOutputRouteBackend.AsioPcm
+                => TryStartAsioProcessedOutput(provider, out player),
             ProcessedOutputRouteBackend.WasapiFloat or ProcessedOutputRouteBackend.WasapiPcm
                 => TryStartWasapiProcessedOutput(provider, out player, out playbackProvider),
             ProcessedOutputRouteBackend.WaveOutFloat or ProcessedOutputRouteBackend.WaveOutPcm
@@ -2153,6 +2210,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             : "stable default WASAPI";
         return backend switch
         {
+            ProcessedOutputRouteBackend.AsioFloat => "ASIO",
+            ProcessedOutputRouteBackend.AsioPcm => "ASIO PCM",
             ProcessedOutputRouteBackend.WasapiFloat => wasapiName,
             ProcessedOutputRouteBackend.WasapiPcm => $"{wasapiName} PCM",
             ProcessedOutputRouteBackend.WaveOutFloat => "WaveOut",
@@ -2165,12 +2224,18 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private bool CanUseWasapiProcessedOutput()
     {
-        return !string.IsNullOrWhiteSpace(_processedOutputEndpointId);
+        return !string.IsNullOrWhiteSpace(_processedOutputEndpointId) && !IsProcessedOutputAsio();
     }
 
     private bool CanUseWaveOutProcessedOutputFallback()
     {
-        return string.IsNullOrWhiteSpace(_processedOutputEndpointId) || _processedOutputDeviceNumber >= 0;
+        return !IsProcessedOutputAsio()
+            && (string.IsNullOrWhiteSpace(_processedOutputEndpointId) || _processedOutputDeviceNumber >= 0);
+    }
+
+    private bool IsProcessedOutputAsio()
+    {
+        return TryGetAsioDriverName(_processedOutputEndpointId, out _);
     }
 
     private static BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)
@@ -2222,6 +2287,29 @@ public sealed class MicrophoneSpectrumService : IDisposable
             DisposePlaybackProvider(playbackProvider, provider);
             player = null;
             playbackProvider = null;
+            return false;
+        }
+    }
+
+    private bool TryStartAsioProcessedOutput(IWaveProvider provider, out IWavePlayer? player)
+    {
+        player = null;
+        if (!TryGetAsioDriverName(_processedOutputEndpointId, out var driverName))
+        {
+            return false;
+        }
+
+        try
+        {
+            player = new AsioOut(driverName);
+            player.Init(provider);
+            player.Play();
+            return true;
+        }
+        catch
+        {
+            player?.Dispose();
+            player = null;
             return false;
         }
     }
