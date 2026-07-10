@@ -112,6 +112,7 @@ public partial class EqualizerWindow : Window
     private readonly ObservableCollection<MicChannelStrip> _micChannels = CreateDefaultMicChannels();
     private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
+    private readonly DispatcherTimer _audioDeviceRefreshTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
@@ -243,6 +244,7 @@ public partial class EqualizerWindow : Window
     private bool _isSnappingVideoDenoiseSlider;
     private AudioInputDevice? _selectedDevice;
     private AudioOutputDevice? _selectedOutputDevice;
+    private AudioDeviceNotificationWatcher? _audioDeviceNotificationWatcher;
     private AudioDeviceFormat? _selectedDeviceFormat;
     private bool _isRestartingAudioStream;
     private bool _isCheckingAudioDeviceFormat;
@@ -457,6 +459,8 @@ public partial class EqualizerWindow : Window
         _directShowPreviewService.StatusChanged += CameraPreviewStatusChanged;
         _audioDeviceFormatTimer.Interval = AudioDeviceFormatPollInterval;
         _audioDeviceFormatTimer.Tick += AudioDeviceFormatTimerTick;
+        _audioDeviceRefreshTimer.Interval = TimeSpan.FromMilliseconds(500);
+        _audioDeviceRefreshTimer.Tick += AudioDeviceRefreshTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
         _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(45);
@@ -695,6 +699,7 @@ public partial class EqualizerWindow : Window
         UpdateSessionPlaybackTransportControls();
 
         RestorePersistedPresetOrDefault();
+        StartAudioDeviceNotificationWatcher();
         _audioDeviceFormatTimer.Start();
         UpdateAudioFormatRouteText();
         if (_startupRecovery.PreviousRunDidNotCloseCleanly)
@@ -1402,6 +1407,91 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void StartAudioDeviceNotificationWatcher()
+    {
+        try
+        {
+            _audioDeviceNotificationWatcher = new AudioDeviceNotificationWatcher();
+            _audioDeviceNotificationWatcher.DevicesChanged += AudioDeviceNotificationChanged;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Audio device notifications unavailable: {ex.Message}";
+        }
+    }
+
+    private void DisposeAudioDeviceNotificationWatcher()
+    {
+        if (_audioDeviceNotificationWatcher is null)
+        {
+            return;
+        }
+
+        _audioDeviceNotificationWatcher.DevicesChanged -= AudioDeviceNotificationChanged;
+        _audioDeviceNotificationWatcher.Dispose();
+        _audioDeviceNotificationWatcher = null;
+    }
+
+    private void AudioDeviceNotificationChanged(object? sender, AudioDeviceChangedEventArgs e)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(ScheduleAudioDeviceRefresh), DispatcherPriority.Background);
+    }
+
+    private void ScheduleAudioDeviceRefresh()
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        _audioDeviceRefreshTimer.Stop();
+        _audioDeviceRefreshTimer.Start();
+    }
+
+    private void AudioDeviceRefreshTimerTick(object? sender, EventArgs e)
+    {
+        _audioDeviceRefreshTimer.Stop();
+        RefreshAudioDevicesFromSystem();
+    }
+
+    private void RefreshAudioDevicesFromSystem()
+    {
+        var inputDevices = MicrophoneSpectrumService.GetInputDevices();
+        MicrophoneComboBox.ItemsSource = inputDevices;
+        MicCompareMic1DeviceComboBox.ItemsSource = inputDevices;
+        MicCompareMic2DeviceComboBox.ItemsSource = inputDevices;
+        foreach (var channel in _micChannels)
+        {
+            if (channel.SelectedDevice is not null)
+            {
+                channel.SelectedDevice = FindAudioInputDevice(inputDevices, channel.SelectedDevice.Name);
+            }
+        }
+
+        EnsureSystemAudioLoopbackChannel(inputDevices);
+        CoercePersistedMicChannelModes(inputDevices);
+        ApplyActiveMicChannelToUi();
+        ConfigureLiveMixFromChannels();
+
+        var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
+        OutputDeviceComboBox.ItemsSource = outputDevices;
+        KaraokeMonitorOutputDeviceComboBox.ItemsSource = outputDevices;
+        var selectedOutput = _selectedOutputDevice is null
+            ? outputDevices.FirstOrDefault()
+            : FindAudioOutputDevice(outputDevices, _selectedOutputDevice.EndpointId, _selectedOutputDevice.Name)
+                ?? outputDevices.FirstOrDefault();
+        SetSelectedOutputDevice(selectedOutput);
+        UpdateOutputRouting();
+        StatusText.Text = inputDevices.Count > 0
+            ? "Audio devices refreshed."
+            : "Audio devices refreshed; no microphones found.";
+    }
+
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         SaveAppStateNow();
@@ -1411,6 +1501,9 @@ public partial class EqualizerWindow : Window
         CompositionTarget.Rendering -= CompositionTargetRendering;
         _audioDeviceFormatTimer.Stop();
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
+        _audioDeviceRefreshTimer.Stop();
+        _audioDeviceRefreshTimer.Tick -= AudioDeviceRefreshTimerTick;
+        DisposeAudioDeviceNotificationWatcher();
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
         DisposeAudioRecordingFolderWatcher();
