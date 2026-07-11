@@ -2082,6 +2082,42 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <TextBlock Text="NAudio EnvelopeGenerator" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <CheckBox Content="Envelope shaper" IsChecked="{Binding NAudioEnvelopeEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Trigger threshold" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeThresholdSlider, Path=Value, StringFormat={}{0:0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeThresholdSlider" Minimum="-90" Maximum="-6" Value="{Binding NAudioEnvelopeTriggerThresholdDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Attack" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeAttackSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeAttackSlider" Minimum="1" Maximum="1000" Value="{Binding NAudioEnvelopeAttackMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Decay" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeDecaySlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeDecaySlider" Minimum="1" Maximum="1000" Value="{Binding NAudioEnvelopeDecayMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Sustain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeSustainSlider, Path=Value, StringFormat={}{0:P0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeSustainSlider" Minimum="0" Maximum="1" Value="{Binding NAudioEnvelopeSustainLevel}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Release" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeReleaseSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeReleaseSlider" Minimum="5" Maximum="2000" Value="{Binding NAudioEnvelopeReleaseMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Wet mix" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioEnvelopeMixSlider, Path=Value, StringFormat={}{0:P0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioEnvelopeMixSlider" Minimum="0" Maximum="1" Value="{Binding NAudioEnvelopeMix}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />

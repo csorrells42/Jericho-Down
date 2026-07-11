@@ -16,6 +16,7 @@ public sealed class VoiceSampleProcessor
     private readonly NAudioBiQuadFilterRack _naudioBiQuadFilterRack;
     private readonly NAudioPitchShiftProcessor _naudioPitchShiftProcessor;
     private readonly NAudioImpulseConvolutionProcessor _naudioImpulseConvolutionProcessor;
+    private readonly NAudioEnvelopeGeneratorProcessor _naudioEnvelopeGeneratorProcessor;
     private readonly double _sampleRate;
     private double _previousDcBlockerInput;
     private double _previousDcBlockerOutput;
@@ -309,6 +310,7 @@ public sealed class VoiceSampleProcessor
         _naudioBiQuadFilterRack = new NAudioBiQuadFilterRack(_sampleRate);
         _naudioPitchShiftProcessor = new NAudioPitchShiftProcessor(_sampleRate);
         _naudioImpulseConvolutionProcessor = new NAudioImpulseConvolutionProcessor(_sampleRate);
+        _naudioEnvelopeGeneratorProcessor = new NAudioEnvelopeGeneratorProcessor(_sampleRate);
         InitializeEqualizerFrequencyCache();
     }
 
@@ -345,6 +347,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyShelfEq(sample);
             sample = _naudioBiQuadFilterRack.Transform(sample);
             sample = ApplySaturation(sample);
+            sample = _naudioEnvelopeGeneratorProcessor.Transform(sample);
             sample = ApplyNoiseSuppression(sample);
             sample = ApplyExpander(sample);
             sample = ApplyNoiseGate(sample);
@@ -543,6 +546,7 @@ public sealed class VoiceSampleProcessor
         _naudioBiQuadFilterRack.UpdateFromSettings(_settings);
         _naudioPitchShiftProcessor.UpdateFromSettings(_settings);
         _naudioImpulseConvolutionProcessor.UpdateFromSettings(_settings);
+        _naudioEnvelopeGeneratorProcessor.UpdateFromSettings(_settings);
         UpdateEqualizerCoefficients(sampleCount);
     }
 

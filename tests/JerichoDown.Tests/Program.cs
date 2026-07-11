@@ -34,6 +34,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
+    ("NAudio envelope generator shapes attack", NAudioEnvelopeGeneratorShapesAttack),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -538,6 +539,33 @@ static void NAudioConvolutionAddsGeneratedImpulseTail()
     Assert(xaml.Contains("NAudio Convolution", StringComparison.Ordinal), "NAudio convolution controls should be grouped together");
 }
 
+static void NAudioEnvelopeGeneratorShapesAttack()
+{
+    const int sampleRate = 48_000;
+    var source = GenerateSine(sampleRate, 440, 0.45, 1.0);
+    var shaped = ProcessNAudioEnvelopeTestTone(source, settings =>
+    {
+        settings.NAudioEnvelopeEnabled = true;
+        settings.NAudioEnvelopeTriggerThresholdDb = -60;
+        settings.NAudioEnvelopeAttackMs = 250;
+        settings.NAudioEnvelopeDecayMs = 1;
+        settings.NAudioEnvelopeSustainLevel = 1;
+        settings.NAudioEnvelopeReleaseMs = 120;
+        settings.NAudioEnvelopeMix = 1;
+    });
+
+    var earlyRms = CalculateWindowRms(shaped, sampleRate / 100, sampleRate / 50);
+    var sustainedRms = CalculateWindowRms(shaped, sampleRate / 2, sampleRate / 10);
+    Assert(earlyRms < sustainedRms * 0.45d, "NAudio EnvelopeGenerator should ramp in with a long attack");
+    Assert(shaped.All(float.IsFinite), "NAudio envelope output should stay finite");
+
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs")));
+    Assert(processor.Contains("EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope should use EnvelopeGenerator");
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("NAudio EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope controls should be grouped together");
+}
+
 static void VoiceBreathReducerTamesAiryBreathNoise()
 {
     const int sampleRate = 48_000;
@@ -648,7 +676,8 @@ static void VoiceProcessorUsesEveryDspSetting()
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -3661,6 +3690,14 @@ static float[] ProcessNAudioConvolutionTestTone(float[] samples, Action<VoicePro
     return processor.Process(samples);
 }
 
+static float[] ProcessNAudioEnvelopeTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
+{
+    var settings = CreateTransparentVoiceSettings();
+    configure(settings);
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
 static float[] ProcessBreathReducerTestTone(float[] samples, bool enabled)
 {
     var settings = new VoiceProcessorSettings
@@ -3745,6 +3782,21 @@ static double CalculateTailRms(IReadOnlyList<float> samples, int startIndex)
     var sum = 0d;
     var count = 0;
     for (var i = start; i < samples.Count; i++)
+    {
+        sum += samples[i] * samples[i];
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
+}
+
+static double CalculateWindowRms(IReadOnlyList<float> samples, int startIndex, int length)
+{
+    var start = Math.Clamp(startIndex, 0, samples.Count);
+    var end = Math.Min(samples.Count, start + Math.Max(0, length));
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < end; i++)
     {
         sum += samples[i] * samples[i];
         count++;

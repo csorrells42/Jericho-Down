@@ -120,6 +120,13 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _naudioConvolutionPreDelayMs = 8;
     private double _naudioConvolutionDecay = 0.45;
     private double _naudioConvolutionMix = 0.2;
+    private bool _naudioEnvelopeEnabled;
+    private double _naudioEnvelopeTriggerThresholdDb = -48;
+    private double _naudioEnvelopeAttackMs = 30;
+    private double _naudioEnvelopeDecayMs = 80;
+    private double _naudioEnvelopeSustainLevel = 0.75;
+    private double _naudioEnvelopeReleaseMs = 200;
+    private double _naudioEnvelopeMix = 1;
 
     public double InputTrimDb
     {
@@ -785,6 +792,48 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _naudioConvolutionMix;
         set => SetField(ref _naudioConvolutionMix, value);
+    }
+
+    public bool NAudioEnvelopeEnabled
+    {
+        get => _naudioEnvelopeEnabled;
+        set => SetField(ref _naudioEnvelopeEnabled, value);
+    }
+
+    public double NAudioEnvelopeTriggerThresholdDb
+    {
+        get => _naudioEnvelopeTriggerThresholdDb;
+        set => SetField(ref _naudioEnvelopeTriggerThresholdDb, value);
+    }
+
+    public double NAudioEnvelopeAttackMs
+    {
+        get => _naudioEnvelopeAttackMs;
+        set => SetField(ref _naudioEnvelopeAttackMs, value);
+    }
+
+    public double NAudioEnvelopeDecayMs
+    {
+        get => _naudioEnvelopeDecayMs;
+        set => SetField(ref _naudioEnvelopeDecayMs, value);
+    }
+
+    public double NAudioEnvelopeSustainLevel
+    {
+        get => _naudioEnvelopeSustainLevel;
+        set => SetField(ref _naudioEnvelopeSustainLevel, value);
+    }
+
+    public double NAudioEnvelopeReleaseMs
+    {
+        get => _naudioEnvelopeReleaseMs;
+        set => SetField(ref _naudioEnvelopeReleaseMs, value);
+    }
+
+    public double NAudioEnvelopeMix
+    {
+        get => _naudioEnvelopeMix;
+        set => SetField(ref _naudioEnvelopeMix, value);
     }
 
     public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);
