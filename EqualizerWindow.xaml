@@ -901,8 +901,6 @@
           <MenuItem Header="Refresh Video Devices" Click="RefreshVideoDevicesMenuClicked" />
           <MenuItem Header="Refresh MIDI Devices" Click="RefreshMidiDevicesMenuClicked" />
           <Separator />
-          <MenuItem Header="Mic Compare" Click="MicCompareMenuClicked" />
-          <Separator />
           <MenuItem Header="Settings">
             <MenuItem Header="Podcast Settings" Click="PodcastSettingsMenuClicked" />
             <MenuItem Header="Karaoke Settings" Click="KaraokeSettingsMenuClicked" />
@@ -2623,39 +2621,6 @@
                   </Border>
                 </StackPanel>
               </ScrollViewer>
-          </Border>
-        </Grid>
-      </TabItem>
-      <TabItem x:Name="MicCompareTab" Header="Mic Compare">
-        <Grid x:Name="MicCompareContentRoot" Background="#05070A">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-          </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#C0111820" Padding="18,12">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="Mic 1" Foreground="#FF4848" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
-                <ComboBox x:Name="MicCompareMic1DeviceComboBox" Width="240" SelectionChanged="MicCompareMic1DeviceSelectionChanged" Margin="0,0,8,0" />
-                <ComboBox x:Name="MicCompareMic1InputModeComboBox" Width="130" SelectionChanged="MicCompareMic1InputModeSelectionChanged" Margin="0,0,18,0" />
-                <TextBlock Text="Mic 2" Foreground="#38E66B" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
-                <ComboBox x:Name="MicCompareMic2DeviceComboBox" Width="240" SelectionChanged="MicCompareMic2DeviceSelectionChanged" Margin="0,0,8,0" />
-                <ComboBox x:Name="MicCompareMic2InputModeComboBox" Width="130" SelectionChanged="MicCompareMic2InputModeSelectionChanged" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
-                <TextBlock x:Name="MicCompareMic1LegendText" Text="Mic 1" Foreground="#FF4848" VerticalAlignment="Center" />
-                <Rectangle Width="24" Height="3" Fill="#FF4848" Margin="6,0,12,0" />
-                <TextBlock x:Name="MicCompareMic2LegendText" Text="Mic 2" Foreground="#38E66B" VerticalAlignment="Center" />
-                <Rectangle Width="24" Height="3" Fill="#38E66B" Margin="6,0,0,0" />
-              </StackPanel>
-            </Grid>
-          </Border>
-          <Border Grid.Row="1" Margin="18" Background="#05070A" BorderBrush="#223544" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
-            <Canvas x:Name="MicCompareCanvas" Background="#05070A" ClipToBounds="True" />
           </Border>
         </Grid>
       </TabItem>

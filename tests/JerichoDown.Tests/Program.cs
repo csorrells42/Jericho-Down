@@ -45,7 +45,6 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
-    ("Mic compare popup activates themed live graph", MicComparePopupActivatesThemedLiveGraph),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
@@ -85,7 +84,6 @@ var tests = new (string Name, Action Test)[]
     ("Processed audio converter writes output formats", ProcessedAudioConverterWritesOutputFormats),
     ("Processed audio converter rechannels recording sources", ProcessedAudioConverterRechannelsRecordingSources),
     ("Spectrum frame router maps selected mics and program output", SpectrumFrameRouterMapsSelectedMicsAndProgramOutput),
-    ("Mic compare frame router follows live mic lines", MicCompareFrameRouterFollowsLiveMicLines),
     ("DX12 graph modes match selected mic and mixer roles", Dx12GraphModesMatchSelectedMicAndMixerRoles),
     ("Spectrum analyzer emits high-resolution bins", SpectrumAnalyzerEmitsHighResolutionBins),
     ("Feedback detector catches narrow runaway spikes", FeedbackDetectorCatchesNarrowRunawaySpikes),
@@ -769,7 +767,6 @@ static void EqScreenBindsEveryVoiceProcessorSetting()
 static void MainMenuExposesGlobalDeviceAndHelpActions()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(xaml.Contains("Header=\"_File\"", StringComparison.Ordinal), "main window should expose a File menu");
     Assert(xaml.Contains("Header=\"Refresh Audio Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Audio Devices");
     Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
@@ -781,8 +778,6 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"Karaoke Settings\"", StringComparison.Ordinal), "Settings submenu should expose Karaoke Settings");
     Assert(xaml.Contains("Click=\"KaraokeSettingsMenuClicked\"", StringComparison.Ordinal), "Karaoke Settings should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
-    Assert(xaml.Contains("Header=\"Mic Compare\"", StringComparison.Ordinal), "File menu should expose Mic Compare");
-    Assert(xaml.Contains("Click=\"MicCompareMenuClicked\"", StringComparison.Ordinal), "Mic Compare should be wired to a popup handler");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
     Assert(xaml.Contains("SystemColors.MenuHighlightBrushKey", StringComparison.Ordinal), "main menu should override bright system highlight colors");
@@ -790,46 +785,7 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
-    Assert(xaml.Contains("x:Name=\"MicCompareTab\"", StringComparison.Ordinal), "Mic Compare content should remain available to the popup host");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
-
-    var orderMethod = ExtractSourceBetween(
-        windowCode,
-        "    private void OrderMainTabs()",
-        "    public ObservableCollection<EqualizerBand> Bands");
-    Assert(!orderMethod.Contains("\"Mic Compare\"", StringComparison.Ordinal), "Mic Compare should not be added to the visible main tab order");
-    Assert(windowCode.Contains("private void ShowMicCompareWindow()", StringComparison.Ordinal), "Mic Compare should open in a popup window");
-    Assert(windowCode.Contains("Content = MicCompareContentRoot", StringComparison.Ordinal), "Mic Compare popup should reuse the existing tab content");
-    Assert(windowCode.Contains("IsMicCompareViewActive()", StringComparison.Ordinal), "Mic Compare rendering should stay active while the popup is open");
-}
-
-static void MicComparePopupActivatesThemedLiveGraph()
-{
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var spectrumServiceCode = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
-    var showMethod = ExtractSourceBetween(
-        windowCode,
-        "    private void ShowMicCompareWindow()",
-        "    private void ApplyMicComparePopupStyles()");
-
-    Assert(showMethod.Contains("ApplyMicComparePopupStyles();", StringComparison.Ordinal), "Mic Compare popup should explicitly apply the app ComboBox theme");
-    Assert(showMethod.Contains("ApplyDarkTitleBar(dialog);", StringComparison.Ordinal), "Mic Compare popup should apply the dark app title bar");
-    Assert(showMethod.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "Mic Compare popup should force a fresh spectrum frame when it opens");
-    Assert(windowCode.Contains("comboBox.Style = comboBoxStyle;", StringComparison.Ordinal), "Mic Compare popup ComboBoxes should keep the app theme outside the main window resource scope");
-    Assert(windowCode.Contains("comboBox.ItemContainerStyle = comboBoxItemStyle;", StringComparison.Ordinal), "Mic Compare popup dropdown items should keep the app theme");
-    Assert(windowCode.Contains("private void RenderLatestMicCompareFrame()", StringComparison.Ordinal), "Mic Compare popup should render once after layout is ready");
-
-    var showIndex = showMethod.IndexOf("dialog.Show();", StringComparison.Ordinal);
-    var refreshIndex = showMethod.IndexOf("RefreshActiveSpectrumWaterfallHosts();", StringComparison.Ordinal);
-    Assert(showIndex >= 0, "Mic Compare popup should show the window before graph activation is checked");
-    Assert(refreshIndex > showIndex, "Mic Compare popup should refresh graph hosts after the window is visible");
-
-    var stereoAnalysisProperty = ExtractSourceBetween(
-        spectrumServiceCode,
-        "    public bool StereoInputAnalysisEnabled",
-        "    public void ConfigureLiveMix");
-    Assert(spectrumServiceCode.Contains("public void RequestImmediateSpectrumAnalysis()", StringComparison.Ordinal), "spectrum service should expose an immediate analysis request");
-    Assert(stereoAnalysisProperty.Contains("RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "stereo analysis changes should wake the analyzer immediately");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()
@@ -2483,69 +2439,6 @@ static void SpectrumFrameRouterMapsSelectedMicsAndProgramOutput()
     AssertSequenceEqual(frame.Magnitudes, recordingOutput.Magnitudes, "program line should stay the final output when a recording reference is present");
     AssertSequenceEqual(lines[2].Magnitudes, recordingOutput.RawMagnitudes, "recording reference line should carry the selected recording source");
     Assert(recordingOutput.MicrophoneLines.Count == 0, "recording reference should not bring the ten individual mic lines back");
-}
-
-static void MicCompareFrameRouterFollowsLiveMicLines()
-{
-    var frame = new SpectrumFrame(
-        [0.91d, 0.72d],
-        [0.42d, 0.21d],
-        [0.5f, -0.5f],
-        [0.1f, -0.1f],
-        0.8d,
-        0.6d,
-        new VoiceProcessingTelemetry(),
-        48_000,
-        input1Magnitudes: [9d, 9d],
-        input2Magnitudes: [8d, 8d],
-        input1Samples: [0.9f, 0.9f],
-        input2Samples: [0.8f, 0.8f],
-        microphoneLines:
-        [
-            new MicrophoneSpectrumLine(
-                1,
-                [0.11d, 0.12d],
-                0.2d,
-                [0.21d, 0.22d],
-                0.3d,
-                processedSamples: [0.31f, 0.32f],
-                rawSamples: [0.41f, 0.42f]),
-            new MicrophoneSpectrumLine(
-                2,
-                [0.51d, 0.52d],
-                0.6d,
-                [0.61d, 0.62d],
-                0.7d,
-                processedSamples: [0.71f, 0.72f],
-                rawSamples: [0.81f, 0.82f])
-        ]);
-
-    var compare = MicCompareFrameRouter.CreateFrame(frame);
-
-    Assert(compare.HasAnalysisSources, "compare frame should be ready when both selected live mic lines have magnitudes and samples");
-    AssertSequenceEqual(new[] { 0.21d, 0.22d }, compare.Mic1Magnitudes, "mic compare should prefer mic 1 raw live-bus magnitudes over stale stereo input fallback");
-    AssertSequenceEqual(new[] { 0.61d, 0.62d }, compare.Mic2Magnitudes, "mic compare should prefer mic 2 raw live-bus magnitudes over stale stereo input fallback");
-    AssertSequenceEqual(new[] { 0.41f, 0.42f }, compare.Mic1Samples, "mic analysis should use mic 1 raw live-bus samples");
-    AssertSequenceEqual(new[] { 0.81f, 0.82f }, compare.Mic2Samples, "mic analysis should use mic 2 raw live-bus samples");
-
-    var fallbackFrame = new SpectrumFrame(
-        [],
-        [],
-        [],
-        [],
-        0d,
-        0d,
-        new VoiceProcessingTelemetry(),
-        input1Magnitudes: [0.13d],
-        input2Magnitudes: [0.24d],
-        input1Samples: [0.35f],
-        input2Samples: [0.46f]);
-    var fallback = MicCompareFrameRouter.CreateFrame(fallbackFrame);
-
-    AssertSequenceEqual(new[] { 0.13d }, fallback.Mic1Magnitudes, "mic compare should still fall back to legacy stereo input 1 when no live mic line exists");
-    AssertSequenceEqual(new[] { 0.24d }, fallback.Mic2Magnitudes, "mic compare should still fall back to legacy stereo input 2 when no live mic line exists");
-    AssertSequenceEqual(new[] { 0.35f }, fallback.Mic1Samples, "mic analysis should still fall back to legacy stereo input 1 samples");
-    AssertSequenceEqual(new[] { 0.46f }, fallback.Mic2Samples, "mic analysis should still fall back to legacy stereo input 2 samples");
 }
 
 static void Dx12GraphModesMatchSelectedMicAndMixerRoles()

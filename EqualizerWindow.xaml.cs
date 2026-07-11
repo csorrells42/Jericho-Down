@@ -159,20 +159,6 @@ public partial class EqualizerWindow : Window
         Opacity = 0.95,
         StrokeLineJoin = PenLineJoin.Round
     };
-    private readonly ShapePath _micCompareInput1Trace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(255, 72, 72)),
-        StrokeThickness = 2,
-        Opacity = 0.95,
-        StrokeLineJoin = PenLineJoin.Round
-    };
-    private readonly ShapePath _micCompareInput2Trace = new()
-    {
-        Stroke = new SolidColorBrush(Color.FromRgb(56, 230, 107)),
-        StrokeThickness = 2,
-        Opacity = 0.95,
-        StrokeLineJoin = PenLineJoin.Round
-    };
     private readonly Rectangle _equalizerHoverRegion = new()
     {
         Fill = new SolidColorBrush(Color.FromArgb(58, 0, 190, 230)),
@@ -185,7 +171,6 @@ public partial class EqualizerWindow : Window
     };
     private readonly ShapePath[] _mixingMicSpectrumTraces = CreateMixingMicSpectrumTraces();
     private readonly List<Line> _mixingSpectrumGridLines = [];
-    private readonly List<Line> _micCompareGridLines = [];
     private readonly double[][] _renderedMixingMicMagnitudes = new double[2][];
     private readonly SolidColorBrush _mixingProgramSpectrumBrush = new(Color.FromRgb(0, 190, 230));
     private readonly SolidColorBrush _mixingRecordingSpectrumBrush = new(Color.FromRgb(167, 176, 188));
@@ -405,8 +390,6 @@ public partial class EqualizerWindow : Window
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
     private string? _loadedMidiFilePath;
-    private Window? _micCompareWindow;
-    private object? _dockedMicCompareContent;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
@@ -456,8 +439,6 @@ public partial class EqualizerWindow : Window
         SpectrumCanvas.Children.Add(_input2Trace);
         SpectrumCanvas.Children.Add(_averageTrace);
         SpectrumCanvas.Children.Add(_liveTrace);
-        MicCompareCanvas.Children.Add(_micCompareInput1Trace);
-        MicCompareCanvas.Children.Add(_micCompareInput2Trace);
         foreach (var trace in _mixingMicSpectrumTraces)
         {
             MixingMicSpectrumCanvas.Children.Add(trace);
@@ -624,13 +605,10 @@ public partial class EqualizerWindow : Window
         UpdateRecordingDspIndicator();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        UpdateMicCompareUiState();
 
         ApplyDarkTitleBar();
         var devices = MicrophoneSpectrumService.GetInputDevices();
         MicrophoneComboBox.ItemsSource = devices;
-        MicCompareMic1DeviceComboBox.ItemsSource = devices;
-        MicCompareMic2DeviceComboBox.ItemsSource = devices;
         RestoreMicChannelState(devices);
         MicChannelComboBox.ItemsSource = _micChannels;
         MixingChannelsItemsControl.ItemsSource = _micChannels;
@@ -1565,8 +1543,6 @@ public partial class EqualizerWindow : Window
         try
         {
             MicrophoneComboBox.ItemsSource = inputDevices;
-            MicCompareMic1DeviceComboBox.ItemsSource = inputDevices;
-            MicCompareMic2DeviceComboBox.ItemsSource = inputDevices;
             foreach (var channel in _micChannels)
             {
                 if (channel.SelectedDevice is not null)
@@ -2080,132 +2056,6 @@ public partial class EqualizerWindow : Window
         RefreshMidiDevicesFromSystem();
     }
 
-    private void MicCompareMenuClicked(object sender, RoutedEventArgs e)
-    {
-        ShowMicCompareWindow();
-    }
-
-    private void ShowMicCompareWindow()
-    {
-        if (_micCompareWindow is not null)
-        {
-            _micCompareWindow.Activate();
-            return;
-        }
-
-        _dockedMicCompareContent ??= MicCompareTab.Content;
-        MicCompareTab.Content = null;
-        ApplyMicComparePopupStyles();
-
-        var dialog = new Window
-        {
-            Title = "Mic Compare",
-            Owner = this,
-            Width = Math.Min(1320d, Math.Max(980d, ActualWidth * 0.76d)),
-            Height = Math.Min(780d, Math.Max(560d, ActualHeight * 0.72d)),
-            MinWidth = 900d,
-            MinHeight = 520d,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = new SolidColorBrush(Color.FromRgb(5, 7, 10)),
-            Content = MicCompareContentRoot,
-            ShowInTaskbar = false
-        };
-
-        dialog.Closed += MicCompareWindowClosed;
-        _micCompareWindow = dialog;
-        RefreshMicCompareSelectors();
-        UpdateMicCompareUiState();
-        dialog.Show();
-        ApplyDarkTitleBar(dialog);
-        RefreshActiveSpectrumWaterfallHosts();
-        _spectrumService.RequestImmediateSpectrumAnalysis();
-        Dispatcher.BeginInvoke(new Action(RenderLatestMicCompareFrame), DispatcherPriority.Loaded);
-
-        StatusText.Text = "Mic Compare opened.";
-    }
-
-    private void ApplyMicComparePopupStyles()
-    {
-        var comboBoxStyle = TryFindResource(typeof(ComboBox)) as Style;
-        var comboBoxItemStyle = TryFindResource(typeof(ComboBoxItem)) as Style;
-        foreach (var comboBox in new[]
-        {
-            MicCompareMic1DeviceComboBox,
-            MicCompareMic1InputModeComboBox,
-            MicCompareMic2DeviceComboBox,
-            MicCompareMic2InputModeComboBox
-        })
-        {
-            if (comboBoxStyle is not null)
-            {
-                comboBox.Style = comboBoxStyle;
-            }
-
-            if (comboBoxItemStyle is not null)
-            {
-                comboBox.ItemContainerStyle = comboBoxItemStyle;
-            }
-        }
-    }
-
-    private void RenderLatestMicCompareFrame()
-    {
-        MicCompareContentRoot.UpdateLayout();
-        MicCompareCanvas.UpdateLayout();
-        if (_latestFrame is not null
-            && IsMicCompareViewActive()
-            && MicCompareCanvas.ActualWidth > 1d
-            && MicCompareCanvas.ActualHeight > 1d)
-        {
-            RenderMicCompareSpectrum(_latestFrame);
-        }
-    }
-
-    private void MicCompareWindowClosed(object? sender, EventArgs e)
-    {
-        if (sender is Window dialog)
-        {
-            dialog.Closed -= MicCompareWindowClosed;
-            if (ReferenceEquals(dialog.Content, MicCompareContentRoot))
-            {
-                dialog.Content = null;
-            }
-        }
-
-        _micCompareWindow = null;
-        RestoreMicCompareContentToHiddenTab();
-        RefreshActiveSpectrumWaterfallHosts();
-        StatusText.Text = "Mic Compare closed.";
-    }
-
-    private void CloseMicCompareWindow()
-    {
-        if (_micCompareWindow is null)
-        {
-            RestoreMicCompareContentToHiddenTab();
-            return;
-        }
-
-        var dialog = _micCompareWindow;
-        dialog.Closed -= MicCompareWindowClosed;
-        if (ReferenceEquals(dialog.Content, MicCompareContentRoot))
-        {
-            dialog.Content = null;
-        }
-
-        _micCompareWindow = null;
-        RestoreMicCompareContentToHiddenTab();
-        dialog.Close();
-    }
-
-    private void RestoreMicCompareContentToHiddenTab()
-    {
-        if (MicCompareTab.Content is null)
-        {
-            MicCompareTab.Content = _dockedMicCompareContent ?? MicCompareContentRoot;
-        }
-    }
-
     private void AsioSettingsMenuClicked(object sender, RoutedEventArgs e)
     {
         var endpointId = ResolvePreferredAsioSettingsEndpointId();
@@ -2288,7 +2138,6 @@ public partial class EqualizerWindow : Window
     {
         SaveAppStateNow();
         _isClosing = true;
-        CloseMicCompareWindow();
         _audioStreamOperationVersion++;
         System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
         CompositionTarget.Rendering -= CompositionTargetRendering;
@@ -3394,14 +3243,6 @@ public partial class EqualizerWindow : Window
                 _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
             }
         }
-        else if (IsMicCompareViewActive())
-        {
-            if (_latestFrame is not null)
-            {
-                RenderMicCompareSpectrum(_latestFrame);
-            }
-        }
-
         if (IsMixingTabSelected())
         {
             EnsureMixingMicSpectrumGraphView();
@@ -3451,21 +3292,6 @@ public partial class EqualizerWindow : Window
     private bool IsMicDspTabSelected()
     {
         return IsMainTabSelected("Mic / DSP");
-    }
-
-    private bool IsMicCompareTabSelected()
-    {
-        return IsMainTabSelected("Mic Compare");
-    }
-
-    private bool IsMicCompareViewActive()
-    {
-        return IsMicCompareTabSelected() || IsMicCompareWindowOpen();
-    }
-
-    private bool IsMicCompareWindowOpen()
-    {
-        return _micCompareWindow is { IsVisible: true };
     }
 
     private bool IsMixingTabSelected()
@@ -5060,7 +4886,6 @@ public partial class EqualizerWindow : Window
         InlineWaveform3DHost.Content = _selectedMicSpectrumGraphHost;
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Visible;
-        UpdateMicCompareUiState();
 
         if (_latestFrame is not null)
         {
@@ -5077,7 +4902,6 @@ public partial class EqualizerWindow : Window
         InlineWaveform3DHost.Content = _waveform3DGraphHost;
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
-        UpdateMicCompareUiState();
 
         if (_latestFrame is not null)
         {
@@ -5106,6 +4930,7 @@ public partial class EqualizerWindow : Window
         UpdateGraphViewButtonStates();
         UpdateEqualizerHoverRegion();
         UpdateDx12EqualizerHoverRegion();
+        WaterfallLinesPanel.Visibility = _showWaveform3D ? Visibility.Visible : Visibility.Collapsed;
         RefreshActiveSpectrumWaterfallHosts();
     }
 
@@ -5179,7 +5004,7 @@ public partial class EqualizerWindow : Window
         _isKaraokeSpectrumWaterfallActive = karaokeActive;
         _isMixingMicSpectrumGraphActive = mixingActive;
         _isMixingOutputWaveform3DActive = mixingActive;
-        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicCompareViewActive();
+        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive;
 
         if (micDspActive)
         {
@@ -5290,14 +5115,6 @@ public partial class EqualizerWindow : Window
         RecordingDspIndicator.Fill = processed
             ? _recordingDspActiveBrush
             : _recordingNaturalAudioBrush;
-    }
-
-    private void UpdateMicCompareUiState()
-    {
-        EqBandPanel.IsEnabled = true;
-        EqBandPanel.Opacity = 1d;
-        EqVoiceZoneGuideCanvas.Opacity = 1d;
-        WaterfallLinesPanel.Visibility = _showWaveform3D ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void WaterfallLinesChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -5529,7 +5346,6 @@ public partial class EqualizerWindow : Window
             MicrophoneComboBox.SelectedItem = _selectedDevice;
             ApplySelectedMixerInputPanelToUi();
             RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
-            RefreshMicCompareSelectors();
         }
         finally
         {
@@ -5648,115 +5464,6 @@ public partial class EqualizerWindow : Window
         {
             ConfigureLiveMixFromChannels();
         }
-    }
-
-    private void RefreshMicCompareSelectors()
-    {
-        RefreshMicCompareSelector(FindMicChannel(1), MicCompareMic1DeviceComboBox, MicCompareMic1InputModeComboBox, MicCompareMic1LegendText);
-        RefreshMicCompareSelector(FindMicChannel(2), MicCompareMic2DeviceComboBox, MicCompareMic2InputModeComboBox, MicCompareMic2LegendText);
-    }
-
-    private void RefreshMicCompareSelector(
-        MicChannelStrip? channel,
-        ComboBox deviceComboBox,
-        ComboBox inputModeComboBox,
-        TextBlock legendText)
-    {
-        if (channel is null)
-        {
-            return;
-        }
-
-        deviceComboBox.SelectedItem = channel.SelectedDevice;
-        var options = CreateInputChannelOptions(channel.SelectedDevice, null);
-        inputModeComboBox.ItemsSource = options;
-        inputModeComboBox.SelectedItem = options.FirstOrDefault(option => option.Mode == channel.InputChannelMode)
-            ?? options.FirstOrDefault(option => option.Mode == InputChannelMode.MonoSum)
-            ?? options.FirstOrDefault();
-        legendText.Text = channel.DisplayName;
-    }
-
-    private async void MicCompareMic1DeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        await UpdateMicCompareChannelDeviceAsync(1, MicCompareMic1DeviceComboBox.SelectedItem as AudioInputDevice);
-    }
-
-    private async void MicCompareMic2DeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        await UpdateMicCompareChannelDeviceAsync(2, MicCompareMic2DeviceComboBox.SelectedItem as AudioInputDevice);
-    }
-
-    private async void MicCompareMic1InputModeSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        await UpdateMicCompareChannelModeAsync(1, MicCompareMic1InputModeComboBox.SelectedItem as InputChannelOption);
-    }
-
-    private async void MicCompareMic2InputModeSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        await UpdateMicCompareChannelModeAsync(2, MicCompareMic2InputModeComboBox.SelectedItem as InputChannelOption);
-    }
-
-    private async Task UpdateMicCompareChannelDeviceAsync(int channelNumber, AudioInputDevice? device)
-    {
-        if (_isUpdatingMicChannelUi)
-        {
-            return;
-        }
-
-        var channel = FindMicChannel(channelNumber);
-        if (channel is null)
-        {
-            return;
-        }
-
-        channel.SelectedDevice = device;
-        var selectedDeviceFormat = await GetDeviceFormatAsync(device);
-        channel.InputChannelMode = CoerceInputChannelModeForDevice(device, selectedDeviceFormat, channel.InputChannelMode);
-        _isUpdatingMicChannelUi = true;
-        try
-        {
-            RefreshMicCompareSelectors();
-            if (ReferenceEquals(channel, _activeMicChannel))
-            {
-                ApplyActiveMicChannelToUi();
-            }
-        }
-        finally
-        {
-            _isUpdatingMicChannelUi = false;
-        }
-
-        ConfigureLiveMixFromChannels();
-        UpdateMixingMicLegend();
-        await RestartSelectedAudioStreamAsync("Listening");
-        PersistAppState();
-    }
-
-    private async Task UpdateMicCompareChannelModeAsync(int channelNumber, InputChannelOption? option)
-    {
-        if (_isUpdatingMicChannelUi || option is null)
-        {
-            return;
-        }
-
-        var channel = FindMicChannel(channelNumber);
-        if (channel is null)
-        {
-            return;
-        }
-
-        channel.InputChannelMode = option.Mode;
-        if (ReferenceEquals(channel, _activeMicChannel))
-        {
-            _selectedInputChannelMode = option.Mode;
-            InputChannelComboBox.SelectedItem = InputChannelComboBox.Items
-                .OfType<InputChannelOption>()
-                .FirstOrDefault(item => item.Mode == option.Mode);
-        }
-
-        ConfigureLiveMixFromChannels();
-        await RestartSelectedAudioStreamAsync("Listening");
-        PersistAppState();
     }
 
     private void OutputDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -6715,22 +6422,17 @@ public partial class EqualizerWindow : Window
             && SpectrumCanvas.IsVisible
             && SpectrumCanvas.ActualWidth > 1d
             && SpectrumCanvas.ActualHeight > 1d;
-        var isMicCompareViewActive = IsMicCompareViewActive();
-        var shouldRenderMicCompare = isMicCompareViewActive
-            && MicCompareCanvas.IsVisible
-            && MicCompareCanvas.ActualWidth > 1d
-            && MicCompareCanvas.ActualHeight > 1d;
         var isMixingTabSelected = IsMixingTabSelected();
         var shouldRenderMixingSpectrum = isMixingTabSelected
             && MixingMicSpectrumCanvas.IsVisible
             && MixingMicSpectrumCanvas.ActualWidth > 1d
             && MixingMicSpectrumCanvas.ActualHeight > 1d;
-        if (!shouldRenderSpectrum && !shouldRenderMicCompare && !shouldRenderMixingSpectrum)
+        if (!shouldRenderSpectrum && !shouldRenderMixingSpectrum)
         {
             return;
         }
 
-        if (!isMicDspTabSelected && !isMicCompareViewActive)
+        if (!isMicDspTabSelected)
         {
             if (now - _lastAudioVisualRenderUtc < TimeSpan.FromMilliseconds(16))
             {
@@ -6743,11 +6445,6 @@ public partial class EqualizerWindow : Window
         if (shouldRenderSpectrum)
         {
             RenderSpectrum(selectedMicFrame);
-        }
-
-        if (shouldRenderMicCompare)
-        {
-            RenderMicCompareSpectrum(_latestFrame);
         }
 
         if (shouldRenderMixingSpectrum)
@@ -11817,70 +11514,6 @@ public partial class EqualizerWindow : Window
         _liveTrace.Data = CreateSmoothedGeometry(livePoints);
     }
 
-    private void RenderMicCompareSpectrum(SpectrumFrame frame)
-    {
-        var width = Math.Max(1d, MicCompareCanvas.ActualWidth);
-        var height = Math.Max(1d, MicCompareCanvas.ActualHeight);
-        var topInset = 28d;
-        var bottomInset = 28d;
-        var usableHeight = Math.Max(1d, height - topInset - bottomInset);
-        var graphTop = topInset;
-        var graphBottom = graphTop + usableHeight;
-
-        EnsureMicCompareGrid(width, graphTop, graphBottom);
-        var clip = new RectangleGeometry(new Rect(0d, graphTop, width, usableHeight));
-        _micCompareInput1Trace.Clip = clip;
-        _micCompareInput2Trace.Clip = clip;
-
-        var compareFrame = CreateMicCompareFrame(frame);
-        var mic1Magnitudes = compareFrame.Mic1Magnitudes;
-        var mic2Magnitudes = compareFrame.Mic2Magnitudes;
-        var compareLength = Math.Min(mic1Magnitudes.Length, mic2Magnitudes.Length);
-        if (compareLength <= 0)
-        {
-            _micCompareInput1Trace.Data = Geometry.Empty;
-            _micCompareInput2Trace.Data = Geometry.Empty;
-            return;
-        }
-
-        EnsureInputRenderBuffers(mic1Magnitudes.Length, mic2Magnitudes.Length);
-        var frameCeiling = 0.08d;
-        for (var i = 0; i < compareLength; i++)
-        {
-            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(mic1Magnitudes[i]));
-            frameCeiling = Math.Max(frameCeiling, ShapeMagnitude(mic2Magnitudes[i]));
-        }
-
-        _visualCeiling = frameCeiling > _visualCeiling
-            ? Ease(_visualCeiling, frameCeiling, 0.08d)
-            : Ease(_visualCeiling, frameCeiling, 0.015d);
-
-        var input1Points = new PointCollection();
-        var input2Points = new PointCollection();
-        var smoothing = GetAnalyzerSmoothingCoefficient();
-        for (var i = 0; i < compareLength; i++)
-        {
-            var input1Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic1Magnitudes[i]), 0d, 1d));
-            var input2Shaped = NormalizeForDisplay(Math.Clamp(ShapeMagnitude(mic2Magnitudes[i]), 0d, 1d));
-            _renderedInput1Magnitudes[i] = Ease(_renderedInput1Magnitudes[i], input1Shaped, smoothing);
-            _renderedInput2Magnitudes[i] = Ease(_renderedInput2Magnitudes[i], input2Shaped, smoothing);
-
-            var x = compareLength == 1
-                ? 0d
-                : i / (double)(compareLength - 1) * width;
-            input1Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput1Magnitudes[i]));
-            input2Points.Add(new Point(x, graphBottom - usableHeight * _renderedInput2Magnitudes[i]));
-        }
-
-        _micCompareInput1Trace.Data = CreateSmoothedGeometry(input1Points);
-        _micCompareInput2Trace.Data = CreateSmoothedGeometry(input2Points);
-    }
-
-    private static MicCompareFrame CreateMicCompareFrame(SpectrumFrame frame)
-    {
-        return MicCompareFrameRouter.CreateFrame(frame, mic1ChannelNumber: 1, mic2ChannelNumber: 2);
-    }
-
     private void RenderMixingMicSpectrum(SpectrumFrame frame)
     {
         var width = Math.Max(1d, MixingMicSpectrumCanvas.ActualWidth);
@@ -12631,53 +12264,6 @@ public partial class EqualizerWindow : Window
             || _renderedMixingMicMagnitudes[traceIndex].Length != length)
         {
             _renderedMixingMicMagnitudes[traceIndex] = new double[length];
-        }
-    }
-
-    private void EnsureMicCompareGrid(double width, double graphTop, double graphBottom)
-    {
-        const int horizontalLineCount = 7;
-        const int verticalLineCount = 9;
-        var desiredLineCount = horizontalLineCount + verticalLineCount;
-        while (_micCompareGridLines.Count < desiredLineCount)
-        {
-            var line = new Line
-            {
-                Stroke = _waveformGridBrush,
-                StrokeThickness = 1d,
-                Opacity = 0.78d,
-                IsHitTestVisible = false
-            };
-            Panel.SetZIndex(line, 0);
-            _micCompareGridLines.Add(line);
-            MicCompareCanvas.Children.Insert(0, line);
-        }
-
-        var lineIndex = 0;
-        for (var i = 0; i < horizontalLineCount; i++)
-        {
-            var y = horizontalLineCount == 1
-                ? graphTop
-                : graphTop + (graphBottom - graphTop) * i / (double)(horizontalLineCount - 1);
-            var line = _micCompareGridLines[lineIndex++];
-            line.X1 = 0d;
-            line.X2 = width;
-            line.Y1 = y;
-            line.Y2 = y;
-            line.StrokeThickness = i == 0 || i == horizontalLineCount - 1 ? 1.4d : 1d;
-        }
-
-        for (var i = 0; i < verticalLineCount; i++)
-        {
-            var x = verticalLineCount == 1
-                ? 0d
-                : i / (double)(verticalLineCount - 1) * width;
-            var line = _micCompareGridLines[lineIndex++];
-            line.X1 = x;
-            line.X2 = x;
-            line.Y1 = graphTop;
-            line.Y2 = graphBottom;
-            line.StrokeThickness = i == 0 || i == verticalLineCount - 1 ? 1.4d : 1d;
         }
     }
 
