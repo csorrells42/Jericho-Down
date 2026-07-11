@@ -5310,11 +5310,6 @@ public partial class EqualizerWindow : Window
 
     private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (IsMixerControlInteraction(e.OriginalSource as DependencyObject))
-        {
-            return;
-        }
-
         if ((sender as FrameworkElement)?.DataContext is not MicChannelStrip channel)
         {
             return;
@@ -5322,31 +5317,6 @@ public partial class EqualizerWindow : Window
 
         await SetActiveMicChannelAsync(channel, restartAudio: false, refreshEditor: false);
         PersistAppState();
-    }
-
-    private static bool IsMixerControlInteraction(DependencyObject? source)
-    {
-        for (var current = source; current is not null; current = GetInputParent(current))
-        {
-            if (current is ButtonBase or TextBoxBase or RangeBase or Selector)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static DependencyObject? GetInputParent(DependencyObject current)
-    {
-        try
-        {
-            return VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
-        }
-        catch (InvalidOperationException)
-        {
-            return LogicalTreeHelper.GetParent(current);
-        }
     }
 
     private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio, bool refreshEditor = true)

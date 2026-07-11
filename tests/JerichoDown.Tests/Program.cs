@@ -94,7 +94,7 @@ var tests = new (string Name, Action Test)[]
     ("Spectrum lines carry NAudio metered peaks", SpectrumLinesCarryNaudioMeteredPeaks),
     ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
-    ("Mixer strip controls do not select channels", MixerStripControlsDoNotSelectChannels),
+    ("Mixer strip clicks select channels cheaply", MixerStripClicksSelectChannelsCheaply),
     ("Active mic selection avoids synchronous format probe", ActiveMicSelectionAvoidsSynchronousFormatProbe),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
@@ -2716,26 +2716,20 @@ static void LiveMixAudibilityGatesMuteAndSolo()
     Assert(Math.Abs(output[0] - 0.7f) < 0.0001f, "solo should leave only soloed mics in the live program bus");
 }
 
-static void MixerStripControlsDoNotSelectChannels()
+static void MixerStripClicksSelectChannelsCheaply()
 {
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var handler = ExtractSourceBetween(
         windowCode,
         "    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)",
-        "    private static bool IsMixerControlInteraction(DependencyObject? source)");
-    var helper = ExtractSourceBetween(
-        windowCode,
-        "    private static bool IsMixerControlInteraction(DependencyObject? source)",
         "    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio, bool refreshEditor = true)");
 
-    Assert(handler.Contains("IsMixerControlInteraction(e.OriginalSource as DependencyObject)", StringComparison.Ordinal), "mixer strip preview clicks should ignore interactive child controls");
+    Assert(windowXaml.Contains("PreviewMouseLeftButtonDown=\"MixerChannelStripPreviewMouseLeftButtonDown\"", StringComparison.Ordinal), "mixer strip should select channels from any click inside the strip");
+    Assert(!handler.Contains("IsMixerControlInteraction", StringComparison.Ordinal), "mixer strip controls should still select their channel instead of leaving the active mic stuck");
     Assert(handler.Contains("SetActiveMicChannelAsync(channel, restartAudio: false, refreshEditor: false)", StringComparison.Ordinal), "mixer strip selection should avoid rebinding the full mic editor");
     Assert(windowXaml.Contains("x:Name=\"SelectedMixerInputPanel\"", StringComparison.Ordinal), "mixer selected input panel should have its own active-channel data context");
     Assert(!windowXaml.Contains("DataContext=\"{Binding ElementName=MicChannelComboBox, Path=SelectedItem}\"", StringComparison.Ordinal), "mixer selected input panel should not depend on the Mic/DSP tab combo box selection");
-    Assert(helper.Contains("ButtonBase", StringComparison.Ordinal), "mute checkboxes should not trigger mixer strip channel selection");
-    Assert(helper.Contains("RangeBase", StringComparison.Ordinal), "mixer faders should not trigger mixer strip channel selection");
-    Assert(helper.Contains("TextBoxBase", StringComparison.Ordinal), "mixer name text boxes should not trigger mixer strip channel selection");
 }
 
 static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
