@@ -4942,7 +4942,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        await SetActiveMicChannelAsync(channel, restartAudio: false);
+        await SetActiveMicChannelAsync(channel, restartAudio: false, refreshEditor: false);
         PersistAppState();
     }
 
@@ -4971,12 +4971,20 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)
+    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio, bool refreshEditor = true)
     {
         if (ReferenceEquals(_activeMicChannel, channel))
         {
             UpdateActiveMicSelectionFlags();
-            ApplyActiveMicChannelToUi();
+            if (refreshEditor)
+            {
+                ApplyActiveMicChannelToUi();
+            }
+            else
+            {
+                ApplyActiveMicChannelSelectionToMixerUi();
+            }
+
             return;
         }
 
@@ -4984,13 +4992,22 @@ public partial class EqualizerWindow : Window
         _activeMicChannel = channel;
         UpdateActiveMicSelectionFlags();
         AttachEqualizerBandHandlers(_activeMicChannel);
-        DataContext = Settings;
-        EqBandPanel.ItemsSource = Bands;
-        UpdateEqVoiceZoneGuide();
-        SyncEqualizerSettings();
-        ApplyActiveMicChannelToUi();
-        ApplyActiveMicPresetUiState();
-        ConfigureLiveMixFromChannels();
+        if (refreshEditor)
+        {
+            DataContext = Settings;
+            EqBandPanel.ItemsSource = Bands;
+            UpdateEqVoiceZoneGuide();
+            SyncEqualizerSettings();
+            ApplyActiveMicChannelToUi();
+            ApplyActiveMicPresetUiState();
+            ConfigureLiveMixFromChannels();
+        }
+        else
+        {
+            ApplyActiveMicChannelSelectionToMixerUi();
+            UpdateLiveMixControlsFromChannels();
+        }
+
         UpdateMixingMicLegend();
         UpdateAudioRecordingReadyStatus();
         if (restartAudio)
@@ -5029,6 +5046,32 @@ public partial class EqualizerWindow : Window
 
         QueueSelectedDeviceFormatRefresh(_selectedDevice);
         UpdateAudioFormatRouteText();
+    }
+
+    private void ApplyActiveMicChannelSelectionToMixerUi()
+    {
+        var previousSelectedDevice = _selectedDevice;
+        var previousSelectedDeviceFormat = _selectedDeviceFormat;
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            if (MicChannelComboBox is not null && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
+            {
+                MicChannelComboBox.SelectedItem = _activeMicChannel;
+            }
+
+            _selectedDevice = _activeMicChannel.SelectedDevice;
+            _selectedInputChannelMode = _activeMicChannel.InputChannelMode;
+            _selectedDeviceFormat = previousSelectedDevice is not null
+                && _selectedDevice is not null
+                && AudioInputDevicesMatch(previousSelectedDevice, _selectedDevice)
+                    ? previousSelectedDeviceFormat
+                    : null;
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
     }
 
     private void QueueSelectedDeviceFormatRefresh(AudioInputDevice? selectedDevice)
@@ -5253,7 +5296,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        ConfigureLiveMixFromChannels();
+        UpdateLiveMixControlsFromChannels();
         ScheduleAppStatePersist();
     }
 
@@ -5264,7 +5307,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        ConfigureLiveMixFromChannels();
+        UpdateLiveMixControlsFromChannels();
         ScheduleAppStatePersist();
     }
 
@@ -5477,23 +5520,46 @@ public partial class EqualizerWindow : Window
 
     private void ConfigureLiveMixFromChannels()
     {
-        var channels = _micChannels
+        var channels = CreateLiveMixChannelSettings(coerceInputModes: true);
+        _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
+        _spectrumService.ConfigureProcessedRecordingSource(_audioRecordingSource, _activeMicChannel?.ChannelNumber ?? 1);
+    }
+
+    private void UpdateLiveMixControlsFromChannels()
+    {
+        var channels = CreateLiveMixChannelSettings(coerceInputModes: false);
+        if (!_spectrumService.TryUpdateLiveMixControls(channels, CreateMixBusSettings()))
+        {
+            ConfigureLiveMixFromChannels();
+            return;
+        }
+
+        _spectrumService.ConfigureProcessedRecordingSource(_audioRecordingSource, _activeMicChannel?.ChannelNumber ?? 1);
+    }
+
+    private List<MicrophoneLiveChannelSettings> CreateLiveMixChannelSettings(bool coerceInputModes)
+    {
+        return _micChannels
             .Where(channel => channel.SelectedDevice is not null)
             .Select(channel =>
             {
-                var selectedDeviceFormat = ReferenceEquals(channel, _activeMicChannel)
-                    ? _selectedDeviceFormat
-                    : null;
-                var inputChannelMode = CoerceInputChannelModeForDevice(
-                    channel.SelectedDevice,
-                    selectedDeviceFormat,
-                    channel.InputChannelMode);
-                if (inputChannelMode != channel.InputChannelMode)
+                var inputChannelMode = channel.InputChannelMode;
+                if (coerceInputModes)
                 {
-                    channel.InputChannelMode = inputChannelMode;
-                    if (ReferenceEquals(channel, _activeMicChannel))
+                    var selectedDeviceFormat = ReferenceEquals(channel, _activeMicChannel)
+                        ? _selectedDeviceFormat
+                        : null;
+                    inputChannelMode = CoerceInputChannelModeForDevice(
+                        channel.SelectedDevice,
+                        selectedDeviceFormat,
+                        channel.InputChannelMode);
+                    if (inputChannelMode != channel.InputChannelMode)
                     {
-                        _selectedInputChannelMode = inputChannelMode;
+                        channel.InputChannelMode = inputChannelMode;
+                        if (ReferenceEquals(channel, _activeMicChannel))
+                        {
+                            _selectedInputChannelMode = inputChannelMode;
+                        }
                     }
                 }
 
@@ -5514,8 +5580,6 @@ public partial class EqualizerWindow : Window
                     channel.SelectedDevice.Backend);
             })
             .ToList();
-        _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
-        _spectrumService.ConfigureProcessedRecordingSource(_audioRecordingSource, _activeMicChannel?.ChannelNumber ?? 1);
     }
 
     private MixBusSettings CreateMixBusSettings()

@@ -522,6 +522,28 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    public bool TryUpdateLiveMixControls(IReadOnlyList<MicrophoneLiveChannelSettings> channels, MixBusSettings mixBusSettings)
+    {
+        ArgumentNullException.ThrowIfNull(channels);
+        var configuredChannels = channels
+            .Where(channel => channel.ChannelNumber > 0 && channel.ProcessorSettings is not null)
+            .OrderBy(channel => channel.ChannelNumber)
+            .ToArray();
+
+        lock (_liveMixLock)
+        {
+            if (!CanUpdateLiveMixControlsLocked(configuredChannels))
+            {
+                return false;
+            }
+
+            _configuredLiveMixChannels = configuredChannels;
+            _mixBusSettings = mixBusSettings;
+            UpdateLiveMixControlsLocked(configuredChannels);
+            return true;
+        }
+    }
+
     private bool CanUpdateLiveMixControlsLocked(IReadOnlyList<MicrophoneLiveChannelSettings> channels)
     {
         if (channels.Count != _liveMixChannels.Length)

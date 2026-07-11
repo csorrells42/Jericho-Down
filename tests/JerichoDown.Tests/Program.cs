@@ -2455,9 +2455,10 @@ static void MixerStripControlsDoNotSelectChannels()
     var helper = ExtractSourceBetween(
         windowCode,
         "    private static bool IsMixerControlInteraction(DependencyObject? source)",
-        "    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)");
+        "    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio, bool refreshEditor = true)");
 
     Assert(handler.Contains("IsMixerControlInteraction(e.OriginalSource as DependencyObject)", StringComparison.Ordinal), "mixer strip preview clicks should ignore interactive child controls");
+    Assert(handler.Contains("SetActiveMicChannelAsync(channel, restartAudio: false, refreshEditor: false)", StringComparison.Ordinal), "mixer strip selection should avoid rebinding the full mic editor");
     Assert(helper.Contains("ButtonBase", StringComparison.Ordinal), "mute checkboxes should not trigger mixer strip channel selection");
     Assert(helper.Contains("RangeBase", StringComparison.Ordinal), "mixer faders should not trigger mixer strip channel selection");
     Assert(helper.Contains("TextBoxBase", StringComparison.Ordinal), "mixer name text boxes should not trigger mixer strip channel selection");
@@ -2473,6 +2474,13 @@ static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
 
     Assert(method.Contains("QueueSelectedDeviceFormatRefresh(_selectedDevice);", StringComparison.Ordinal), "active mic selection should refresh device format asynchronously");
     Assert(!method.Contains("GetSelectedDeviceFormat();", StringComparison.Ordinal), "active mic selection should not synchronously probe the selected device format on the UI thread");
+
+    var selectionMethod = ExtractSourceBetween(
+        windowCode,
+        "    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio, bool refreshEditor = true)",
+        "    private void ApplyActiveMicChannelToUi()");
+    Assert(selectionMethod.Contains("ApplyActiveMicChannelSelectionToMixerUi();", StringComparison.Ordinal), "mixer-side mic selection should update only selection state");
+    Assert(selectionMethod.Contains("UpdateLiveMixControlsFromChannels();", StringComparison.Ordinal), "mixer-side mic selection should use controls-only live mix updates");
 }
 
 static void MixerChannelControlsDebounceStatePersistence()
@@ -2492,8 +2500,12 @@ static void MixerChannelControlsDebounceStatePersistence()
 
     Assert(checkBoxHandler.Contains("ScheduleAppStatePersist();", StringComparison.Ordinal), "mixer checkbox changes should debounce app-state saves");
     Assert(sliderHandler.Contains("ScheduleAppStatePersist();", StringComparison.Ordinal), "mixer slider changes should debounce app-state saves");
+    Assert(checkBoxHandler.Contains("UpdateLiveMixControlsFromChannels();", StringComparison.Ordinal), "mixer checkbox changes should use controls-only live mix updates");
+    Assert(sliderHandler.Contains("UpdateLiveMixControlsFromChannels();", StringComparison.Ordinal), "mixer slider changes should use controls-only live mix updates");
     Assert(!checkBoxHandler.Contains("PersistAppState();", StringComparison.Ordinal), "mixer checkbox changes should not synchronously save app state on the UI thread");
     Assert(!sliderHandler.Contains("PersistAppState();", StringComparison.Ordinal), "mixer slider changes should not synchronously save app state on the UI thread");
+    Assert(!checkBoxHandler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mixer checkbox changes should not fully reconfigure the live mix");
+    Assert(!sliderHandler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mixer slider changes should not fully reconfigure the live mix");
 }
 
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()
