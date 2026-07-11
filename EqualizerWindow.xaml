@@ -1903,6 +1903,133 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <TextBlock Text="NAudio BiQuad Filter Rack" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <CheckBox Content="BiQuad Low-pass" IsChecked="{Binding NAudioLowPassEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="LPF frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioLowPassFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioLowPassFrequencySlider" Minimum="200" Maximum="20000" Value="{Binding NAudioLowPassFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="LPF Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioLowPassQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioLowPassQSlider" Minimum="0.1" Maximum="8" Value="{Binding NAudioLowPassQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad High-pass" IsChecked="{Binding NAudioHighPassEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="HPF frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioHighPassFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioHighPassFrequencySlider" Minimum="20" Maximum="8000" Value="{Binding NAudioHighPassFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="HPF Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioHighPassQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioHighPassQSlider" Minimum="0.1" Maximum="8" Value="{Binding NAudioHighPassQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad Band-pass peak" IsChecked="{Binding NAudioBandPassPeakEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Peak frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioBandPassPeakFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioBandPassPeakFrequencySlider" Minimum="40" Maximum="16000" Value="{Binding NAudioBandPassPeakFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Peak Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioBandPassPeakQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioBandPassPeakQSlider" Minimum="0.1" Maximum="24" Value="{Binding NAudioBandPassPeakQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad Band-pass skirt" IsChecked="{Binding NAudioBandPassSkirtEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Skirt frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioBandPassSkirtFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioBandPassSkirtFrequencySlider" Minimum="40" Maximum="16000" Value="{Binding NAudioBandPassSkirtFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Skirt Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioBandPassSkirtQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioBandPassSkirtQSlider" Minimum="0.1" Maximum="24" Value="{Binding NAudioBandPassSkirtQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad Notch" IsChecked="{Binding NAudioNotchEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Notch frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioNotchFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioNotchFrequencySlider" Minimum="40" Maximum="16000" Value="{Binding NAudioNotchFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Notch Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioNotchQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioNotchQSlider" Minimum="0.1" Maximum="48" Value="{Binding NAudioNotchQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad All-pass" IsChecked="{Binding NAudioAllPassEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="All-pass frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioAllPassFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioAllPassFrequencySlider" Minimum="40" Maximum="16000" Value="{Binding NAudioAllPassFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="All-pass Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioAllPassQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioAllPassQSlider" Minimum="0.1" Maximum="8" Value="{Binding NAudioAllPassQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad Peaking EQ" IsChecked="{Binding NAudioPeakingEqEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Peak EQ frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioPeakingEqFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioPeakingEqFrequencySlider" Minimum="40" Maximum="16000" Value="{Binding NAudioPeakingEqFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Peak EQ gain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioPeakingEqGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioPeakingEqGainSlider" Minimum="-18" Maximum="18" Value="{Binding NAudioPeakingEqGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Peak EQ Q" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioPeakingEqQSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioPeakingEqQSlider" Minimum="0.1" Maximum="24" Value="{Binding NAudioPeakingEqQ}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad Low shelf" IsChecked="{Binding NAudioLowShelfEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Low shelf frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioLowShelfFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioLowShelfFrequencySlider" Minimum="40" Maximum="1000" Value="{Binding NAudioLowShelfFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Low shelf gain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioLowShelfGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioLowShelfGainSlider" Minimum="-18" Maximum="18" Value="{Binding NAudioLowShelfGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Low shelf slope" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioLowShelfSlopeSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioLowShelfSlopeSlider" Minimum="0.1" Maximum="4" Value="{Binding NAudioLowShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,12" />
+
+                      <CheckBox Content="BiQuad High shelf" IsChecked="{Binding NAudioHighShelfEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="High shelf frequency" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioHighShelfFrequencySlider, Path=Value, StringFormat={}{0:0} Hz}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioHighShelfFrequencySlider" Minimum="1000" Maximum="18000" Value="{Binding NAudioHighShelfFrequencyHz}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="High shelf gain" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioHighShelfGainSlider, Path=Value, StringFormat={}{0:+0.0;-0.0;0.0} dB}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioHighShelfGainSlider" Minimum="-18" Maximum="18" Value="{Binding NAudioHighShelfGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="High shelf slope" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioHighShelfSlopeSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioHighShelfSlopeSlider" Minimum="0.1" Maximum="4" Value="{Binding NAudioHighShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />

@@ -31,6 +31,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
+    ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -433,6 +434,52 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
 }
 
+static void NAudioBiQuadRackExposesEveryEqShape()
+{
+    const int sampleRate = 48_000;
+    var source = GenerateSine(sampleRate, 1_000, 0.16, 0.45);
+    var start = sampleRate / 3;
+    var bypass = ProcessNAudioBiQuadTestTone(source, _ => { });
+    var peaking = ProcessNAudioBiQuadTestTone(source, settings =>
+    {
+        settings.NAudioPeakingEqEnabled = true;
+        settings.NAudioPeakingEqFrequencyHz = 1_000;
+        settings.NAudioPeakingEqGainDb = 9;
+        settings.NAudioPeakingEqQ = 2.4;
+    });
+    var notch = ProcessNAudioBiQuadTestTone(source, settings =>
+    {
+        settings.NAudioNotchEnabled = true;
+        settings.NAudioNotchFrequencyHz = 1_000;
+        settings.NAudioNotchQ = 12;
+    });
+
+    var bypassRms = CalculateTailRms(bypass, start);
+    Assert(CalculateTailRms(peaking, start) > bypassRms * 1.75d, "NAudio peaking EQ should boost the selected frequency");
+    Assert(CalculateTailRms(notch, start) < bypassRms * 0.35d, "NAudio notch should cut the selected frequency");
+    Assert(peaking.All(float.IsFinite) && notch.All(float.IsFinite), "NAudio BiQuad output should stay finite");
+
+    var rackSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs")));
+    foreach (var factory in new[]
+    {
+        "LowPassFilter",
+        "HighPassFilter",
+        "BandPassFilterConstantPeakGain",
+        "BandPassFilterConstantSkirtGain",
+        "NotchFilter",
+        "AllPassFilter",
+        "PeakingEQ",
+        "LowShelf",
+        "HighShelf"
+    })
+    {
+        Assert(rackSource.Contains($"BiQuadFilter.{factory}", StringComparison.Ordinal), $"NAudio BiQuad rack should expose {factory}");
+    }
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
+}
+
 static void VoiceBreathReducerTamesAiryBreathNoise()
 {
     const int sampleRate = 48_000;
@@ -538,7 +585,10 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
 
 static void VoiceProcessorUsesEveryDspSetting()
 {
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs")));
+    var processor = string.Join(
+        Environment.NewLine,
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -3523,6 +3573,14 @@ static float[] ProcessShelfEqTestTone(float[] samples, bool enabled)
         LimiterEnabled = false,
         MakeupGainDb = 0
     };
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessNAudioBiQuadTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
+{
+    var settings = CreateTransparentVoiceSettings();
+    configure(settings);
     var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
     return processor.Process(samples);
 }

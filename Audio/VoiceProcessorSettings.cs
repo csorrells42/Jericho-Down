@@ -80,6 +80,36 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private bool _limiterLookaheadEnabled = true;
     private double _limiterLookaheadMs = 3;
     private double _limiterReleaseMs = 60;
+    private bool _naudioLowPassEnabled;
+    private double _naudioLowPassFrequencyHz = 12000;
+    private double _naudioLowPassQ = 0.707;
+    private bool _naudioHighPassEnabled;
+    private double _naudioHighPassFrequencyHz = 80;
+    private double _naudioHighPassQ = 0.707;
+    private bool _naudioBandPassPeakEnabled;
+    private double _naudioBandPassPeakFrequencyHz = 1000;
+    private double _naudioBandPassPeakQ = 1.2;
+    private bool _naudioBandPassSkirtEnabled;
+    private double _naudioBandPassSkirtFrequencyHz = 1000;
+    private double _naudioBandPassSkirtQ = 1.2;
+    private bool _naudioNotchEnabled;
+    private double _naudioNotchFrequencyHz = 2800;
+    private double _naudioNotchQ = 16;
+    private bool _naudioAllPassEnabled;
+    private double _naudioAllPassFrequencyHz = 1000;
+    private double _naudioAllPassQ = 0.707;
+    private bool _naudioPeakingEqEnabled;
+    private double _naudioPeakingEqFrequencyHz = 1000;
+    private double _naudioPeakingEqQ = 1.2;
+    private double _naudioPeakingEqGainDb;
+    private bool _naudioLowShelfEnabled;
+    private double _naudioLowShelfFrequencyHz = 160;
+    private double _naudioLowShelfSlope = 0.9;
+    private double _naudioLowShelfGainDb;
+    private bool _naudioHighShelfEnabled;
+    private double _naudioHighShelfFrequencyHz = 8000;
+    private double _naudioHighShelfSlope = 0.9;
+    private double _naudioHighShelfGainDb;
 
     public double InputTrimDb
     {
@@ -505,6 +535,186 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _limiterReleaseMs;
         set => SetField(ref _limiterReleaseMs, value);
+    }
+
+    public bool NAudioLowPassEnabled
+    {
+        get => _naudioLowPassEnabled;
+        set => SetField(ref _naudioLowPassEnabled, value);
+    }
+
+    public double NAudioLowPassFrequencyHz
+    {
+        get => _naudioLowPassFrequencyHz;
+        set => SetField(ref _naudioLowPassFrequencyHz, value);
+    }
+
+    public double NAudioLowPassQ
+    {
+        get => _naudioLowPassQ;
+        set => SetField(ref _naudioLowPassQ, value);
+    }
+
+    public bool NAudioHighPassEnabled
+    {
+        get => _naudioHighPassEnabled;
+        set => SetField(ref _naudioHighPassEnabled, value);
+    }
+
+    public double NAudioHighPassFrequencyHz
+    {
+        get => _naudioHighPassFrequencyHz;
+        set => SetField(ref _naudioHighPassFrequencyHz, value);
+    }
+
+    public double NAudioHighPassQ
+    {
+        get => _naudioHighPassQ;
+        set => SetField(ref _naudioHighPassQ, value);
+    }
+
+    public bool NAudioBandPassPeakEnabled
+    {
+        get => _naudioBandPassPeakEnabled;
+        set => SetField(ref _naudioBandPassPeakEnabled, value);
+    }
+
+    public double NAudioBandPassPeakFrequencyHz
+    {
+        get => _naudioBandPassPeakFrequencyHz;
+        set => SetField(ref _naudioBandPassPeakFrequencyHz, value);
+    }
+
+    public double NAudioBandPassPeakQ
+    {
+        get => _naudioBandPassPeakQ;
+        set => SetField(ref _naudioBandPassPeakQ, value);
+    }
+
+    public bool NAudioBandPassSkirtEnabled
+    {
+        get => _naudioBandPassSkirtEnabled;
+        set => SetField(ref _naudioBandPassSkirtEnabled, value);
+    }
+
+    public double NAudioBandPassSkirtFrequencyHz
+    {
+        get => _naudioBandPassSkirtFrequencyHz;
+        set => SetField(ref _naudioBandPassSkirtFrequencyHz, value);
+    }
+
+    public double NAudioBandPassSkirtQ
+    {
+        get => _naudioBandPassSkirtQ;
+        set => SetField(ref _naudioBandPassSkirtQ, value);
+    }
+
+    public bool NAudioNotchEnabled
+    {
+        get => _naudioNotchEnabled;
+        set => SetField(ref _naudioNotchEnabled, value);
+    }
+
+    public double NAudioNotchFrequencyHz
+    {
+        get => _naudioNotchFrequencyHz;
+        set => SetField(ref _naudioNotchFrequencyHz, value);
+    }
+
+    public double NAudioNotchQ
+    {
+        get => _naudioNotchQ;
+        set => SetField(ref _naudioNotchQ, value);
+    }
+
+    public bool NAudioAllPassEnabled
+    {
+        get => _naudioAllPassEnabled;
+        set => SetField(ref _naudioAllPassEnabled, value);
+    }
+
+    public double NAudioAllPassFrequencyHz
+    {
+        get => _naudioAllPassFrequencyHz;
+        set => SetField(ref _naudioAllPassFrequencyHz, value);
+    }
+
+    public double NAudioAllPassQ
+    {
+        get => _naudioAllPassQ;
+        set => SetField(ref _naudioAllPassQ, value);
+    }
+
+    public bool NAudioPeakingEqEnabled
+    {
+        get => _naudioPeakingEqEnabled;
+        set => SetField(ref _naudioPeakingEqEnabled, value);
+    }
+
+    public double NAudioPeakingEqFrequencyHz
+    {
+        get => _naudioPeakingEqFrequencyHz;
+        set => SetField(ref _naudioPeakingEqFrequencyHz, value);
+    }
+
+    public double NAudioPeakingEqQ
+    {
+        get => _naudioPeakingEqQ;
+        set => SetField(ref _naudioPeakingEqQ, value);
+    }
+
+    public double NAudioPeakingEqGainDb
+    {
+        get => _naudioPeakingEqGainDb;
+        set => SetField(ref _naudioPeakingEqGainDb, value);
+    }
+
+    public bool NAudioLowShelfEnabled
+    {
+        get => _naudioLowShelfEnabled;
+        set => SetField(ref _naudioLowShelfEnabled, value);
+    }
+
+    public double NAudioLowShelfFrequencyHz
+    {
+        get => _naudioLowShelfFrequencyHz;
+        set => SetField(ref _naudioLowShelfFrequencyHz, value);
+    }
+
+    public double NAudioLowShelfSlope
+    {
+        get => _naudioLowShelfSlope;
+        set => SetField(ref _naudioLowShelfSlope, value);
+    }
+
+    public double NAudioLowShelfGainDb
+    {
+        get => _naudioLowShelfGainDb;
+        set => SetField(ref _naudioLowShelfGainDb, value);
+    }
+
+    public bool NAudioHighShelfEnabled
+    {
+        get => _naudioHighShelfEnabled;
+        set => SetField(ref _naudioHighShelfEnabled, value);
+    }
+
+    public double NAudioHighShelfFrequencyHz
+    {
+        get => _naudioHighShelfFrequencyHz;
+        set => SetField(ref _naudioHighShelfFrequencyHz, value);
+    }
+
+    public double NAudioHighShelfSlope
+    {
+        get => _naudioHighShelfSlope;
+        set => SetField(ref _naudioHighShelfSlope, value);
+    }
+
+    public double NAudioHighShelfGainDb
+    {
+        get => _naudioHighShelfGainDb;
+        set => SetField(ref _naudioHighShelfGainDb, value);
     }
 
     public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);
