@@ -32,6 +32,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
+    ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -480,6 +481,33 @@ static void NAudioBiQuadRackExposesEveryEqShape()
     Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
 }
 
+static void NAudioPitchShiftMovesToneFrequency()
+{
+    const int sampleRate = 48_000;
+    var source = GenerateSine(sampleRate, 440, 0.35, 1.0);
+    var shifted = ProcessNAudioPitchShiftTestTone(source, settings =>
+    {
+        settings.NAudioPitchShiftEnabled = true;
+        settings.NAudioPitchShiftSemitones = 12;
+        settings.NAudioPitchShiftFftSize = 1024;
+        settings.NAudioPitchShiftOversampling = 8;
+        settings.NAudioPitchShiftMix = 1;
+    });
+
+    var start = sampleRate / 2;
+    var sourceMagnitude = CalculateToneMagnitude(shifted, sampleRate, 440, start, 8192);
+    var shiftedMagnitude = CalculateToneMagnitude(shifted, sampleRate, 880, start, 8192);
+
+    Assert(shiftedMagnitude > sourceMagnitude * 1.25d, "NAudio SmbPitchShifter should move a +12 semitone tone toward the octave");
+    Assert(shifted.All(float.IsFinite), "NAudio pitch shift output should stay finite");
+
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs")));
+    Assert(processor.Contains("SmbPitchShifter", StringComparison.Ordinal), "NAudio pitch shift should use SmbPitchShifter");
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("NAudio Pitch Shift", StringComparison.Ordinal), "NAudio pitch controls should be grouped together");
+}
+
 static void VoiceBreathReducerTamesAiryBreathNoise()
 {
     const int sampleRate = 48_000;
@@ -588,7 +616,8 @@ static void VoiceProcessorUsesEveryDspSetting()
     var processor = string.Join(
         Environment.NewLine,
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -3585,6 +3614,14 @@ static float[] ProcessNAudioBiQuadTestTone(float[] samples, Action<VoiceProcesso
     return processor.Process(samples);
 }
 
+static float[] ProcessNAudioPitchShiftTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
+{
+    var settings = CreateTransparentVoiceSettings();
+    configure(settings);
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
 static float[] ProcessBreathReducerTestTone(float[] samples, bool enabled)
 {
     var settings = new VoiceProcessorSettings
@@ -3638,13 +3675,21 @@ static float[] ProcessSaturationTestTone(float[] samples, bool enabled)
     return processor.Process(samples);
 }
 
-static double CalculateToneMagnitude(IReadOnlyList<float> samples, int sampleRate, double frequencyHz, int startIndex)
+static double CalculateToneMagnitude(
+    IReadOnlyList<float> samples,
+    int sampleRate,
+    double frequencyHz,
+    int startIndex,
+    int? windowLength = null)
 {
     var start = Math.Clamp(startIndex, 0, samples.Count);
+    var end = windowLength.HasValue
+        ? Math.Min(samples.Count, start + Math.Max(0, windowLength.Value))
+        : samples.Count;
     var sine = 0d;
     var cosine = 0d;
     var count = 0;
-    for (var i = start; i < samples.Count; i++)
+    for (var i = start; i < end; i++)
     {
         var angle = 2d * Math.PI * frequencyHz * i / sampleRate;
         sine += samples[i] * Math.Sin(angle);

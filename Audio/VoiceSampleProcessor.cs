@@ -14,6 +14,7 @@ public sealed class VoiceSampleProcessor
 
     private readonly VoiceProcessorSettings _settings;
     private readonly NAudioBiQuadFilterRack _naudioBiQuadFilterRack;
+    private readonly NAudioPitchShiftProcessor _naudioPitchShiftProcessor;
     private readonly double _sampleRate;
     private double _previousDcBlockerInput;
     private double _previousDcBlockerOutput;
@@ -305,6 +306,7 @@ public sealed class VoiceSampleProcessor
         _settings = settings;
         _sampleRate = Math.Max(8000d, sampleRate);
         _naudioBiQuadFilterRack = new NAudioBiQuadFilterRack(_sampleRate);
+        _naudioPitchShiftProcessor = new NAudioPitchShiftProcessor(_sampleRate);
         InitializeEqualizerFrequencyCache();
     }
 
@@ -359,6 +361,8 @@ public sealed class VoiceSampleProcessor
             sample = SanitizeAudioSample(sample);
             processed[i] = (float)ApplyOutputSafetyClip(sample);
         }
+
+        _naudioPitchShiftProcessor.Transform(processed[..sampleCount]);
 
         var telemetry = Telemetry;
         telemetry.InputTrimDb = Math.Abs(_settings.InputTrimDb);
@@ -534,6 +538,7 @@ public sealed class VoiceSampleProcessor
         _limiterSoftClipCurve = 1d + limiterSoftClipDriveDb * 0.08d;
         _limiterSoftClipCurveDenominator = Math.Tanh(_limiterSoftClipCurve);
         _naudioBiQuadFilterRack.UpdateFromSettings(_settings);
+        _naudioPitchShiftProcessor.UpdateFromSettings(_settings);
         UpdateEqualizerCoefficients(sampleCount);
     }
 

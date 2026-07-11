@@ -110,6 +110,11 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _naudioHighShelfFrequencyHz = 8000;
     private double _naudioHighShelfSlope = 0.9;
     private double _naudioHighShelfGainDb;
+    private bool _naudioPitchShiftEnabled;
+    private double _naudioPitchShiftSemitones;
+    private double _naudioPitchShiftFftSize = 1024;
+    private double _naudioPitchShiftOversampling = 4;
+    private double _naudioPitchShiftMix = 1;
 
     public double InputTrimDb
     {
@@ -715,6 +720,36 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _naudioHighShelfGainDb;
         set => SetField(ref _naudioHighShelfGainDb, value);
+    }
+
+    public bool NAudioPitchShiftEnabled
+    {
+        get => _naudioPitchShiftEnabled;
+        set => SetField(ref _naudioPitchShiftEnabled, value);
+    }
+
+    public double NAudioPitchShiftSemitones
+    {
+        get => _naudioPitchShiftSemitones;
+        set => SetField(ref _naudioPitchShiftSemitones, value);
+    }
+
+    public double NAudioPitchShiftFftSize
+    {
+        get => _naudioPitchShiftFftSize;
+        set => SetField(ref _naudioPitchShiftFftSize, value);
+    }
+
+    public double NAudioPitchShiftOversampling
+    {
+        get => _naudioPitchShiftOversampling;
+        set => SetField(ref _naudioPitchShiftOversampling, value);
+    }
+
+    public double NAudioPitchShiftMix
+    {
+        get => _naudioPitchShiftMix;
+        set => SetField(ref _naudioPitchShiftMix, value);
     }
 
     public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);
