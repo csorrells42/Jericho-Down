@@ -46,6 +46,7 @@ var tests = new (string Name, Action Test)[]
     ("ASIO settings menu prefers selected and installed drivers", AsioSettingsMenuPrefersSelectedAndInstalledDrivers),
     ("ASIO input devices carry endpoint identity", AsioInputDevicesCarryEndpointIdentity),
     ("ASIO input selections restore by endpoint", AsioInputSelectionsRestoreByEndpoint),
+    ("ASIO restart path preserves endpoint identity", AsioRestartPathPreservesEndpointIdentity),
     ("ASIO input capture converts interleaved floats", AsioInputCaptureConvertsInterleavedFloats),
     ("CoreAudio session catalog skips ASIO outputs", CoreAudioSessionCatalogSkipsAsioOutputs),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
@@ -724,6 +725,23 @@ static void AsioInputSelectionsRestoreByEndpoint()
 
     var missing = (AudioInputDevice?)method.Invoke(null, [devices, MicrophoneSpectrumService.CreateAsioEndpointId("Missing ASIO Driver"), "ASIO: Missing ASIO Driver"]);
     Assert(missing is null, "missing ASIO driver selections should not silently fall back to a different mic");
+}
+
+static void AsioRestartPathPreservesEndpointIdentity()
+{
+    var restartOverload = typeof(MicrophoneSpectrumService).GetMethod(
+        "RestartCapture",
+        BindingFlags.Instance | BindingFlags.Public,
+        [typeof(AudioInputDevice), typeof(VoiceProcessorSettings), typeof(InputChannelMode), typeof(TimeSpan)]);
+    Assert(restartOverload is not null, "audio stream restart should accept a full input device so ASIO endpoint/backend identity is preserved");
+
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(
+        windowCode.Contains("_spectrumService.RestartCapture(selectedDevice,", StringComparison.Ordinal),
+        "UI audio stream restart must pass the selected AudioInputDevice instead of only DeviceNumber; ASIO uses endpoint/backend identity");
+    Assert(
+        !windowCode.Contains("_spectrumService.RestartCapture(selectedDevice.DeviceNumber", StringComparison.Ordinal),
+        "UI audio stream restart should not use the Windows-only DeviceNumber overload for selected devices");
 }
 
 static void AsioInputCaptureConvertsInterleavedFloats()

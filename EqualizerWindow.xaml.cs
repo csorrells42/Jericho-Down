@@ -5796,7 +5796,7 @@ public partial class EqualizerWindow : Window
             ConfigureLiveMixFromChannels();
             await Task.Run(() =>
             {
-                _spectrumService.RestartCapture(selectedDevice.DeviceNumber, processorSettings, inputChannelMode, TimeSpan.FromMilliseconds(850));
+                _spectrumService.RestartCapture(selectedDevice, processorSettings, inputChannelMode, TimeSpan.FromMilliseconds(850));
             });
             if (_isClosing || operationVersion != _audioStreamOperationVersion || !Equals(_selectedDevice, selectedDevice))
             {

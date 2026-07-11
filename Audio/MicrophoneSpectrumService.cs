@@ -1283,6 +1283,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
         RestartCapture(deviceNumber, null, AudioInputBackend.Windows, processorSettings, inputChannelMode, stopTimeout);
     }
 
+    public void RestartCapture(AudioInputDevice device, VoiceProcessorSettings? processorSettings, InputChannelMode inputChannelMode, TimeSpan stopTimeout)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+
+        RestartCapture(device.DeviceNumber, device.EndpointId, device.Backend, processorSettings, inputChannelMode, stopTimeout);
+    }
+
     private void RestartCapture(
         int deviceNumber,
         string? endpointId,
