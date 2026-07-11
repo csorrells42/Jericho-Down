@@ -483,6 +483,7 @@ static void NAudioBiQuadRackExposesEveryEqShape()
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
+    Assert(xaml.Contains("BiQuad family", StringComparison.Ordinal), "BiQuad controls should show the shared BiQuad family frame label");
 }
 
 static void NAudioPitchShiftMovesToneFrequency()

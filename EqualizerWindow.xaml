@@ -1901,9 +1901,18 @@
                       <Slider x:Name="HighShelfGainSlider" Minimum="-12" Maximum="12" Value="{Binding HighShelfGainDb}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
                     </StackPanel>
                   </Border>
-                  <Border Style="{StaticResource DspBubble}">
+                  <Border Style="{StaticResource DspBubble}" BorderBrush="#4BDBC9">
                     <StackPanel>
-                      <TextBlock Text="NAudio BiQuad Filter Rack" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="NAudio BiQuad Filter Rack" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Border Grid.Column="1" Background="#0B2D36" BorderBrush="#35E8D8" BorderThickness="1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Margin="8,0,0,0">
+                          <TextBlock Text="BiQuad family" Foreground="#B7FFF8" FontSize="11" FontWeight="SemiBold" />
+                        </Border>
+                      </Grid>
                       <CheckBox Content="BiQuad Low-pass" IsChecked="{Binding NAudioLowPassEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
                       <Grid>
                         <TextBlock Text="LPF frequency" Foreground="#B8C7D9" />
