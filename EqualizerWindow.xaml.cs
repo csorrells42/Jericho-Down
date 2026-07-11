@@ -1199,9 +1199,14 @@ public partial class EqualizerWindow : Window
 
     private void ApplyDarkTitleBar()
     {
+        ApplyDarkTitleBar(this);
+    }
+
+    private static void ApplyDarkTitleBar(Window window)
+    {
         try
         {
-            var handle = new WindowInteropHelper(this).Handle;
+            var handle = new WindowInteropHelper(window).Handle;
             if (handle == IntPtr.Zero)
             {
                 return;
@@ -2090,6 +2095,7 @@ public partial class EqualizerWindow : Window
 
         _dockedMicCompareContent ??= MicCompareTab.Content;
         MicCompareTab.Content = null;
+        ApplyMicComparePopupStyles();
 
         var dialog = new Window
         {
@@ -2108,15 +2114,51 @@ public partial class EqualizerWindow : Window
         dialog.Closed += MicCompareWindowClosed;
         _micCompareWindow = dialog;
         RefreshMicCompareSelectors();
-        RefreshActiveSpectrumWaterfallHosts();
         UpdateMicCompareUiState();
         dialog.Show();
-        if (_latestFrame is not null)
-        {
-            Dispatcher.BeginInvoke(new Action(() => RenderMicCompareSpectrum(_latestFrame)), DispatcherPriority.Loaded);
-        }
+        ApplyDarkTitleBar(dialog);
+        RefreshActiveSpectrumWaterfallHosts();
+        _spectrumService.RequestImmediateSpectrumAnalysis();
+        Dispatcher.BeginInvoke(new Action(RenderLatestMicCompareFrame), DispatcherPriority.Loaded);
 
         StatusText.Text = "Mic Compare opened.";
+    }
+
+    private void ApplyMicComparePopupStyles()
+    {
+        var comboBoxStyle = TryFindResource(typeof(ComboBox)) as Style;
+        var comboBoxItemStyle = TryFindResource(typeof(ComboBoxItem)) as Style;
+        foreach (var comboBox in new[]
+        {
+            MicCompareMic1DeviceComboBox,
+            MicCompareMic1InputModeComboBox,
+            MicCompareMic2DeviceComboBox,
+            MicCompareMic2InputModeComboBox
+        })
+        {
+            if (comboBoxStyle is not null)
+            {
+                comboBox.Style = comboBoxStyle;
+            }
+
+            if (comboBoxItemStyle is not null)
+            {
+                comboBox.ItemContainerStyle = comboBoxItemStyle;
+            }
+        }
+    }
+
+    private void RenderLatestMicCompareFrame()
+    {
+        MicCompareContentRoot.UpdateLayout();
+        MicCompareCanvas.UpdateLayout();
+        if (_latestFrame is not null
+            && IsMicCompareViewActive()
+            && MicCompareCanvas.ActualWidth > 1d
+            && MicCompareCanvas.ActualHeight > 1d)
+        {
+            RenderMicCompareSpectrum(_latestFrame);
+        }
     }
 
     private void MicCompareWindowClosed(object? sender, EventArgs e)

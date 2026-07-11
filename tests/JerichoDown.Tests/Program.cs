@@ -45,6 +45,7 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
+    ("Mic compare popup activates themed live graph", MicComparePopupActivatesThemedLiveGraph),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
@@ -800,6 +801,35 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(windowCode.Contains("private void ShowMicCompareWindow()", StringComparison.Ordinal), "Mic Compare should open in a popup window");
     Assert(windowCode.Contains("Content = MicCompareContentRoot", StringComparison.Ordinal), "Mic Compare popup should reuse the existing tab content");
     Assert(windowCode.Contains("IsMicCompareViewActive()", StringComparison.Ordinal), "Mic Compare rendering should stay active while the popup is open");
+}
+
+static void MicComparePopupActivatesThemedLiveGraph()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var spectrumServiceCode = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var showMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ShowMicCompareWindow()",
+        "    private void ApplyMicComparePopupStyles()");
+
+    Assert(showMethod.Contains("ApplyMicComparePopupStyles();", StringComparison.Ordinal), "Mic Compare popup should explicitly apply the app ComboBox theme");
+    Assert(showMethod.Contains("ApplyDarkTitleBar(dialog);", StringComparison.Ordinal), "Mic Compare popup should apply the dark app title bar");
+    Assert(showMethod.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "Mic Compare popup should force a fresh spectrum frame when it opens");
+    Assert(windowCode.Contains("comboBox.Style = comboBoxStyle;", StringComparison.Ordinal), "Mic Compare popup ComboBoxes should keep the app theme outside the main window resource scope");
+    Assert(windowCode.Contains("comboBox.ItemContainerStyle = comboBoxItemStyle;", StringComparison.Ordinal), "Mic Compare popup dropdown items should keep the app theme");
+    Assert(windowCode.Contains("private void RenderLatestMicCompareFrame()", StringComparison.Ordinal), "Mic Compare popup should render once after layout is ready");
+
+    var showIndex = showMethod.IndexOf("dialog.Show();", StringComparison.Ordinal);
+    var refreshIndex = showMethod.IndexOf("RefreshActiveSpectrumWaterfallHosts();", StringComparison.Ordinal);
+    Assert(showIndex >= 0, "Mic Compare popup should show the window before graph activation is checked");
+    Assert(refreshIndex > showIndex, "Mic Compare popup should refresh graph hosts after the window is visible");
+
+    var stereoAnalysisProperty = ExtractSourceBetween(
+        spectrumServiceCode,
+        "    public bool StereoInputAnalysisEnabled",
+        "    public void ConfigureLiveMix");
+    Assert(spectrumServiceCode.Contains("public void RequestImmediateSpectrumAnalysis()", StringComparison.Ordinal), "spectrum service should expose an immediate analysis request");
+    Assert(stereoAnalysisProperty.Contains("RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "stereo analysis changes should wake the analyzer immediately");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()

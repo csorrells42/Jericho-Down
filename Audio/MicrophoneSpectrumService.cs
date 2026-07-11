@@ -491,7 +491,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public bool StereoInputAnalysisEnabled
     {
         get => System.Threading.Volatile.Read(ref _stereoInputAnalysisEnabled) != 0;
-        set => System.Threading.Volatile.Write(ref _stereoInputAnalysisEnabled, value ? 1 : 0);
+        set
+        {
+            var nextValue = value ? 1 : 0;
+            var previousValue = System.Threading.Interlocked.Exchange(ref _stereoInputAnalysisEnabled, nextValue);
+            if (previousValue != nextValue)
+            {
+                RequestImmediateSpectrumAnalysis();
+            }
+        }
+    }
+
+    public void RequestImmediateSpectrumAnalysis()
+    {
+        System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
+        System.Threading.Volatile.Write(ref _nextSpectrumAnalysisTimestamp, 0);
     }
 
     public void ConfigureLiveMix(IReadOnlyList<MicrophoneLiveChannelSettings> channels, MixBusSettings mixBusSettings)
