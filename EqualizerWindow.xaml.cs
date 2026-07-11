@@ -921,7 +921,7 @@ public partial class EqualizerWindow : Window
         channel.DisplayName = string.IsNullOrWhiteSpace(state.DisplayName)
             ? channel.DefaultDisplayName
             : state.DisplayName.Trim();
-        channel.SelectedDevice = ResolvePersistedMicChannelDevice(devices, state.MicrophoneEndpointId, state.MicrophoneName);
+        channel.SelectedDevice = ResolvePersistedMicChannelDeviceByEndpoint(devices, state.MicrophoneEndpointId, state.MicrophoneName);
         channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
             ? parsedMode
             : InputChannelMode.MonoSum;
@@ -1040,10 +1040,10 @@ public partial class EqualizerWindow : Window
         IReadOnlyList<AudioInputDevice> devices,
         string? name)
     {
-        return ResolvePersistedMicChannelDevice(devices, null, name);
+        return ResolvePersistedMicChannelDeviceByEndpoint(devices, null, name);
     }
 
-    private static AudioInputDevice? ResolvePersistedMicChannelDevice(
+    private static AudioInputDevice? ResolvePersistedMicChannelDeviceByEndpoint(
         IReadOnlyList<AudioInputDevice> devices,
         string? endpointId,
         string? name)

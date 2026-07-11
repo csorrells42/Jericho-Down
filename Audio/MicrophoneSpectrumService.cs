@@ -206,6 +206,15 @@ public sealed class MicrophoneSpectrumService : IDisposable
             Backend = backend;
             DeviceKey = deviceKey;
         }
+        public AdditionalCaptureRuntime(MicrophoneSpectrumService service, int deviceNumber)
+            : this(
+                service,
+                deviceNumber,
+                null,
+                AudioInputBackend.Windows,
+                MicrophoneSpectrumService.CreateInputDeviceKey(deviceNumber, null, AudioInputBackend.Windows))
+        {
+        }
 
         public int DeviceNumber { get; }
 

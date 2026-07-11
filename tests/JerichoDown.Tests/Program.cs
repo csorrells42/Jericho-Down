@@ -41,6 +41,9 @@ var tests = new (string Name, Action Test)[]
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
+    ("ASIO input devices carry endpoint identity", AsioInputDevicesCarryEndpointIdentity),
+    ("ASIO input selections restore by endpoint", AsioInputSelectionsRestoreByEndpoint),
+    ("ASIO input capture converts interleaved floats", AsioInputCaptureConvertsInterleavedFloats),
     ("CoreAudio session catalog skips ASIO outputs", CoreAudioSessionCatalogSkipsAsioOutputs),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
@@ -52,6 +55,7 @@ var tests = new (string Name, Action Test)[]
     ("Blank mixer channels restore without fallback input", BlankMixerChannelsRestoreWithoutFallbackInput),
     ("App settings roundtrip preserves mic mixer routing state", AppSettingsRoundtripPreservesMicMixerRoutingState),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
+    ("Primary capture selector matches ASIO endpoint", PrimaryCaptureSelectorMatchesAsioEndpoint),
     ("Audio recording filenames identify selected source", AudioRecordingFilenamesIdentifySelectedSource),
     ("Audio recording wave format follows selected source", AudioRecordingWaveFormatFollowsSelectedSource),
     ("Live service bus records interface left and right", LiveServiceBusRecordsInterfaceLeftAndRight),
@@ -602,6 +606,62 @@ static void AsioOutputRoutingIsOptIn()
     Assert(asioDevice.IsAsio, "ASIO output devices should be identifiable without inspecting display text");
 }
 
+static void AsioInputDevicesCarryEndpointIdentity()
+{
+    var endpointId = MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver");
+    var device = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Interface ASIO Driver",
+        8,
+        endpointId,
+        AudioInputBackend.Asio);
+
+    Assert(device.IsAsio, "ASIO input devices should be identifiable without relying on display text");
+    Assert(!device.IsSystemAudioLoopback, "ASIO input devices should not be treated as loopback capture");
+    Assert(device.EndpointId == endpointId, "ASIO input devices should preserve their endpoint ID");
+    Assert(device.MaximumInputChannels == 8, "ASIO input devices should expose interface channel options");
+
+    var format = MicrophoneSpectrumService.TryGetInputDeviceFormat(device)
+        ?? throw new InvalidOperationException("ASIO input format fallback was unavailable.");
+    Assert(format.BitsPerSample == 32, "ASIO input capture should be represented as 32-bit float");
+    Assert(format.Channels == 8, "ASIO input format fallback should honor the selected interface channel count");
+}
+
+static void AsioInputSelectionsRestoreByEndpoint()
+{
+    var method = typeof(EqualizerWindow).GetMethod(
+        "ResolvePersistedMicChannelDeviceByEndpoint",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(method is not null, "endpoint-aware persisted mic resolver should be available");
+
+    var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver");
+    var asioDevice = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Interface ASIO Driver",
+        8,
+        asioEndpoint,
+        AudioInputBackend.Asio);
+    var similarlyNamedWindowsDevice = new AudioInputDevice(0, "ASIO: Interface ASIO Driver", 2);
+    var devices = new[] { similarlyNamedWindowsDevice, asioDevice };
+
+    var restored = (AudioInputDevice?)method!.Invoke(null, [devices, asioEndpoint, "ASIO: Interface ASIO Driver"]);
+    Assert(restored?.IsAsio == true, "saved ASIO inputs should restore by endpoint before display name");
+    Assert(restored?.EndpointId == asioEndpoint, "restored ASIO inputs should preserve the exact selected driver endpoint");
+
+    var missing = (AudioInputDevice?)method.Invoke(null, [devices, MicrophoneSpectrumService.CreateAsioEndpointId("Missing ASIO Driver"), "ASIO: Missing ASIO Driver"]);
+    Assert(missing is null, "missing ASIO driver selections should not silently fall back to a different mic");
+}
+
+static void AsioInputCaptureConvertsInterleavedFloats()
+{
+    var samples = new[] { 0.25f, -0.5f, 1f, -1f };
+    var bytes = new byte[samples.Length * sizeof(float)];
+    var byteCount = AsioInputCapture.CopyInterleavedSamplesToBytes(samples, bytes);
+    var roundTrip = MemoryMarshal.Cast<byte, float>(bytes.AsSpan(0, byteCount));
+
+    Assert(byteCount == bytes.Length, "ASIO sample conversion should write one float-sized block per interleaved sample");
+    Assert(roundTrip.SequenceEqual(samples), "ASIO capture conversion should preserve interleaved 32-bit float samples exactly");
+}
 static void CoreAudioSessionCatalogSkipsAsioOutputs()
 {
     var asioDevice = new AudioOutputDevice(
@@ -842,6 +902,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Set(mic, "ChannelNumber", 3);
     Set(mic, "DisplayName", "Scarlett mic");
     Set(mic, "MicrophoneName", "USB headset");
+    Set(mic, "MicrophoneEndpointId", "{mic-endpoint}");
     Set(mic, "InputChannelMode", InputChannelMode.Input2Right.ToString());
     Set(mic, "IsMuted", true);
     Set(mic, "VolumePercent", 73d);
@@ -892,6 +953,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((int)Get(restoredMic, "ChannelNumber")! == 3, "mic channel number should survive app-state roundtrip");
     Assert((string)Get(restoredMic, "DisplayName")! == "Scarlett mic", "mic display name should survive app-state roundtrip");
     Assert((string)Get(restoredMic, "MicrophoneName")! == "USB headset", "mic device should survive app-state roundtrip");
+    Assert((string)Get(restoredMic, "MicrophoneEndpointId")! == "{mic-endpoint}", "mic endpoint should survive app-state roundtrip");
     Assert((string)Get(restoredMic, "InputChannelMode")! == InputChannelMode.Input2Right.ToString(), "mic input mode should survive app-state roundtrip");
     Assert((bool)Get(restoredMic, "IsMuted")!, "mute should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "VolumePercent")! == 73d, "mic volume should survive app-state roundtrip");
@@ -954,6 +1016,24 @@ static void PrimaryCaptureSelectorFollowsActiveMicSource()
     Assert(selected == 2, "if every configured mic is muted, the selector should still pick a real source for the live bus");
 }
 
+static void PrimaryCaptureSelectorMatchesAsioEndpoint()
+{
+    var firstEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("First ASIO Driver");
+    var secondEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Second ASIO Driver");
+    var candidates = new[]
+    {
+        new PrimaryCaptureCandidate(1, AudioInputDevice.AsioInputDeviceNumber, IsActive: false, IsMuted: false, firstEndpoint, AudioInputBackend.Asio),
+        new PrimaryCaptureCandidate(2, AudioInputDevice.AsioInputDeviceNumber, IsActive: false, IsMuted: false, secondEndpoint, AudioInputBackend.Asio)
+    };
+
+    var selected = PrimaryCaptureSelector.ResolveChannelNumber(
+        candidates,
+        AudioInputDevice.AsioInputDeviceNumber,
+        secondEndpoint,
+        AudioInputBackend.Asio);
+
+    Assert(selected == 2, "ASIO primary capture selection should match endpoint IDs when device numbers are shared");
+}
 static void AudioRecordingFilenamesIdentifySelectedSource()
 {
     var method = typeof(EqualizerWindow).GetMethod(
