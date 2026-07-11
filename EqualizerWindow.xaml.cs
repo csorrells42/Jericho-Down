@@ -5036,6 +5036,7 @@ public partial class EqualizerWindow : Window
                     ? previousSelectedDeviceFormat
                     : null;
             MicrophoneComboBox.SelectedItem = _selectedDevice;
+            ApplySelectedMixerInputPanelToUi();
             RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
             RefreshMicCompareSelectors();
         }
@@ -5067,10 +5068,19 @@ public partial class EqualizerWindow : Window
                 && AudioInputDevicesMatch(previousSelectedDevice, _selectedDevice)
                     ? previousSelectedDeviceFormat
                     : null;
+            ApplySelectedMixerInputPanelToUi();
         }
         finally
         {
             _isUpdatingMicChannelUi = false;
+        }
+    }
+
+    private void ApplySelectedMixerInputPanelToUi()
+    {
+        if (SelectedMixerInputPanel is not null && !ReferenceEquals(SelectedMixerInputPanel.DataContext, _activeMicChannel))
+        {
+            SelectedMixerInputPanel.DataContext = _activeMicChannel;
         }
     }
 
@@ -5313,7 +5323,7 @@ public partial class EqualizerWindow : Window
 
     private void ResetSelectedMixerChannelClicked(object sender, RoutedEventArgs e)
     {
-        if (_isUpdatingMixerUi || MicChannelComboBox?.SelectedItem is not MicChannelStrip channel)
+        if (_isUpdatingMixerUi || _activeMicChannel is not MicChannelStrip channel)
         {
             return;
         }

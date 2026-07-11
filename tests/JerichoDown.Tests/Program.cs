@@ -2448,6 +2448,7 @@ static void LiveMixAudibilityGatesMuteAndSolo()
 static void MixerStripControlsDoNotSelectChannels()
 {
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var handler = ExtractSourceBetween(
         windowCode,
         "    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)",
@@ -2459,6 +2460,8 @@ static void MixerStripControlsDoNotSelectChannels()
 
     Assert(handler.Contains("IsMixerControlInteraction(e.OriginalSource as DependencyObject)", StringComparison.Ordinal), "mixer strip preview clicks should ignore interactive child controls");
     Assert(handler.Contains("SetActiveMicChannelAsync(channel, restartAudio: false, refreshEditor: false)", StringComparison.Ordinal), "mixer strip selection should avoid rebinding the full mic editor");
+    Assert(windowXaml.Contains("x:Name=\"SelectedMixerInputPanel\"", StringComparison.Ordinal), "mixer selected input panel should have its own active-channel data context");
+    Assert(!windowXaml.Contains("DataContext=\"{Binding ElementName=MicChannelComboBox, Path=SelectedItem}\"", StringComparison.Ordinal), "mixer selected input panel should not depend on the Mic/DSP tab combo box selection");
     Assert(helper.Contains("ButtonBase", StringComparison.Ordinal), "mute checkboxes should not trigger mixer strip channel selection");
     Assert(helper.Contains("RangeBase", StringComparison.Ordinal), "mixer faders should not trigger mixer strip channel selection");
     Assert(helper.Contains("TextBoxBase", StringComparison.Ordinal), "mixer name text boxes should not trigger mixer strip channel selection");
@@ -2481,6 +2484,18 @@ static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
         "    private void ApplyActiveMicChannelToUi()");
     Assert(selectionMethod.Contains("ApplyActiveMicChannelSelectionToMixerUi();", StringComparison.Ordinal), "mixer-side mic selection should update only selection state");
     Assert(selectionMethod.Contains("UpdateLiveMixControlsFromChannels();", StringComparison.Ordinal), "mixer-side mic selection should use controls-only live mix updates");
+
+    var mixerSelectionHelper = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()",
+        "    private void ApplySelectedMixerInputPanelToUi()");
+    Assert(mixerSelectionHelper.Contains("ApplySelectedMixerInputPanelToUi();", StringComparison.Ordinal), "mixer-side mic selection should refresh the mixer selected-input panel");
+
+    var panelHelper = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplySelectedMixerInputPanelToUi()",
+        "    private void QueueSelectedDeviceFormatRefresh(AudioInputDevice? selectedDevice)");
+    Assert(panelHelper.Contains("SelectedMixerInputPanel.DataContext = _activeMicChannel;", StringComparison.Ordinal), "mixer selected-input panel should bind directly to the active channel");
 }
 
 static void MixerChannelControlsDebounceStatePersistence()
