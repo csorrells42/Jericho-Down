@@ -887,7 +887,7 @@ public partial class EqualizerWindow : Window
             var firstMicChannel = FindMicChannel(1) ?? GetDefaultActiveMicChannel();
             if (firstMicChannel is not null)
             {
-                firstMicChannel.SelectedDevice = FindAudioInputDevice(devices, _appSettings.MicrophoneName) ?? GetDefaultPhysicalInputDevice(devices);
+                firstMicChannel.SelectedDevice = FindAudioInputDevice(devices, _appSettings.MicrophoneEndpointId, _appSettings.MicrophoneName) ?? GetDefaultPhysicalInputDevice(devices);
                 firstMicChannel.InputChannelMode = Enum.TryParse<InputChannelMode>(_appSettings.InputChannelMode, out var parsedMode)
                     ? parsedMode
                     : InputChannelMode.MonoSum;
@@ -921,7 +921,7 @@ public partial class EqualizerWindow : Window
         channel.DisplayName = string.IsNullOrWhiteSpace(state.DisplayName)
             ? channel.DefaultDisplayName
             : state.DisplayName.Trim();
-        channel.SelectedDevice = ResolvePersistedMicChannelDevice(devices, state.MicrophoneName);
+        channel.SelectedDevice = ResolvePersistedMicChannelDevice(devices, state.MicrophoneEndpointId, state.MicrophoneName);
         channel.InputChannelMode = Enum.TryParse<InputChannelMode>(state.InputChannelMode, out var parsedMode)
             ? parsedMode
             : InputChannelMode.MonoSum;
@@ -1012,6 +1012,24 @@ public partial class EqualizerWindow : Window
         IReadOnlyList<AudioInputDevice> devices,
         string? name)
     {
+        return FindAudioInputDevice(devices, null, name);
+    }
+
+    private static AudioInputDevice? FindAudioInputDevice(
+        IReadOnlyList<AudioInputDevice> devices,
+        string? endpointId,
+        string? name)
+    {
+        if (!string.IsNullOrWhiteSpace(endpointId))
+        {
+            var endpointMatch = devices.FirstOrDefault(device =>
+                device.EndpointId?.Equals(endpointId, StringComparison.OrdinalIgnoreCase) == true);
+            if (endpointMatch is not null)
+            {
+                return endpointMatch;
+            }
+        }
+
         return string.IsNullOrWhiteSpace(name)
             ? null
             : devices.FirstOrDefault(device =>
@@ -1022,14 +1040,43 @@ public partial class EqualizerWindow : Window
         IReadOnlyList<AudioInputDevice> devices,
         string? name)
     {
-        if (string.IsNullOrWhiteSpace(name))
+        return ResolvePersistedMicChannelDevice(devices, null, name);
+    }
+
+    private static AudioInputDevice? ResolvePersistedMicChannelDevice(
+        IReadOnlyList<AudioInputDevice> devices,
+        string? endpointId,
+        string? name)
+    {
+        if (string.IsNullOrWhiteSpace(endpointId) && string.IsNullOrWhiteSpace(name))
         {
             return null;
         }
 
-        return FindAudioInputDevice(devices, name) ?? GetDefaultPhysicalInputDevice(devices);
+        var exact = FindAudioInputDevice(devices, endpointId, name);
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        if (MicrophoneSpectrumService.TryGetAsioDriverName(endpointId, out _))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(name) ? null : GetDefaultPhysicalInputDevice(devices);
     }
 
+    private static bool AudioInputDevicesMatch(AudioInputDevice first, AudioInputDevice second)
+    {
+        if (!string.IsNullOrWhiteSpace(first.EndpointId) || !string.IsNullOrWhiteSpace(second.EndpointId))
+        {
+            return first.EndpointId?.Equals(second.EndpointId, StringComparison.OrdinalIgnoreCase) == true
+                && first.Backend == second.Backend;
+        }
+
+        return first.DeviceNumber == second.DeviceNumber && first.Backend == second.Backend;
+    }
     private static AudioInputDevice? GetDefaultPhysicalInputDevice(IReadOnlyList<AudioInputDevice> devices)
     {
         return devices.FirstOrDefault(device => !device.IsSystemAudioLoopback)
@@ -1252,6 +1299,7 @@ public partial class EqualizerWindow : Window
             SelectedMicChannelNumber = activeMicChannel?.ChannelNumber ?? 1,
             MicChannels = CaptureMicChannelStates(),
             MicrophoneName = activeMicChannel?.SelectedDevice?.Name,
+            MicrophoneEndpointId = activeMicChannel?.SelectedDevice?.EndpointId,
             InputChannelMode = activeMicChannel?.InputChannelMode.ToString(),
             MixerMasterVolumePercent = _masterMixVolumePercent,
             MixerAutoNormalizeEnabled = _masterMixNormalizeEnabled,
@@ -1301,6 +1349,7 @@ public partial class EqualizerWindow : Window
                 ChannelNumber = channel.ChannelNumber,
                 DisplayName = channel.DisplayName,
                 MicrophoneName = channel.SelectedDevice?.Name,
+                MicrophoneEndpointId = channel.SelectedDevice?.EndpointId,
                 InputChannelMode = channel.InputChannelMode.ToString(),
                 IsEnabled = true,
                 IsMuted = channel.IsMuted,
@@ -1479,7 +1528,7 @@ public partial class EqualizerWindow : Window
         {
             if (channel.SelectedDevice is not null)
             {
-                channel.SelectedDevice = FindAudioInputDevice(inputDevices, channel.SelectedDevice.Name);
+                channel.SelectedDevice = FindAudioInputDevice(inputDevices, channel.SelectedDevice.EndpointId, channel.SelectedDevice.Name);
             }
         }
 
@@ -5153,7 +5202,9 @@ public partial class EqualizerWindow : Window
                     channel.IsSoloed,
                     channel.DelayMilliseconds,
                     true,
-                    channel.IsMuted);
+                    channel.IsMuted,
+                    channel.SelectedDevice!.EndpointId,
+                    channel.SelectedDevice.Backend);
             })
             .ToList();
         _spectrumService.ConfigureLiveMix(channels, CreateMixBusSettings());
@@ -5356,9 +5407,15 @@ public partial class EqualizerWindow : Window
                 channel.ChannelNumber,
                 channel.SelectedDevice!.DeviceNumber,
                 ReferenceEquals(channel, _activeMicChannel),
-                channel.IsMuted))
+                channel.IsMuted,
+                channel.SelectedDevice.EndpointId,
+                channel.SelectedDevice.Backend))
             .ToArray();
-        var channelNumber = PrimaryCaptureSelector.ResolveChannelNumber(candidates, _selectedDevice?.DeviceNumber);
+        var channelNumber = PrimaryCaptureSelector.ResolveChannelNumber(
+            candidates,
+            _selectedDevice?.DeviceNumber,
+            _selectedDevice?.EndpointId,
+            _selectedDevice?.Backend ?? AudioInputBackend.Windows);
         return channelNumber is null ? null : FindMicChannel(channelNumber.Value);
     }
 
@@ -5394,7 +5451,7 @@ public partial class EqualizerWindow : Window
         {
             ConfigureLiveMixFromChannels();
             _spectrumService.Start(
-                selectedDevice.DeviceNumber,
+                selectedDevice,
                 primaryCaptureChannel?.ProcessorSettings ?? Settings,
                 _selectedInputChannelMode);
             StatusText.Text = "Listening";
@@ -5651,7 +5708,7 @@ public partial class EqualizerWindow : Window
         var activeChannel = _activeMicChannel;
         if (activeChannel?.SelectedDevice is null
             || _selectedDevice is null
-            || activeChannel.SelectedDevice.DeviceNumber != _selectedDevice.DeviceNumber)
+            || !AudioInputDevicesMatch(activeChannel.SelectedDevice, _selectedDevice))
         {
             return [];
         }

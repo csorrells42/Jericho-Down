@@ -4,13 +4,17 @@ public readonly record struct PrimaryCaptureCandidate(
     int ChannelNumber,
     int DeviceNumber,
     bool IsActive,
-    bool IsMuted);
+    bool IsMuted,
+    string? EndpointId = null,
+    AudioInputBackend Backend = AudioInputBackend.Windows);
 
 public static class PrimaryCaptureSelector
 {
     public static int? ResolveChannelNumber(
         IReadOnlyList<PrimaryCaptureCandidate> candidates,
-        int? requestedDeviceNumber)
+        int? requestedDeviceNumber,
+        string? requestedEndpointId = null,
+        AudioInputBackend requestedBackend = AudioInputBackend.Windows)
     {
         if (candidates.Count == 0)
         {
@@ -23,9 +27,13 @@ public static class PrimaryCaptureSelector
             return active.ChannelNumber;
         }
 
-        if (requestedDeviceNumber is not null)
+        if (requestedDeviceNumber is not null || !string.IsNullOrWhiteSpace(requestedEndpointId))
         {
-            var requested = candidates.FirstOrDefault(candidate => candidate.DeviceNumber == requestedDeviceNumber.Value);
+            var requested = candidates.FirstOrDefault(candidate => MatchesRequestedDevice(
+                candidate,
+                requestedDeviceNumber,
+                requestedEndpointId,
+                requestedBackend));
             if (requested.ChannelNumber > 0)
             {
                 return requested.ChannelNumber;
@@ -39,5 +47,22 @@ public static class PrimaryCaptureSelector
         }
 
         return candidates[0].ChannelNumber;
+    }
+
+    private static bool MatchesRequestedDevice(
+        PrimaryCaptureCandidate candidate,
+        int? requestedDeviceNumber,
+        string? requestedEndpointId,
+        AudioInputBackend requestedBackend)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedEndpointId))
+        {
+            return candidate.Backend == requestedBackend
+                && candidate.EndpointId?.Equals(requestedEndpointId, StringComparison.OrdinalIgnoreCase) == true;
+        }
+
+        return requestedDeviceNumber is not null
+            && candidate.DeviceNumber == requestedDeviceNumber.Value
+            && candidate.Backend == requestedBackend;
     }
 }

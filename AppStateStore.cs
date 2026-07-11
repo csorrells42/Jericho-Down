@@ -207,6 +207,8 @@ internal sealed class AppSettingsState
 
     public string? MicrophoneName { get; set; }
 
+    public string? MicrophoneEndpointId { get; set; }
+
     public string? InputChannelMode { get; set; }
 
     public double? MixerMasterVolumePercent { get; set; }
@@ -289,6 +291,8 @@ internal sealed class MicChannelSettingsState
     public string? DisplayName { get; set; }
 
     public string? MicrophoneName { get; set; }
+
+    public string? MicrophoneEndpointId { get; set; }
 
     public string? InputChannelMode { get; set; }
 
