@@ -2197,46 +2197,23 @@ public partial class EqualizerWindow : Window
         Dx12Camera.CloseActive(collectGarbage: true);
         _cameraModeLoadCancellation?.Cancel();
         _cameraModeLoadCancellation?.Dispose();
-        if (_waveform3DGraphHost is not null)
-        {
-            _waveform3DGraphHost.Dispose();
-            _waveform3DGraphHost = null;
-        }
-
-        if (_selectedMicSpectrumGraphHost is not null)
-        {
-            _selectedMicSpectrumGraphHost.Dispose();
-            _selectedMicSpectrumGraphHost = null;
-        }
-
-        if (_podcastSpectrumWaterfallGraphHost is not null)
-        {
-            _podcastSpectrumWaterfallGraphHost.Dispose();
-            _podcastSpectrumWaterfallGraphHost = null;
-        }
-
-        if (_karaokeSpectrumWaterfallGraphHost is not null)
-        {
-            _karaokeSpectrumWaterfallGraphHost.Dispose();
-            _karaokeSpectrumWaterfallGraphHost = null;
-        }
-
-        if (_mixingMicSpectrumGraphHost is not null)
-        {
-            _mixingMicSpectrumGraphHost.Dispose();
-            _mixingMicSpectrumGraphHost = null;
-        }
-
-        if (_mixingOutputWaveform3DGraphHost is not null)
-        {
-            _mixingOutputWaveform3DGraphHost.Dispose();
-            _mixingOutputWaveform3DGraphHost = null;
-        }
+        DisposeGraphHost(ref _waveform3DGraphHost);
+        DisposeGraphHost(ref _selectedMicSpectrumGraphHost);
+        DisposeGraphHost(ref _podcastSpectrumWaterfallGraphHost);
+        DisposeGraphHost(ref _karaokeSpectrumWaterfallGraphHost);
+        DisposeGraphHost(ref _mixingMicSpectrumGraphHost);
+        DisposeGraphHost(ref _mixingOutputWaveform3DGraphHost);
 
         _textureNativeRecordingSession?.Dispose();
         _textureNativeRecordingSession = null;
         _cameraPreviewService.Dispose();
         _spectrumService.Dispose();
+    }
+
+    private static void DisposeGraphHost(ref Direct3D12AudioGraphHost? graphHost)
+    {
+        graphHost?.Dispose();
+        graphHost = null;
     }
 
     private void WindowKeyDown(object sender, KeyEventArgs e)

@@ -581,16 +581,6 @@ public sealed class Dx12Camera : IDisposable
         _denoiseStrength = Math.Clamp(strength, 0.5d, 5d);
     }
 
-    public void denoise(int magnitude)
-    {
-        Denoise(magnitude);
-    }
-
-    public void denoise(double strength)
-    {
-        Denoise(strength);
-    }
-
     public void UpdateRenderSettings(bool denoiseEnabled, double denoiseStrength)
     {
         Denoise(denoiseEnabled, denoiseStrength);
@@ -627,20 +617,6 @@ public sealed class Dx12Camera : IDisposable
         }
 
         return StartRecording(path, options);
-    }
-
-    public bool writeMP4(string path)
-    {
-        return WriteMP4(path);
-    }
-
-    public bool writeMP4(
-        string path,
-        bool processedOutputEnabled,
-        bool denoiseEnabled,
-        double denoiseStrength)
-    {
-        return WriteMP4(path, processedOutputEnabled, denoiseEnabled, denoiseStrength);
     }
 
     public bool StartRecording(
@@ -696,11 +672,6 @@ public sealed class Dx12Camera : IDisposable
     public TextureNativeRecordingResult? StopMP4()
     {
         return StopRecording();
-    }
-
-    public TextureNativeRecordingResult? stopMP4()
-    {
-        return StopMP4();
     }
 
     public void Close(bool collectGarbage = true)
