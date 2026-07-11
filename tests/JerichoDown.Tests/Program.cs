@@ -91,6 +91,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio program bus mixes one-shot mic blocks", NAudioProgramBusMixesOneShotMicBlocks),
     ("NAudio peak meter reports provider peaks", NAudioPeakMeterReportsProviderPeaks),
     ("Spectrum lines carry NAudio metered peaks", SpectrumLinesCarryNaudioMeteredPeaks),
+    ("Mixer strip meters ignore muted raw input", MixerStripMetersIgnoreMutedRawInput),
     ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Mixer strip clicks select channels cheaply", MixerStripClicksSelectChannelsCheaply),
@@ -2595,6 +2596,27 @@ static void SpectrumLinesCarryNaudioMeteredPeaks()
 
     Assert(Math.Abs(line.MeteredPeakLevel - 0.35d) < 0.0001d, "spectrum line should carry NAudio metered channel peak separately from raw input peak");
     Assert(Math.Abs(line.RawPeakLevel - 0.9d) < 0.0001d, "raw input peak should remain available for input coaching and fallback metering");
+}
+
+static void MixerStripMetersIgnoreMutedRawInput()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var meterMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void UpdateMixerChannelMeters(SpectrumFrame frame)",
+        "    private static bool IsMixerChannelAudibleInProgram(MicChannelStrip channel, bool hasSolo)");
+    var audibilityHelper = ExtractSourceBetween(
+        windowCode,
+        "    private static bool IsMixerChannelAudibleInProgram(MicChannelStrip channel, bool hasSolo)",
+        "    private void UpdateMixBusStatus(SpectrumFrame frame)");
+
+    Assert(meterMethod.Contains("channel.ClearLevelMeter();", StringComparison.Ordinal), "muted or solo-gated mixer strips should clear their visible meters");
+    Assert(!meterMethod.Contains("line.RawPeakLevel", StringComparison.Ordinal), "mixer strips should not fall back to raw capture peaks when program metering is silent");
+    Assert(!meterMethod.Contains("line.RawRmsLevel", StringComparison.Ordinal), "mixer strips should not show raw capture RMS as program activity");
+    Assert(meterMethod.Contains("line.MeteredPeakLevel > 0d", StringComparison.Ordinal), "mixer strips should prefer the post-fader NAudio meter");
+    Assert(meterMethod.Contains("line.PeakLevel", StringComparison.Ordinal), "audible mixer strips can fall back to processed channel signal");
+    Assert(audibilityHelper.Contains("LiveMixAudibility.IsAudible", StringComparison.Ordinal), "mixer strip metering should follow the same mute and solo rules as the program bus");
+    Assert(audibilityHelper.Contains("channel.VolumePercent > 0.1d", StringComparison.Ordinal), "zero-volume mixer strips should not show as program-audible");
 }
 
 static void LiveProgramMixBusCombinesTenMicFeeds()

@@ -11627,6 +11627,7 @@ public partial class EqualizerWindow : Window
     private void UpdateMixerChannelMeters(SpectrumFrame frame)
     {
         var updatedChannels = new HashSet<int>();
+        var hasSolo = _micChannels.Any(channel => channel.SelectedDevice is not null && channel.IsEnabled && channel.IsSoloed);
         foreach (var line in frame.MicrophoneLines)
         {
             var channel = FindMicChannel(line.ChannelNumber);
@@ -11635,10 +11636,22 @@ public partial class EqualizerWindow : Window
                 continue;
             }
 
+            if (!IsMixerChannelAudibleInProgram(channel, hasSolo))
+            {
+                channel.ClearLevelMeter();
+                channel.UpdateSyncStatus(
+                    line.SyncBufferedMilliseconds,
+                    line.SyncTargetLatencyMilliseconds,
+                    line.SyncUnderflowCount,
+                    line.SyncDriftTrimCount);
+                updatedChannels.Add(line.ChannelNumber);
+                continue;
+            }
+
             var meteredPeak = line.MeteredPeakLevel > 0d
                 ? line.MeteredPeakLevel
-                : line.RawPeakLevel;
-            channel.UpdateLevelMeter(meteredPeak, line.RawRmsLevel);
+                : line.PeakLevel;
+            channel.UpdateLevelMeter(meteredPeak, line.RmsLevel);
             channel.UpdateSyncStatus(
                 line.SyncBufferedMilliseconds,
                 line.SyncTargetLatencyMilliseconds,
@@ -11660,6 +11673,13 @@ public partial class EqualizerWindow : Window
                 channel.UpdateLevelMeter(0d);
             }
         }
+    }
+
+    private static bool IsMixerChannelAudibleInProgram(MicChannelStrip channel, bool hasSolo)
+    {
+        return channel.SelectedDevice is not null
+            && channel.VolumePercent > 0.1d
+            && LiveMixAudibility.IsAudible(channel.IsEnabled, channel.IsMuted, channel.IsSoloed, hasSolo);
     }
 
     private void UpdateMixBusStatus(SpectrumFrame frame)
@@ -14477,6 +14497,30 @@ public partial class EqualizerWindow : Window
             _rmsMeterScale = Math.Clamp(rmsNext, 0d, 1d);
             _peakHoldMeterScale = Math.Clamp(peakHoldNext, 0d, 1d);
             _isClipping = clipping;
+            OnPropertyChanged(nameof(LevelMeterScale));
+            OnPropertyChanged(nameof(RmsMeterScale));
+            OnPropertyChanged(nameof(PeakHoldMeterScale));
+            OnPropertyChanged(nameof(IsClipping));
+        }
+
+        public void ClearLevelMeter()
+        {
+            if (_levelMeterScale <= 0d
+                && _rmsMeterScale <= 0d
+                && _peakHoldMeterScale <= 0d
+                && !_isClipping
+                && _clipHoldFrames == 0
+                && _peakHoldFrames == 0)
+            {
+                return;
+            }
+
+            _levelMeterScale = 0d;
+            _rmsMeterScale = 0d;
+            _peakHoldMeterScale = 0d;
+            _isClipping = false;
+            _clipHoldFrames = 0;
+            _peakHoldFrames = 0;
             OnPropertyChanged(nameof(LevelMeterScale));
             OnPropertyChanged(nameof(RmsMeterScale));
             OnPropertyChanged(nameof(PeakHoldMeterScale));
