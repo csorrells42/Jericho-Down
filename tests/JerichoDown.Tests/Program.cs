@@ -486,6 +486,25 @@ static void NAudioBiQuadRackExposesEveryEqShape()
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
     Assert(xaml.Contains("BiQuad family", StringComparison.Ordinal), "BiQuad controls should show the shared BiQuad family frame label");
+    var biQuadGroup = ExtractSourceBetween(
+        xaml,
+        "Text=\"NAudio BiQuad Filter Rack\"",
+        "Text=\"NAudio Special Effects\"");
+    foreach (var header in new[]
+    {
+        "BiQuad Low-pass",
+        "BiQuad High-pass",
+        "BiQuad Band-pass peak",
+        "BiQuad Band-pass skirt",
+        "BiQuad Notch",
+        "BiQuad All-pass",
+        "BiQuad Peaking EQ",
+        "BiQuad Low shelf",
+        "BiQuad High shelf"
+    })
+    {
+        Assert(biQuadGroup.Contains($"Expander Header=\"{header}\"", StringComparison.Ordinal), $"BiQuad group should collapse {header} controls under the shared rack");
+    }
 }
 
 static void NAudioPitchShiftMovesToneFrequency()
@@ -512,7 +531,20 @@ static void NAudioPitchShiftMovesToneFrequency()
     Assert(processor.Contains("SmbPitchShifter", StringComparison.Ordinal), "NAudio pitch shift should use SmbPitchShifter");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    Assert(xaml.Contains("NAudio Pitch Shift", StringComparison.Ordinal), "NAudio pitch controls should be grouped together");
+    Assert(xaml.Contains("NAudio Special Effects", StringComparison.Ordinal), "NAudio special effects controls should be labeled as one family");
+    var specialEffectsGroup = ExtractSourceBetween(
+        xaml,
+        "Text=\"NAudio Special Effects\"",
+        "Text=\"NAudio DMO Effects\"");
+    foreach (var header in new[]
+    {
+        "NAudio Pitch Shift",
+        "NAudio Convolution",
+        "NAudio EnvelopeGenerator"
+    })
+    {
+        Assert(specialEffectsGroup.Contains($"Expander Header=\"{header}\"", StringComparison.Ordinal), $"{header} controls should collapse under the NAudio Special Effects family");
+    }
 }
 
 static void NAudioConvolutionAddsGeneratedImpulseTail()
@@ -541,7 +573,11 @@ static void NAudioConvolutionAddsGeneratedImpulseTail()
     Assert(processor.Contains(".Normalize(", StringComparison.Ordinal), "NAudio convolution should normalize generated impulses");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    Assert(xaml.Contains("NAudio Convolution", StringComparison.Ordinal), "NAudio convolution controls should be grouped together");
+    var specialEffectsGroup = ExtractSourceBetween(
+        xaml,
+        "Text=\"NAudio Special Effects\"",
+        "Text=\"NAudio DMO Effects\"");
+    Assert(specialEffectsGroup.Contains("Expander Header=\"NAudio Convolution\"", StringComparison.Ordinal), "NAudio convolution controls should be grouped under NAudio Special Effects");
 }
 
 static void NAudioEnvelopeGeneratorShapesAttack()
@@ -568,7 +604,11 @@ static void NAudioEnvelopeGeneratorShapesAttack()
     Assert(processor.Contains("EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope should use EnvelopeGenerator");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    Assert(xaml.Contains("NAudio EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope controls should be grouped together");
+    var specialEffectsGroup = ExtractSourceBetween(
+        xaml,
+        "Text=\"NAudio Special Effects\"",
+        "Text=\"NAudio DMO Effects\"");
+    Assert(specialEffectsGroup.Contains("Expander Header=\"NAudio EnvelopeGenerator\"", StringComparison.Ordinal), "NAudio envelope controls should be grouped under NAudio Special Effects");
 }
 
 static void NAudioDmoEffectChainExposesDirectSoundEffects()
