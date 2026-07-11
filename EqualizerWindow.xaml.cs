@@ -111,6 +111,9 @@ public partial class EqualizerWindow : Window
     private readonly AppSettingsState _appSettings = AppStateStore.LoadSettings();
     private readonly AppStartupRecovery _startupRecovery = AppStateStore.StartupRecovery;
     private readonly ObservableCollection<MicChannelStrip> _micChannels = CreateDefaultMicChannels();
+    private readonly MidiInputMonitor _midiInputMonitor = new();
+    private readonly MidiOutputPort _midiOutputPort = new();
+    private readonly ObservableCollection<MidiMessageSnapshot> _midiMessages = [];
     private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _audioDeviceRefreshTimer = new();
@@ -399,6 +402,7 @@ public partial class EqualizerWindow : Window
     private bool _isRecordingPaused;
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
+    private string? _loadedMidiFilePath;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
@@ -457,6 +461,8 @@ public partial class EqualizerWindow : Window
 
         _spectrumService.SpectrumAvailable += SpectrumAvailable;
         _spectrumService.StreamStatusChanged += SpectrumServiceStreamStatusChanged;
+        _midiInputMonitor.MessageReceived += MidiInputMonitorMessageReceived;
+        _midiInputMonitor.StatusChanged += MidiInputMonitorStatusChanged;
         _cameraPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
         _cameraPreviewService.StatusChanged += CameraPreviewStatusChanged;
         _directShowPreviewService.FrameAvailable += CameraPreviewFrameAvailable;
@@ -511,6 +517,7 @@ public partial class EqualizerWindow : Window
             "Mic / DSP",
             "Mic Compare",
             "Mixing",
+            "MIDI",
             "Karaoke"
         ];
 
@@ -704,6 +711,8 @@ public partial class EqualizerWindow : Window
         UpdateRecordingTransportControls();
         UpdateStandaloneAudioRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
+        MidiMessageListBox.ItemsSource = _midiMessages;
+        RefreshMidiDevicesFromSystem(updateStatus: false);
 
         RestorePersistedPresetOrDefault();
         StartAudioDeviceNotificationWatcher();
@@ -1659,6 +1668,358 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private void RefreshMidiDevicesFromSystem(bool updateStatus = true)
+    {
+        var selectedInputNumber = (MidiInputDeviceComboBox.SelectedItem as MidiInputDevice)?.DeviceNumber
+            ?? _midiInputMonitor.DeviceNumber;
+        var selectedOutputNumber = (MidiOutputDeviceComboBox.SelectedItem as MidiOutputDevice)?.DeviceNumber
+            ?? _midiOutputPort.DeviceNumber;
+
+        var inputDevices = MidiDeviceCatalog.GetInputDevices();
+        if (_midiInputMonitor.IsRunning
+            && _midiInputMonitor.DeviceNumber is int runningInput
+            && inputDevices.All(device => device.DeviceNumber != runningInput))
+        {
+            _midiInputMonitor.Stop();
+        }
+
+        MidiInputDeviceComboBox.ItemsSource = inputDevices;
+        MidiInputDeviceComboBox.SelectedItem = inputDevices.FirstOrDefault(device => device.DeviceNumber == selectedInputNumber)
+            ?? inputDevices.FirstOrDefault();
+
+        var outputDevices = MidiDeviceCatalog.GetOutputDevices();
+        if (_midiOutputPort.IsOpen
+            && _midiOutputPort.DeviceNumber is int openOutput
+            && outputDevices.All(device => device.DeviceNumber != openOutput))
+        {
+            _midiOutputPort.Close();
+        }
+
+        MidiOutputDeviceComboBox.ItemsSource = outputDevices;
+        MidiOutputDeviceComboBox.SelectedItem = outputDevices.FirstOrDefault(device => device.DeviceNumber == selectedOutputNumber)
+            ?? outputDevices.FirstOrDefault();
+
+        UpdateMidiControlState();
+        if (updateStatus)
+        {
+            SetMidiStatus($"MIDI devices refreshed: {inputDevices.Count} inputs, {outputDevices.Count} outputs.");
+        }
+    }
+
+    private void MidiInputMonitorMessageReceived(object? sender, MidiMessageSnapshot message)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => AddMidiMessage(message)), DispatcherPriority.Background);
+    }
+
+    private void MidiInputMonitorStatusChanged(object? sender, string status)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => SetMidiStatus(status)), DispatcherPriority.Background);
+    }
+
+    private void AddMidiMessage(MidiMessageSnapshot message)
+    {
+        _midiMessages.Insert(0, message);
+        while (_midiMessages.Count > 200)
+        {
+            _midiMessages.RemoveAt(_midiMessages.Count - 1);
+        }
+
+        if (MidiMessageListBox is not null)
+        {
+            MidiMessageListBox.SelectedIndex = _midiMessages.Count > 0 ? 0 : -1;
+        }
+    }
+
+    private void SetMidiStatus(string status)
+    {
+        if (MidiStatusText is not null)
+        {
+            MidiStatusText.Text = status;
+        }
+
+        if (StatusText is not null)
+        {
+            StatusText.Text = status;
+        }
+    }
+
+    private void UpdateMidiControlState()
+    {
+        if (MidiInputStartButton is not null)
+        {
+            MidiInputStartButton.IsEnabled = MidiInputDeviceComboBox.SelectedItem is MidiInputDevice && !_midiInputMonitor.IsRunning;
+        }
+
+        if (MidiInputStopButton is not null)
+        {
+            MidiInputStopButton.IsEnabled = _midiInputMonitor.IsRunning;
+        }
+
+        if (MidiOutputOpenButton is not null)
+        {
+            MidiOutputOpenButton.IsEnabled = MidiOutputDeviceComboBox.SelectedItem is MidiOutputDevice && !_midiOutputPort.IsOpen;
+        }
+
+        if (MidiOutputCloseButton is not null)
+        {
+            MidiOutputCloseButton.IsEnabled = _midiOutputPort.IsOpen;
+        }
+
+        if (MidiPanicButton is not null)
+        {
+            MidiPanicButton.IsEnabled = _midiOutputPort.IsOpen;
+        }
+
+        if (MidiFileExportButton is not null)
+        {
+            MidiFileExportButton.IsEnabled = !string.IsNullOrWhiteSpace(_loadedMidiFilePath);
+        }
+    }
+
+    private void StartMidiInputClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiInputDeviceComboBox.SelectedItem is not MidiInputDevice device)
+        {
+            SetMidiStatus("Select a MIDI input first.");
+            return;
+        }
+
+        try
+        {
+            _midiInputMonitor.Start(device);
+            SetMidiStatus($"MIDI input listening: {device.ProductName}.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+        finally
+        {
+            UpdateMidiControlState();
+        }
+    }
+
+    private void StopMidiInputClicked(object sender, RoutedEventArgs e)
+    {
+        _midiInputMonitor.Stop();
+        SetMidiStatus("MIDI input stopped.");
+        UpdateMidiControlState();
+    }
+
+    private void ClearMidiMessagesClicked(object sender, RoutedEventArgs e)
+    {
+        _midiMessages.Clear();
+        SetMidiStatus("MIDI message monitor cleared.");
+    }
+
+    private void OpenMidiOutputClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiOutputDeviceComboBox.SelectedItem is not MidiOutputDevice device)
+        {
+            SetMidiStatus("Select a MIDI output first.");
+            return;
+        }
+
+        try
+        {
+            _midiOutputPort.Open(device);
+            SetMidiStatus($"MIDI output open: {device.ProductName}.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+        finally
+        {
+            UpdateMidiControlState();
+        }
+    }
+
+    private void CloseMidiOutputClicked(object sender, RoutedEventArgs e)
+    {
+        _midiOutputPort.Close();
+        SetMidiStatus("MIDI output closed.");
+        UpdateMidiControlState();
+    }
+
+    private void MidiPanicClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _midiOutputPort.Reset();
+            SetMidiStatus("MIDI panic sent.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+    }
+
+    private void SendMidiNoteOnClicked(object sender, RoutedEventArgs e)
+    {
+        SendMidiShortMessage(() => _midiOutputPort.SendNoteOn(MidiChannel(), MidiNote(), MidiVelocity()), "MIDI note on sent.");
+    }
+
+    private void SendMidiNoteOffClicked(object sender, RoutedEventArgs e)
+    {
+        SendMidiShortMessage(() => _midiOutputPort.SendNoteOff(MidiChannel(), MidiNote(), MidiVelocity()), "MIDI note off sent.");
+    }
+
+    private void SendMidiControlChangeClicked(object sender, RoutedEventArgs e)
+    {
+        SendMidiShortMessage(
+            () => _midiOutputPort.SendControlChange(MidiChannel(), SliderInt(MidiControllerSlider), SliderInt(MidiControllerValueSlider)),
+            "MIDI control change sent.");
+    }
+
+    private void SendMidiPatchChangeClicked(object sender, RoutedEventArgs e)
+    {
+        SendMidiShortMessage(() => _midiOutputPort.SendPatchChange(MidiChannel(), SliderInt(MidiPatchSlider)), "MIDI patch change sent.");
+    }
+
+    private void SendMidiPitchWheelClicked(object sender, RoutedEventArgs e)
+    {
+        SendMidiShortMessage(() => _midiOutputPort.SendPitchWheel(MidiChannel(), SliderInt(MidiPitchWheelSlider)), "MIDI pitch wheel sent.");
+    }
+
+    private void SendMidiRawClicked(object sender, RoutedEventArgs e)
+    {
+        if (!MidiHexParser.TryParseShortMessage(MidiRawMessageTextBox.Text, out var rawMessage))
+        {
+            SetMidiStatus("Raw MIDI message must be 1 to 3 hex bytes.");
+            return;
+        }
+
+        SendMidiShortMessage(
+            () =>
+            {
+                _midiOutputPort.SendRawMessage(rawMessage);
+                return rawMessage;
+            },
+            "Raw MIDI message sent.");
+    }
+
+    private void SendMidiSysexClicked(object sender, RoutedEventArgs e)
+    {
+        if (!MidiHexParser.TryParseBytes(MidiSysexTextBox.Text, out var bytes)
+            || bytes.Length < 2
+            || bytes[0] != 0xF0
+            || bytes[^1] != 0xF7)
+        {
+            SetMidiStatus("Sysex must be hex bytes starting with F0 and ending with F7.");
+            return;
+        }
+
+        try
+        {
+            _midiOutputPort.SendSysex(bytes);
+            AddMidiMessage(MidiMessageSnapshot.FromSysex(bytes, Environment.TickCount, "Out"));
+            SetMidiStatus($"MIDI sysex sent: {bytes.Length} bytes.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+    }
+
+    private void OpenMidiFileClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "MIDI files|*.mid;*.midi|All files|*.*",
+            Title = "Open MIDI File"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var summary = MidiFileService.ReadSummary(dialog.FileName);
+            _loadedMidiFilePath = dialog.FileName;
+            MidiFileStatusText.Text = summary.DisplayText;
+            SetMidiStatus($"MIDI file loaded: {summary.FileName}.");
+        }
+        catch (Exception ex)
+        {
+            _loadedMidiFilePath = null;
+            MidiFileStatusText.Text = $"MIDI file failed: {ex.Message}";
+            SetMidiStatus($"MIDI file failed: {ex.Message}");
+        }
+        finally
+        {
+            UpdateMidiControlState();
+        }
+    }
+
+    private void ExportMidiFileCopyClicked(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_loadedMidiFilePath))
+        {
+            SetMidiStatus("Open a MIDI file before exporting.");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "MIDI files|*.mid|All files|*.*",
+            FileName = $"{System.IO.Path.GetFileNameWithoutExtension(_loadedMidiFilePath)}_copy.mid",
+            Title = "Export MIDI File Copy"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            MidiFileService.ExportCopy(_loadedMidiFilePath, dialog.FileName);
+            SetMidiStatus($"MIDI file exported: {System.IO.Path.GetFileName(dialog.FileName)}.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus($"MIDI export failed: {ex.Message}");
+        }
+    }
+
+    private void SendMidiShortMessage(Func<int> send, string status)
+    {
+        try
+        {
+            var rawMessage = send();
+            AddMidiMessage(MidiMessageSnapshot.FromRaw(rawMessage, Environment.TickCount, "Out"));
+            SetMidiStatus(status);
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+    }
+
+    private int MidiChannel() => SliderInt(MidiChannelSlider);
+
+    private int MidiNote() => SliderInt(MidiNoteSlider);
+
+    private int MidiVelocity() => SliderInt(MidiVelocitySlider);
+
+    private static int SliderInt(Slider slider)
+    {
+        return (int)Math.Round(slider.Value, MidpointRounding.AwayFromZero);
+    }
+
     private void PodcastSettingsMenuClicked(object sender, RoutedEventArgs e)
     {
         SelectMainTabFromMenu("Podcast", "Podcast settings selected.");
@@ -1698,6 +2059,16 @@ public partial class EqualizerWindow : Window
     private void RefreshVideoDevicesMenuClicked(object sender, RoutedEventArgs e)
     {
         RefreshVideoDevicesFromSystem();
+    }
+
+    private void RefreshMidiDevicesMenuClicked(object sender, RoutedEventArgs e)
+    {
+        RefreshMidiDevicesFromSystem();
+    }
+
+    private void RefreshMidiDevicesClicked(object sender, RoutedEventArgs e)
+    {
+        RefreshMidiDevicesFromSystem();
     }
 
     private void AsioSettingsMenuClicked(object sender, RoutedEventArgs e)
@@ -1796,6 +2167,10 @@ public partial class EqualizerWindow : Window
         DisposeAudioDeviceNotificationWatcher();
         _spectrumService.SpectrumAvailable -= SpectrumAvailable;
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
+        _midiInputMonitor.MessageReceived -= MidiInputMonitorMessageReceived;
+        _midiInputMonitor.StatusChanged -= MidiInputMonitorStatusChanged;
+        _midiInputMonitor.Dispose();
+        _midiOutputPort.Dispose();
         DisposeAudioRecordingFolderWatcher();
         DisposeKaraokeRecordingFolderWatcher();
         DisposeSessionFolderWatcher();

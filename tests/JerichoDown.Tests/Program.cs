@@ -37,6 +37,8 @@ var tests = new (string Name, Action Test)[]
     ("NAudio envelope generator shapes attack", NAudioEnvelopeGeneratorShapesAttack),
     ("NAudio DMO effect chain exposes DirectSound effects", NAudioDmoEffectChainExposesDirectSoundEffects),
     ("NAudio DMO effect chain processes safely", NAudioDmoEffectChainProcessesSafely),
+    ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
+    ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -621,6 +623,63 @@ static void NAudioDmoEffectChainProcessesSafely()
 
     Assert(output.Length == source.Length, "NAudio DMO processing should preserve sample count");
     Assert(output.All(float.IsFinite), "NAudio DMO processing should keep output finite even when optional Windows DMOs are unavailable");
+}
+
+static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
+{
+    var catalog = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiDeviceCatalog.cs")));
+    Assert(catalog.Contains("MidiIn.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio input devices");
+    Assert(catalog.Contains("MidiOut.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio output devices");
+
+    var monitor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiInputMonitor.cs")));
+    Assert(monitor.Contains("MessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive short messages");
+    Assert(monitor.Contains("ErrorReceived", StringComparison.Ordinal), "MIDI input monitor should surface input errors");
+    Assert(monitor.Contains("SysexMessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive sysex messages");
+    Assert(monitor.Contains("CreateSysexBuffers", StringComparison.Ordinal), "MIDI input monitor should allocate sysex buffers");
+
+    var output = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiOutputPort.cs")));
+    foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBuffer", "Reset" })
+    {
+        Assert(output.Contains(api, StringComparison.Ordinal), $"MIDI output should expose NAudio {api}");
+    }
+
+    var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiFileService.cs")));
+    Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
+    Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
+    Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
+    Assert(xaml.Contains("MidiOutputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose output device selection");
+    Assert(xaml.Contains("SendMidiSysexClicked", StringComparison.Ordinal), "MIDI tab should expose sysex output");
+    Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
+
+    Assert(MidiDeviceCatalog.GetInputDevices() is not null, "MIDI input enumeration should be safe without attached hardware");
+    Assert(MidiDeviceCatalog.GetOutputDevices() is not null, "MIDI output enumeration should be safe without attached hardware");
+}
+
+static void NAudioMidiMessageUtilitiesClampAndParseSafely()
+{
+    var rawNote = MidiOutputPort.CreateNoteOnRawMessage(0, 200, -10);
+    var note = MidiMessageSnapshot.FromRaw(rawNote, 123, "Out");
+    Assert(note.Channel == 1, "MIDI channels should clamp to channel 1 minimum");
+    Assert(note.Data1 == 127, "MIDI note values should clamp to 7-bit maximum");
+    Assert(note.Data2 == 0, "MIDI velocity values should clamp to 7-bit minimum");
+
+    var rawPitch = MidiOutputPort.CreatePitchWheelRawMessage(20, 20000);
+    var pitch = MidiMessageSnapshot.FromRaw(rawPitch, 456, "Out");
+    Assert(pitch.Channel == 16, "MIDI channels should clamp to channel 16 maximum");
+    Assert(pitch.Data1 == 127 && pitch.Data2 == 127, "MIDI pitch wheel should clamp to 14-bit maximum");
+
+    Assert(MidiHexParser.TryParseShortMessage("90 3C 7F", out var parsed), "MIDI short hex parser should accept spaced bytes");
+    var parsedSnapshot = MidiMessageSnapshot.FromRaw(parsed, 789);
+    Assert(parsedSnapshot.MessageType == "Note On", "parsed MIDI status should identify note on");
+    Assert(parsedSnapshot.Channel == 1 && parsedSnapshot.Data1 == 60 && parsedSnapshot.Data2 == 127, "parsed MIDI data bytes should be ordered as status/data1/data2");
+
+    Assert(MidiHexParser.TryParseBytes("F0 7E 00 F7", out var sysex), "MIDI hex parser should accept sysex byte streams");
+    var sysexSnapshot = MidiMessageSnapshot.FromSysex(sysex, 999);
+    Assert(sysexSnapshot.SysexBytes?.Length == 4, "MIDI sysex snapshots should preserve byte buffers");
+    Assert(!MidiHexParser.TryParseShortMessage("90 3C 7F 00", out _), "MIDI short parser should reject messages over three bytes");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()
