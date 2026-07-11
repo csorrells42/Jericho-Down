@@ -259,6 +259,7 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingMicChannelUi;
     private bool _isUpdatingMixerUi;
     private int _audioStreamOperationVersion;
+    private int _selectedDeviceFormatRefreshVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
     private double _masterMixVolumePercent = 100d;
     private bool _masterMixNormalizeEnabled = true;
@@ -4931,6 +4932,11 @@ public partial class EqualizerWindow : Window
 
     private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (IsMixerControlInteraction(e.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+
         if ((sender as FrameworkElement)?.DataContext is not MicChannelStrip channel)
         {
             return;
@@ -4938,6 +4944,31 @@ public partial class EqualizerWindow : Window
 
         await SetActiveMicChannelAsync(channel, restartAudio: false);
         PersistAppState();
+    }
+
+    private static bool IsMixerControlInteraction(DependencyObject? source)
+    {
+        for (var current = source; current is not null; current = GetInputParent(current))
+        {
+            if (current is ButtonBase or TextBoxBase or RangeBase or Selector)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static DependencyObject? GetInputParent(DependencyObject current)
+    {
+        try
+        {
+            return VisualTreeHelper.GetParent(current) ?? LogicalTreeHelper.GetParent(current);
+        }
+        catch (InvalidOperationException)
+        {
+            return LogicalTreeHelper.GetParent(current);
+        }
     }
 
     private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)
@@ -4970,6 +5001,8 @@ public partial class EqualizerWindow : Window
 
     private void ApplyActiveMicChannelToUi()
     {
+        var previousSelectedDevice = _selectedDevice;
+        var previousSelectedDeviceFormat = _selectedDeviceFormat;
         _isUpdatingMicChannelUi = true;
         try
         {
@@ -4980,7 +5013,11 @@ public partial class EqualizerWindow : Window
 
             _selectedDevice = _activeMicChannel.SelectedDevice;
             _selectedInputChannelMode = _activeMicChannel.InputChannelMode;
-            _selectedDeviceFormat = GetSelectedDeviceFormat();
+            _selectedDeviceFormat = previousSelectedDevice is not null
+                && _selectedDevice is not null
+                && AudioInputDevicesMatch(previousSelectedDevice, _selectedDevice)
+                    ? previousSelectedDeviceFormat
+                    : null;
             MicrophoneComboBox.SelectedItem = _selectedDevice;
             RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
             RefreshMicCompareSelectors();
@@ -4990,6 +5027,43 @@ public partial class EqualizerWindow : Window
             _isUpdatingMicChannelUi = false;
         }
 
+        QueueSelectedDeviceFormatRefresh(_selectedDevice);
+        UpdateAudioFormatRouteText();
+    }
+
+    private void QueueSelectedDeviceFormatRefresh(AudioInputDevice? selectedDevice)
+    {
+        if (selectedDevice is null || _selectedDeviceFormat is not null || _isClosing)
+        {
+            return;
+        }
+
+        var refreshVersion = ++_selectedDeviceFormatRefreshVersion;
+        _ = RefreshSelectedDeviceFormatAsync(selectedDevice, refreshVersion);
+    }
+
+    private async Task RefreshSelectedDeviceFormatAsync(AudioInputDevice selectedDevice, int refreshVersion)
+    {
+        AudioDeviceFormat? selectedDeviceFormat;
+        try
+        {
+            selectedDeviceFormat = await GetDeviceFormatAsync(selectedDevice);
+        }
+        catch
+        {
+            selectedDeviceFormat = null;
+        }
+
+        if (_isClosing
+            || refreshVersion != _selectedDeviceFormatRefreshVersion
+            || _selectedDevice is null
+            || !AudioInputDevicesMatch(_selectedDevice, selectedDevice))
+        {
+            return;
+        }
+
+        _selectedDeviceFormat = selectedDeviceFormat;
+        RefreshInputChannelOptionsWithoutSelectionEvents(selectedDeviceFormat);
         UpdateAudioFormatRouteText();
     }
 
@@ -5539,7 +5613,7 @@ public partial class EqualizerWindow : Window
 
     private string BuildOutputFormatStatus()
     {
-        var inputFormat = _selectedDeviceFormat ?? GetSelectedDeviceFormat();
+        var inputFormat = _selectedDeviceFormat;
         var outputFormat = _selectedOutputDevice is null
             ? null
             : MicrophoneSpectrumService.TryGetOutputDeviceFormat(_selectedOutputDevice);
@@ -5599,7 +5673,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var inputFormat = _selectedDeviceFormat ?? GetSelectedDeviceFormat();
+        var inputFormat = _selectedDeviceFormat;
         var receiving = _spectrumService.IsRunning
             ? _spectrumService.ActiveInputFormatStatus
             : inputFormat?.ToString() ?? "not open";

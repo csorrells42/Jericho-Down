@@ -86,6 +86,8 @@ var tests = new (string Name, Action Test)[]
     ("Spectrum lines carry NAudio metered peaks", SpectrumLinesCarryNaudioMeteredPeaks),
     ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
+    ("Mixer strip controls do not select channels", MixerStripControlsDoNotSelectChannels),
+    ("Active mic selection avoids synchronous format probe", ActiveMicSelectionAvoidsSynchronousFormatProbe),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
@@ -2441,6 +2443,36 @@ static void LiveMixAudibilityGatesMuteAndSolo()
     mixer.Read(output, 0, output.Length);
 
     Assert(Math.Abs(output[0] - 0.7f) < 0.0001f, "solo should leave only soloed mics in the live program bus");
+}
+
+static void MixerStripControlsDoNotSelectChannels()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var handler = ExtractSourceBetween(
+        windowCode,
+        "    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)",
+        "    private static bool IsMixerControlInteraction(DependencyObject? source)");
+    var helper = ExtractSourceBetween(
+        windowCode,
+        "    private static bool IsMixerControlInteraction(DependencyObject? source)",
+        "    private async Task SetActiveMicChannelAsync(MicChannelStrip channel, bool restartAudio)");
+
+    Assert(handler.Contains("IsMixerControlInteraction(e.OriginalSource as DependencyObject)", StringComparison.Ordinal), "mixer strip preview clicks should ignore interactive child controls");
+    Assert(helper.Contains("ButtonBase", StringComparison.Ordinal), "mute checkboxes should not trigger mixer strip channel selection");
+    Assert(helper.Contains("RangeBase", StringComparison.Ordinal), "mixer faders should not trigger mixer strip channel selection");
+    Assert(helper.Contains("TextBoxBase", StringComparison.Ordinal), "mixer name text boxes should not trigger mixer strip channel selection");
+}
+
+static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var method = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelToUi()",
+        "    private void RefreshInputChannelOptionsForActiveDevice(AudioDeviceFormat? selectedDeviceFormat)");
+
+    Assert(method.Contains("QueueSelectedDeviceFormatRefresh(_selectedDevice);", StringComparison.Ordinal), "active mic selection should refresh device format asynchronously");
+    Assert(!method.Contains("GetSelectedDeviceFormat();", StringComparison.Ordinal), "active mic selection should not synchronously probe the selected device format on the UI thread");
 }
 
 static void MixerChannelControlsDebounceStatePersistence()
