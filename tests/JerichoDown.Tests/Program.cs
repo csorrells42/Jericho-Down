@@ -781,6 +781,10 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
+    Assert(xaml.Contains("SystemColors.MenuHighlightBrushKey", StringComparison.Ordinal), "main menu should override bright system highlight colors");
+    Assert(xaml.Contains("PART_Popup", StringComparison.Ordinal), "main menu should use a custom readable dark popup template");
+    Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
+    Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
 }
