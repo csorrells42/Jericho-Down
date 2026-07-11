@@ -405,6 +405,8 @@ public partial class EqualizerWindow : Window
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
     private string? _loadedMidiFilePath;
+    private Window? _micCompareWindow;
+    private object? _dockedMicCompareContent;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
@@ -517,7 +519,6 @@ public partial class EqualizerWindow : Window
         [
             "Podcast",
             "Mic / DSP",
-            "Mic Compare",
             "Mixing",
             "MIDI",
             "Karaoke"
@@ -2074,6 +2075,95 @@ public partial class EqualizerWindow : Window
         RefreshMidiDevicesFromSystem();
     }
 
+    private void MicCompareMenuClicked(object sender, RoutedEventArgs e)
+    {
+        ShowMicCompareWindow();
+    }
+
+    private void ShowMicCompareWindow()
+    {
+        if (_micCompareWindow is not null)
+        {
+            _micCompareWindow.Activate();
+            return;
+        }
+
+        _dockedMicCompareContent ??= MicCompareTab.Content;
+        MicCompareTab.Content = null;
+
+        var dialog = new Window
+        {
+            Title = "Mic Compare",
+            Owner = this,
+            Width = Math.Min(1320d, Math.Max(980d, ActualWidth * 0.76d)),
+            Height = Math.Min(780d, Math.Max(560d, ActualHeight * 0.72d)),
+            MinWidth = 900d,
+            MinHeight = 520d,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromRgb(5, 7, 10)),
+            Content = MicCompareContentRoot,
+            ShowInTaskbar = false
+        };
+
+        dialog.Closed += MicCompareWindowClosed;
+        _micCompareWindow = dialog;
+        RefreshMicCompareSelectors();
+        RefreshActiveSpectrumWaterfallHosts();
+        UpdateMicCompareUiState();
+        dialog.Show();
+        if (_latestFrame is not null)
+        {
+            Dispatcher.BeginInvoke(new Action(() => RenderMicCompareSpectrum(_latestFrame)), DispatcherPriority.Loaded);
+        }
+
+        StatusText.Text = "Mic Compare opened.";
+    }
+
+    private void MicCompareWindowClosed(object? sender, EventArgs e)
+    {
+        if (sender is Window dialog)
+        {
+            dialog.Closed -= MicCompareWindowClosed;
+            if (ReferenceEquals(dialog.Content, MicCompareContentRoot))
+            {
+                dialog.Content = null;
+            }
+        }
+
+        _micCompareWindow = null;
+        RestoreMicCompareContentToHiddenTab();
+        RefreshActiveSpectrumWaterfallHosts();
+        StatusText.Text = "Mic Compare closed.";
+    }
+
+    private void CloseMicCompareWindow()
+    {
+        if (_micCompareWindow is null)
+        {
+            RestoreMicCompareContentToHiddenTab();
+            return;
+        }
+
+        var dialog = _micCompareWindow;
+        dialog.Closed -= MicCompareWindowClosed;
+        if (ReferenceEquals(dialog.Content, MicCompareContentRoot))
+        {
+            dialog.Content = null;
+        }
+
+        _micCompareWindow = null;
+        RestoreMicCompareContentToHiddenTab();
+        dialog.Close();
+    }
+
+    private void RestoreMicCompareContentToHiddenTab()
+    {
+        if (MicCompareTab.Content is null)
+        {
+            MicCompareTab.Content = _dockedMicCompareContent ?? MicCompareContentRoot;
+        }
+    }
+
     private void AsioSettingsMenuClicked(object sender, RoutedEventArgs e)
     {
         var endpointId = ResolvePreferredAsioSettingsEndpointId();
@@ -2156,6 +2246,7 @@ public partial class EqualizerWindow : Window
     {
         SaveAppStateNow();
         _isClosing = true;
+        CloseMicCompareWindow();
         _audioStreamOperationVersion++;
         System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
         CompositionTarget.Rendering -= CompositionTargetRendering;
@@ -3261,7 +3352,7 @@ public partial class EqualizerWindow : Window
                 _selectedMicSpectrumGraphHost?.AcceptFrame(CreateSelectedMicFrame(_latestFrame));
             }
         }
-        else if (IsMicCompareTabSelected())
+        else if (IsMicCompareViewActive())
         {
             if (_latestFrame is not null)
             {
@@ -3323,6 +3414,16 @@ public partial class EqualizerWindow : Window
     private bool IsMicCompareTabSelected()
     {
         return IsMainTabSelected("Mic Compare");
+    }
+
+    private bool IsMicCompareViewActive()
+    {
+        return IsMicCompareTabSelected() || IsMicCompareWindowOpen();
+    }
+
+    private bool IsMicCompareWindowOpen()
+    {
+        return _micCompareWindow is { IsVisible: true };
     }
 
     private bool IsMixingTabSelected()
@@ -5036,7 +5137,7 @@ public partial class EqualizerWindow : Window
         _isKaraokeSpectrumWaterfallActive = karaokeActive;
         _isMixingMicSpectrumGraphActive = mixingActive;
         _isMixingOutputWaveform3DActive = mixingActive;
-        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicCompareTabSelected();
+        _spectrumService.StereoInputAnalysisEnabled = micDspSpectrumActive || IsMicCompareViewActive();
 
         if (micDspActive)
         {
@@ -6572,8 +6673,8 @@ public partial class EqualizerWindow : Window
             && SpectrumCanvas.IsVisible
             && SpectrumCanvas.ActualWidth > 1d
             && SpectrumCanvas.ActualHeight > 1d;
-        var isMicCompareTabSelected = IsMicCompareTabSelected();
-        var shouldRenderMicCompare = isMicCompareTabSelected
+        var isMicCompareViewActive = IsMicCompareViewActive();
+        var shouldRenderMicCompare = isMicCompareViewActive
             && MicCompareCanvas.IsVisible
             && MicCompareCanvas.ActualWidth > 1d
             && MicCompareCanvas.ActualHeight > 1d;
@@ -6587,7 +6688,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (!isMicDspTabSelected && !isMicCompareTabSelected)
+        if (!isMicDspTabSelected && !isMicCompareViewActive)
         {
             if (now - _lastAudioVisualRenderUtc < TimeSpan.FromMilliseconds(16))
             {

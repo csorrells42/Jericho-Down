@@ -901,6 +901,8 @@
           <MenuItem Header="Refresh Video Devices" Click="RefreshVideoDevicesMenuClicked" />
           <MenuItem Header="Refresh MIDI Devices" Click="RefreshMidiDevicesMenuClicked" />
           <Separator />
+          <MenuItem Header="Mic Compare" Click="MicCompareMenuClicked" />
+          <Separator />
           <MenuItem Header="Settings">
             <MenuItem Header="Podcast Settings" Click="PodcastSettingsMenuClicked" />
             <MenuItem Header="Karaoke Settings" Click="KaraokeSettingsMenuClicked" />
@@ -2624,8 +2626,8 @@
           </Border>
         </Grid>
       </TabItem>
-      <TabItem Header="Mic Compare">
-        <Grid Background="#05070A">
+      <TabItem x:Name="MicCompareTab" Header="Mic Compare">
+        <Grid x:Name="MicCompareContentRoot" Background="#05070A">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />

@@ -768,6 +768,7 @@ static void EqScreenBindsEveryVoiceProcessorSetting()
 static void MainMenuExposesGlobalDeviceAndHelpActions()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(xaml.Contains("Header=\"_File\"", StringComparison.Ordinal), "main window should expose a File menu");
     Assert(xaml.Contains("Header=\"Refresh Audio Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Audio Devices");
     Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
@@ -779,6 +780,8 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"Karaoke Settings\"", StringComparison.Ordinal), "Settings submenu should expose Karaoke Settings");
     Assert(xaml.Contains("Click=\"KaraokeSettingsMenuClicked\"", StringComparison.Ordinal), "Karaoke Settings should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
+    Assert(xaml.Contains("Header=\"Mic Compare\"", StringComparison.Ordinal), "File menu should expose Mic Compare");
+    Assert(xaml.Contains("Click=\"MicCompareMenuClicked\"", StringComparison.Ordinal), "Mic Compare should be wired to a popup handler");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
     Assert(xaml.Contains("SystemColors.MenuHighlightBrushKey", StringComparison.Ordinal), "main menu should override bright system highlight colors");
@@ -786,7 +789,17 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
+    Assert(xaml.Contains("x:Name=\"MicCompareTab\"", StringComparison.Ordinal), "Mic Compare content should remain available to the popup host");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+
+    var orderMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void OrderMainTabs()",
+        "    public ObservableCollection<EqualizerBand> Bands");
+    Assert(!orderMethod.Contains("\"Mic Compare\"", StringComparison.Ordinal), "Mic Compare should not be added to the visible main tab order");
+    Assert(windowCode.Contains("private void ShowMicCompareWindow()", StringComparison.Ordinal), "Mic Compare should open in a popup window");
+    Assert(windowCode.Contains("Content = MicCompareContentRoot", StringComparison.Ordinal), "Mic Compare popup should reuse the existing tab content");
+    Assert(windowCode.Contains("IsMicCompareViewActive()", StringComparison.Ordinal), "Mic Compare rendering should stay active while the popup is open");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()
