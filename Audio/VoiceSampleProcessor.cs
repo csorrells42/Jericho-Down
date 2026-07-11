@@ -17,6 +17,7 @@ public sealed class VoiceSampleProcessor
     private readonly NAudioPitchShiftProcessor _naudioPitchShiftProcessor;
     private readonly NAudioImpulseConvolutionProcessor _naudioImpulseConvolutionProcessor;
     private readonly NAudioEnvelopeGeneratorProcessor _naudioEnvelopeGeneratorProcessor;
+    private readonly NAudioDmoEffectChain _naudioDmoEffectChain;
     private readonly double _sampleRate;
     private double _previousDcBlockerInput;
     private double _previousDcBlockerOutput;
@@ -311,6 +312,7 @@ public sealed class VoiceSampleProcessor
         _naudioPitchShiftProcessor = new NAudioPitchShiftProcessor(_sampleRate);
         _naudioImpulseConvolutionProcessor = new NAudioImpulseConvolutionProcessor(_sampleRate);
         _naudioEnvelopeGeneratorProcessor = new NAudioEnvelopeGeneratorProcessor(_sampleRate);
+        _naudioDmoEffectChain = new NAudioDmoEffectChain(_sampleRate);
         InitializeEqualizerFrequencyCache();
     }
 
@@ -369,6 +371,7 @@ public sealed class VoiceSampleProcessor
 
         _naudioPitchShiftProcessor.Transform(processed[..sampleCount]);
         _naudioImpulseConvolutionProcessor.Transform(processed[..sampleCount]);
+        _naudioDmoEffectChain.Transform(processed[..sampleCount]);
 
         var telemetry = Telemetry;
         telemetry.InputTrimDb = Math.Abs(_settings.InputTrimDb);
@@ -547,6 +550,7 @@ public sealed class VoiceSampleProcessor
         _naudioPitchShiftProcessor.UpdateFromSettings(_settings);
         _naudioImpulseConvolutionProcessor.UpdateFromSettings(_settings);
         _naudioEnvelopeGeneratorProcessor.UpdateFromSettings(_settings);
+        _naudioDmoEffectChain.UpdateFromSettings(_settings);
         UpdateEqualizerCoefficients(sampleCount);
     }
 

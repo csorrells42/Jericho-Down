@@ -35,6 +35,8 @@ var tests = new (string Name, Action Test)[]
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
     ("NAudio envelope generator shapes attack", NAudioEnvelopeGeneratorShapesAttack),
+    ("NAudio DMO effect chain exposes DirectSound effects", NAudioDmoEffectChainExposesDirectSoundEffects),
+    ("NAudio DMO effect chain processes safely", NAudioDmoEffectChainProcessesSafely),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -566,6 +568,60 @@ static void NAudioEnvelopeGeneratorShapesAttack()
     Assert(xaml.Contains("NAudio EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope controls should be grouped together");
 }
 
+static void NAudioDmoEffectChainExposesDirectSoundEffects()
+{
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs")));
+    foreach (var effectType in new[]
+    {
+        "DmoChorus",
+        "DmoFlanger",
+        "DmoEcho",
+        "DmoDistortion",
+        "DmoCompressor",
+        "DmoParamEq",
+        "DmoGargle",
+        "DmoI3DL2Reverb",
+        "DmoWavesReverb"
+    })
+    {
+        Assert(processor.Contains(effectType, StringComparison.Ordinal), $"NAudio DMO chain should expose {effectType}");
+    }
+
+    Assert(processor.Contains("MediaObjectInPlace.Process", StringComparison.Ordinal), "NAudio DMO chain should process blocks through MediaObjectInPlace");
+    Assert(processor.Contains("SupportsInputWaveFormat", StringComparison.Ordinal), "NAudio DMO chain should check DMO format compatibility");
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("NAudio DMO Effects", StringComparison.Ordinal), "NAudio DMO controls should be labeled as one family");
+    Assert(xaml.Contains("DMO I3DL2 Reverb", StringComparison.Ordinal), "NAudio DMO controls should include I3DL2 reverb");
+    Assert(xaml.Contains("DMO Waves Reverb", StringComparison.Ordinal), "NAudio DMO controls should include Waves reverb");
+}
+
+static void NAudioDmoEffectChainProcessesSafely()
+{
+    var source = GenerateSine(48_000, 440, 0.22, 0.12);
+    var output = ProcessNAudioDmoTestTone(source, settings =>
+    {
+        settings.NAudioDmoChorusEnabled = true;
+        settings.NAudioDmoFlangerEnabled = true;
+        settings.NAudioDmoEchoEnabled = true;
+        settings.NAudioDmoDistortionEnabled = true;
+        settings.NAudioDmoCompressorEnabled = true;
+        settings.NAudioDmoParamEqEnabled = true;
+        settings.NAudioDmoGargleEnabled = true;
+        settings.NAudioDmoI3DL2ReverbEnabled = true;
+        settings.NAudioDmoWavesReverbEnabled = true;
+        settings.NAudioDmoEchoWetDryMix = 10;
+        settings.NAudioDmoEchoFeedback = 5;
+        settings.NAudioDmoDistortionEdge = 5;
+        settings.NAudioDmoCompressorRatio = 2;
+        settings.NAudioDmoParamEqGainDb = 3;
+        settings.NAudioDmoWavesReverbMixDb = -18;
+    });
+
+    Assert(output.Length == source.Length, "NAudio DMO processing should preserve sample count");
+    Assert(output.All(float.IsFinite), "NAudio DMO processing should keep output finite even when optional Windows DMOs are unavailable");
+}
+
 static void VoiceBreathReducerTamesAiryBreathNoise()
 {
     const int sampleRate = 48_000;
@@ -677,7 +733,8 @@ static void VoiceProcessorUsesEveryDspSetting()
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -3691,6 +3748,14 @@ static float[] ProcessNAudioConvolutionTestTone(float[] samples, Action<VoicePro
 }
 
 static float[] ProcessNAudioEnvelopeTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
+{
+    var settings = CreateTransparentVoiceSettings();
+    configure(settings);
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessNAudioDmoTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
 {
     var settings = CreateTransparentVoiceSettings();
     configure(settings);

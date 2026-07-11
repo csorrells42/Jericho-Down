@@ -127,6 +127,67 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _naudioEnvelopeSustainLevel = 0.75;
     private double _naudioEnvelopeReleaseMs = 200;
     private double _naudioEnvelopeMix = 1;
+    private bool _naudioDmoChorusEnabled;
+    private double _naudioDmoChorusWetDryMix = 50;
+    private double _naudioDmoChorusDepth = 10;
+    private double _naudioDmoChorusFeedback = 25;
+    private double _naudioDmoChorusFrequencyHz = 1.1;
+    private double _naudioDmoChorusWaveForm = 1;
+    private double _naudioDmoChorusDelayMs = 16;
+    private double _naudioDmoChorusPhase = 3;
+    private bool _naudioDmoFlangerEnabled;
+    private double _naudioDmoFlangerWetDryMix = 50;
+    private double _naudioDmoFlangerDepth = 100;
+    private double _naudioDmoFlangerFeedback = -50;
+    private double _naudioDmoFlangerFrequencyHz = 0.25;
+    private double _naudioDmoFlangerWaveForm = 1;
+    private double _naudioDmoFlangerDelayMs = 2;
+    private double _naudioDmoFlangerPhase = 2;
+    private bool _naudioDmoEchoEnabled;
+    private double _naudioDmoEchoWetDryMix = 35;
+    private double _naudioDmoEchoFeedback = 30;
+    private double _naudioDmoEchoLeftDelayMs = 180;
+    private double _naudioDmoEchoRightDelayMs = 220;
+    private double _naudioDmoEchoPanDelay;
+    private bool _naudioDmoDistortionEnabled;
+    private double _naudioDmoDistortionGainDb = -18;
+    private double _naudioDmoDistortionEdge = 15;
+    private double _naudioDmoDistortionPostEqCenterFrequencyHz = 2400;
+    private double _naudioDmoDistortionPostEqBandwidthHz = 2400;
+    private double _naudioDmoDistortionPreLowPassCutoffHz = 8000;
+    private bool _naudioDmoCompressorEnabled;
+    private double _naudioDmoCompressorGainDb;
+    private double _naudioDmoCompressorAttackMs = 10;
+    private double _naudioDmoCompressorReleaseMs = 200;
+    private double _naudioDmoCompressorThresholdDb = -20;
+    private double _naudioDmoCompressorRatio = 3;
+    private double _naudioDmoCompressorPreDelayMs = 4;
+    private bool _naudioDmoParamEqEnabled;
+    private double _naudioDmoParamEqCenterFrequencyHz = 8000;
+    private double _naudioDmoParamEqBandwidthHz = 12;
+    private double _naudioDmoParamEqGainDb;
+    private bool _naudioDmoGargleEnabled;
+    private double _naudioDmoGargleRateHz = 20;
+    private double _naudioDmoGargleWaveShape = 1;
+    private bool _naudioDmoI3DL2ReverbEnabled;
+    private double _naudioDmoI3DL2Room = -1000;
+    private double _naudioDmoI3DL2RoomHf = -100;
+    private double _naudioDmoI3DL2RoomRolloffFactor;
+    private double _naudioDmoI3DL2DecayTimeSeconds = 1.49;
+    private double _naudioDmoI3DL2DecayHfRatio = 0.83;
+    private double _naudioDmoI3DL2Reflections = -2602;
+    private double _naudioDmoI3DL2ReflectionsDelaySeconds = 0.007;
+    private double _naudioDmoI3DL2Reverb = 200;
+    private double _naudioDmoI3DL2ReverbDelaySeconds = 0.011;
+    private double _naudioDmoI3DL2Diffusion = 100;
+    private double _naudioDmoI3DL2Density = 100;
+    private double _naudioDmoI3DL2HfReferenceHz = 5000;
+    private double _naudioDmoI3DL2Quality = 2;
+    private bool _naudioDmoWavesReverbEnabled;
+    private double _naudioDmoWavesReverbInGainDb;
+    private double _naudioDmoWavesReverbMixDb;
+    private double _naudioDmoWavesReverbTimeMs = 1000;
+    private double _naudioDmoWavesReverbHighFreqRtRatio = 0.001;
 
     public double InputTrimDb
     {
@@ -835,6 +896,128 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
         get => _naudioEnvelopeMix;
         set => SetField(ref _naudioEnvelopeMix, value);
     }
+
+    public bool NAudioDmoChorusEnabled { get => _naudioDmoChorusEnabled; set => SetField(ref _naudioDmoChorusEnabled, value); }
+
+    public double NAudioDmoChorusWetDryMix { get => _naudioDmoChorusWetDryMix; set => SetField(ref _naudioDmoChorusWetDryMix, value); }
+
+    public double NAudioDmoChorusDepth { get => _naudioDmoChorusDepth; set => SetField(ref _naudioDmoChorusDepth, value); }
+
+    public double NAudioDmoChorusFeedback { get => _naudioDmoChorusFeedback; set => SetField(ref _naudioDmoChorusFeedback, value); }
+
+    public double NAudioDmoChorusFrequencyHz { get => _naudioDmoChorusFrequencyHz; set => SetField(ref _naudioDmoChorusFrequencyHz, value); }
+
+    public double NAudioDmoChorusWaveForm { get => _naudioDmoChorusWaveForm; set => SetField(ref _naudioDmoChorusWaveForm, value); }
+
+    public double NAudioDmoChorusDelayMs { get => _naudioDmoChorusDelayMs; set => SetField(ref _naudioDmoChorusDelayMs, value); }
+
+    public double NAudioDmoChorusPhase { get => _naudioDmoChorusPhase; set => SetField(ref _naudioDmoChorusPhase, value); }
+
+    public bool NAudioDmoFlangerEnabled { get => _naudioDmoFlangerEnabled; set => SetField(ref _naudioDmoFlangerEnabled, value); }
+
+    public double NAudioDmoFlangerWetDryMix { get => _naudioDmoFlangerWetDryMix; set => SetField(ref _naudioDmoFlangerWetDryMix, value); }
+
+    public double NAudioDmoFlangerDepth { get => _naudioDmoFlangerDepth; set => SetField(ref _naudioDmoFlangerDepth, value); }
+
+    public double NAudioDmoFlangerFeedback { get => _naudioDmoFlangerFeedback; set => SetField(ref _naudioDmoFlangerFeedback, value); }
+
+    public double NAudioDmoFlangerFrequencyHz { get => _naudioDmoFlangerFrequencyHz; set => SetField(ref _naudioDmoFlangerFrequencyHz, value); }
+
+    public double NAudioDmoFlangerWaveForm { get => _naudioDmoFlangerWaveForm; set => SetField(ref _naudioDmoFlangerWaveForm, value); }
+
+    public double NAudioDmoFlangerDelayMs { get => _naudioDmoFlangerDelayMs; set => SetField(ref _naudioDmoFlangerDelayMs, value); }
+
+    public double NAudioDmoFlangerPhase { get => _naudioDmoFlangerPhase; set => SetField(ref _naudioDmoFlangerPhase, value); }
+
+    public bool NAudioDmoEchoEnabled { get => _naudioDmoEchoEnabled; set => SetField(ref _naudioDmoEchoEnabled, value); }
+
+    public double NAudioDmoEchoWetDryMix { get => _naudioDmoEchoWetDryMix; set => SetField(ref _naudioDmoEchoWetDryMix, value); }
+
+    public double NAudioDmoEchoFeedback { get => _naudioDmoEchoFeedback; set => SetField(ref _naudioDmoEchoFeedback, value); }
+
+    public double NAudioDmoEchoLeftDelayMs { get => _naudioDmoEchoLeftDelayMs; set => SetField(ref _naudioDmoEchoLeftDelayMs, value); }
+
+    public double NAudioDmoEchoRightDelayMs { get => _naudioDmoEchoRightDelayMs; set => SetField(ref _naudioDmoEchoRightDelayMs, value); }
+
+    public double NAudioDmoEchoPanDelay { get => _naudioDmoEchoPanDelay; set => SetField(ref _naudioDmoEchoPanDelay, value); }
+
+    public bool NAudioDmoDistortionEnabled { get => _naudioDmoDistortionEnabled; set => SetField(ref _naudioDmoDistortionEnabled, value); }
+
+    public double NAudioDmoDistortionGainDb { get => _naudioDmoDistortionGainDb; set => SetField(ref _naudioDmoDistortionGainDb, value); }
+
+    public double NAudioDmoDistortionEdge { get => _naudioDmoDistortionEdge; set => SetField(ref _naudioDmoDistortionEdge, value); }
+
+    public double NAudioDmoDistortionPostEqCenterFrequencyHz { get => _naudioDmoDistortionPostEqCenterFrequencyHz; set => SetField(ref _naudioDmoDistortionPostEqCenterFrequencyHz, value); }
+
+    public double NAudioDmoDistortionPostEqBandwidthHz { get => _naudioDmoDistortionPostEqBandwidthHz; set => SetField(ref _naudioDmoDistortionPostEqBandwidthHz, value); }
+
+    public double NAudioDmoDistortionPreLowPassCutoffHz { get => _naudioDmoDistortionPreLowPassCutoffHz; set => SetField(ref _naudioDmoDistortionPreLowPassCutoffHz, value); }
+
+    public bool NAudioDmoCompressorEnabled { get => _naudioDmoCompressorEnabled; set => SetField(ref _naudioDmoCompressorEnabled, value); }
+
+    public double NAudioDmoCompressorGainDb { get => _naudioDmoCompressorGainDb; set => SetField(ref _naudioDmoCompressorGainDb, value); }
+
+    public double NAudioDmoCompressorAttackMs { get => _naudioDmoCompressorAttackMs; set => SetField(ref _naudioDmoCompressorAttackMs, value); }
+
+    public double NAudioDmoCompressorReleaseMs { get => _naudioDmoCompressorReleaseMs; set => SetField(ref _naudioDmoCompressorReleaseMs, value); }
+
+    public double NAudioDmoCompressorThresholdDb { get => _naudioDmoCompressorThresholdDb; set => SetField(ref _naudioDmoCompressorThresholdDb, value); }
+
+    public double NAudioDmoCompressorRatio { get => _naudioDmoCompressorRatio; set => SetField(ref _naudioDmoCompressorRatio, value); }
+
+    public double NAudioDmoCompressorPreDelayMs { get => _naudioDmoCompressorPreDelayMs; set => SetField(ref _naudioDmoCompressorPreDelayMs, value); }
+
+    public bool NAudioDmoParamEqEnabled { get => _naudioDmoParamEqEnabled; set => SetField(ref _naudioDmoParamEqEnabled, value); }
+
+    public double NAudioDmoParamEqCenterFrequencyHz { get => _naudioDmoParamEqCenterFrequencyHz; set => SetField(ref _naudioDmoParamEqCenterFrequencyHz, value); }
+
+    public double NAudioDmoParamEqBandwidthHz { get => _naudioDmoParamEqBandwidthHz; set => SetField(ref _naudioDmoParamEqBandwidthHz, value); }
+
+    public double NAudioDmoParamEqGainDb { get => _naudioDmoParamEqGainDb; set => SetField(ref _naudioDmoParamEqGainDb, value); }
+
+    public bool NAudioDmoGargleEnabled { get => _naudioDmoGargleEnabled; set => SetField(ref _naudioDmoGargleEnabled, value); }
+
+    public double NAudioDmoGargleRateHz { get => _naudioDmoGargleRateHz; set => SetField(ref _naudioDmoGargleRateHz, value); }
+
+    public double NAudioDmoGargleWaveShape { get => _naudioDmoGargleWaveShape; set => SetField(ref _naudioDmoGargleWaveShape, value); }
+
+    public bool NAudioDmoI3DL2ReverbEnabled { get => _naudioDmoI3DL2ReverbEnabled; set => SetField(ref _naudioDmoI3DL2ReverbEnabled, value); }
+
+    public double NAudioDmoI3DL2Room { get => _naudioDmoI3DL2Room; set => SetField(ref _naudioDmoI3DL2Room, value); }
+
+    public double NAudioDmoI3DL2RoomHf { get => _naudioDmoI3DL2RoomHf; set => SetField(ref _naudioDmoI3DL2RoomHf, value); }
+
+    public double NAudioDmoI3DL2RoomRolloffFactor { get => _naudioDmoI3DL2RoomRolloffFactor; set => SetField(ref _naudioDmoI3DL2RoomRolloffFactor, value); }
+
+    public double NAudioDmoI3DL2DecayTimeSeconds { get => _naudioDmoI3DL2DecayTimeSeconds; set => SetField(ref _naudioDmoI3DL2DecayTimeSeconds, value); }
+
+    public double NAudioDmoI3DL2DecayHfRatio { get => _naudioDmoI3DL2DecayHfRatio; set => SetField(ref _naudioDmoI3DL2DecayHfRatio, value); }
+
+    public double NAudioDmoI3DL2Reflections { get => _naudioDmoI3DL2Reflections; set => SetField(ref _naudioDmoI3DL2Reflections, value); }
+
+    public double NAudioDmoI3DL2ReflectionsDelaySeconds { get => _naudioDmoI3DL2ReflectionsDelaySeconds; set => SetField(ref _naudioDmoI3DL2ReflectionsDelaySeconds, value); }
+
+    public double NAudioDmoI3DL2Reverb { get => _naudioDmoI3DL2Reverb; set => SetField(ref _naudioDmoI3DL2Reverb, value); }
+
+    public double NAudioDmoI3DL2ReverbDelaySeconds { get => _naudioDmoI3DL2ReverbDelaySeconds; set => SetField(ref _naudioDmoI3DL2ReverbDelaySeconds, value); }
+
+    public double NAudioDmoI3DL2Diffusion { get => _naudioDmoI3DL2Diffusion; set => SetField(ref _naudioDmoI3DL2Diffusion, value); }
+
+    public double NAudioDmoI3DL2Density { get => _naudioDmoI3DL2Density; set => SetField(ref _naudioDmoI3DL2Density, value); }
+
+    public double NAudioDmoI3DL2HfReferenceHz { get => _naudioDmoI3DL2HfReferenceHz; set => SetField(ref _naudioDmoI3DL2HfReferenceHz, value); }
+
+    public double NAudioDmoI3DL2Quality { get => _naudioDmoI3DL2Quality; set => SetField(ref _naudioDmoI3DL2Quality, value); }
+
+    public bool NAudioDmoWavesReverbEnabled { get => _naudioDmoWavesReverbEnabled; set => SetField(ref _naudioDmoWavesReverbEnabled, value); }
+
+    public double NAudioDmoWavesReverbInGainDb { get => _naudioDmoWavesReverbInGainDb; set => SetField(ref _naudioDmoWavesReverbInGainDb, value); }
+
+    public double NAudioDmoWavesReverbMixDb { get => _naudioDmoWavesReverbMixDb; set => SetField(ref _naudioDmoWavesReverbMixDb, value); }
+
+    public double NAudioDmoWavesReverbTimeMs { get => _naudioDmoWavesReverbTimeMs; set => SetField(ref _naudioDmoWavesReverbTimeMs, value); }
+
+    public double NAudioDmoWavesReverbHighFreqRtRatio { get => _naudioDmoWavesReverbHighFreqRtRatio; set => SetField(ref _naudioDmoWavesReverbHighFreqRtRatio, value); }
 
     public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);
 
