@@ -167,7 +167,7 @@ public sealed class AsioInputCapture : IWaveIn
 
     private void AsioDriverResetRequested(object? sender, EventArgs e)
     {
-        ThreadPool.QueueUserWorkItem(_ => StopRecording(new InvalidOperationException("ASIO driver reset requested."), raiseStopped: true));
+        ThreadPool.QueueUserWorkItem(_ => StopRecording(null, raiseStopped: true));
     }
 
     private void StopRecording(Exception? exception, bool raiseStopped)

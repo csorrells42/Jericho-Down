@@ -805,9 +805,34 @@
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
-    <Border Grid.Row="0" Background="#C0111820" Padding="18,10">
+    <Border Grid.Row="0" Background="#0B1118" BorderBrush="#26323D" BorderThickness="0,0,0,1" Padding="8,0">
+      <Menu Background="Transparent" Foreground="#F8FAFC" FontSize="13">
+        <Menu.Resources>
+          <Style TargetType="MenuItem">
+            <Setter Property="Background" Value="#0B1118" />
+            <Setter Property="Foreground" Value="#F8FAFC" />
+            <Setter Property="Padding" Value="10,4" />
+          </Style>
+        </Menu.Resources>
+        <MenuItem Header="_File">
+          <MenuItem Header="Refresh Audio Devices" Click="RefreshAudioDevicesMenuClicked" />
+          <MenuItem Header="Refresh Video Devices" Click="RefreshVideoDevicesMenuClicked" />
+          <Separator />
+          <MenuItem Header="Settings">
+            <MenuItem Header="Podcast Settings" Click="PodcastSettingsMenuClicked" />
+            <MenuItem Header="Karaoke Settings" Click="KaraokeSettingsMenuClicked" />
+          </MenuItem>
+          <MenuItem Header="ASIO Settings" Click="AsioSettingsMenuClicked" />
+        </MenuItem>
+        <MenuItem Header="_Help">
+          <MenuItem Header="About" Click="AboutMenuClicked" />
+        </MenuItem>
+      </Menu>
+    </Border>
+    <Border Grid.Row="1" Background="#C0111820" Padding="18,10">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />
@@ -826,7 +851,7 @@
         </StackPanel>
       </Grid>
     </Border>
-    <TabControl x:Name="MainTabControl" Grid.Row="1" Background="#05070A" BorderBrush="#26323D" BorderThickness="1" Foreground="#F8FAFC" Padding="4,3,4,4" SelectionChanged="MainTabSelectionChanged">
+    <TabControl x:Name="MainTabControl" Grid.Row="2" Background="#05070A" BorderBrush="#26323D" BorderThickness="1" Foreground="#F8FAFC" Padding="4,3,4,4" SelectionChanged="MainTabSelectionChanged">
       <TabControl.Resources>
         <Style TargetType="TabItem">
           <Setter Property="Padding" Value="16,6" />
@@ -2587,105 +2612,6 @@
               </StackPanel>
             </ScrollViewer>
           </Border>
-        </Grid>
-      </TabItem>
-      <TabItem Header="About">
-        <Grid Background="#05070A">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-          </Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#C0111820" Padding="18,14">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock Text="About Jericho Down" Foreground="#F8FAFC" FontSize="24" FontWeight="Bold" />
-                <TextBlock Text="Dedicated to Scarlett and Mark, and to the One who made the miracle possible." Foreground="#B8C7D9" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" />
-              </StackPanel>
-              <TextBlock Grid.Column="1" Text="Worship / Testimony / Sound" Foreground="#35E8D8" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="24,0,0,0" />
-            </Grid>
-          </Border>
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <Grid MaxWidth="1320" HorizontalAlignment="Center" Margin="28,26,28,34">
-              <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-              </Grid.RowDefinitions>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#A30B1118" BorderBrush="#334F5D6B" BorderThickness="1" CornerRadius="6" Padding="24" Margin="0,0,0,18">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="5" />
-                    <ColumnDefinition Width="*" />
-                  </Grid.ColumnDefinitions>
-                  <Border Background="#35E8D8" CornerRadius="3" />
-                  <StackPanel Grid.Column="1" Margin="18,0,0,0">
-                    <TextBlock Text="Jericho Down was built for worship, testimony, music, and the kind of sound that carries something eternal with it." Foreground="#F8FAFC" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="34" />
-                    <TextBlock Text="It is dedicated to my daughter Scarlett and to my friend Mark." Foreground="#B8C7D9" FontSize="15" TextWrapping="Wrap" Margin="0,12,0,0" />
-                  </StackPanel>
-                </Grid>
-              </Border>
-              <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource DspBubble}" Padding="22" Margin="0,0,18,18">
-                <StackPanel>
-                  <TextBlock Text="For Scarlett" Foreground="#35E8D8" FontSize="20" FontWeight="Bold" Margin="0,0,0,12" />
-                  <TextBlock Text="Scarlett was born with every number against her. My wife's water broke at 15 weeks and 6 days, and Scarlett was born at 26 and a half weeks, weighing 1 pound, 11 ounces. We were told she had a 5% chance to live. We were told she might never come off a ventilator. That first night, people tried to prepare us for the worst." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
-                  <TextBlock Text="But Scarlett stayed." Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,12" />
-                  <TextBlock Text="By the next day, she was breathing room air on the ventilator with no added oxygen. She moved from the ventilator, to non-invasive support, to CPAP, and by the time she would have been 36 weeks gestation, she came home eating, drinking, growing, and doing great. The hospital did incredible work, but when people said they had no explanation, we did." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
-                  <TextBlock Text="Scarlett is a miracle." Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-              <Border Grid.Row="1" Grid.Column="1" Background="#A30B1118" BorderBrush="#334F5D6B" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,18">
-                <Grid MinHeight="360">
-                  <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                  </Grid.RowDefinitions>
-                  <Border Background="#05090C" BorderBrush="#26323D" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
-                    <Image Source="Assets/about-dedication.png" Stretch="Uniform" SnapsToDevicePixels="True" />
-                  </Border>
-                  <Border Grid.Row="1" Background="#B805070A" BorderBrush="#6635E8D8" BorderThickness="1,0,1,1" Padding="12,9">
-                    <TextBlock Text="The sound of praise, the God who listens, the miracle that gave me a daughter, and a friend who didn't know how to give up." Foreground="#F8FAFC" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
-                  </Border>
-                </Grid>
-              </Border>
-              <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource DspBubble}" Padding="22" Margin="0,0,18,0">
-                <StackPanel>
-                  <TextBlock Text="For Mark" Foreground="#35E8D8" FontSize="20" FontWeight="Bold" Margin="0,0,0,12" />
-                  <TextBlock Text="Mark was one of a kind. Some people thought he was strange, and maybe he was, but he and I could talk on the same frequency. He was the first person who ever gave me a real chance to do software work. I saw him launching fireworks with a BASIC Stamp, told him I could make it better, and we rebuilt it with Arduino and a Java program. I never charged him a dime. He was thrilled, and I was changed." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
-                  <TextBlock Text="When I was going through some of the hardest days of my life, Mark helped me walk the anxiety off. We would walk his land and his dirt roads, talking, praying, and fighting our way through it. His own battle was not temporary, but every day he got up full of faith and ready to fight the devil. When my faith was weak, Mark helped recharge it." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
-                  <TextBlock Text="Mark had the spirit of a battlefield general. If he sat still, you would wonder where he was, but if you knew him, you knew where to find him: advancing. He was always attacking on one front or another, and from the time Mark was born, the devil got no rest. Mark brought a lot of people to know Christ, and he never stopped pushing forward." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,12" />
-                  <TextBlock Text="When Scarlett was being born, Mark was one of the first people I called. He prayed with us, stood with us, and helped carry us through. God did it all, but it would have been much harder without Mark in my corner." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" />
-                </StackPanel>
-              </Border>
-              <Border Grid.Row="2" Grid.Column="1" Background="#A30B1118" BorderBrush="#35E8D8" BorderThickness="1" CornerRadius="6" Padding="22">
-                <StackPanel>
-                  <TextBlock Text="Jericho Down is for them." Foreground="#F8FAFC" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" Margin="0,0,0,12" />
-                  <TextBlock Text="For Scarlett, who lived when the numbers said she would not." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,10" />
-                  <TextBlock Text="For Mark, who believed, prayed, fought, and helped me believe again when I needed it most." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,14" />
-                  <Border Background="#1E3A8A" BorderBrush="#60A5FA" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,16">
-                    <StackPanel>
-                      <TextBlock Text="Romans 8:37-39" Foreground="#BAE6FD" FontSize="13" FontWeight="Bold" Margin="0,0,0,8" />
-                      <TextBlock Foreground="#EFF6FF" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="22">But in all these things we overwhelmingly conquer through Him who loved us. For I am convinced that neither death, nor life, nor angels, nor principalities, nor things present, nor things to come, nor powers, nor height, nor depth, nor any other created thing will be able to separate us from the love of God that is in Christ Jesus our Lord.</TextBlock>
-                    </StackPanel>
-                  </Border>
-                  <Border BorderBrush="#334F5D6B" BorderThickness="0,1,0,0" Padding="0,16,0,0">
-                    <StackPanel>
-                      <TextBlock Text="And most of all, Jericho Down is a testimony to the One who made all of this possible." Foreground="#F8FAFC" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="24" Margin="0,0,0,10" />
-                      <TextBlock Text="God never broke a single promise. He never missed one cue. He was always there, He always provided, He always came through, and He made the miracle possible." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" Margin="0,0,0,14" />
-                      <TextBlock Text="May this program carry the sound of worship clearly, faithfully, and loudly. And if it gives the devil a bad day, Mark would have loved that." Foreground="#35E8D8" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" LineHeight="23" />
-                    </StackPanel>
-                  </Border>
-                </StackPanel>
-              </Border>
-            </Grid>
-          </ScrollViewer>
         </Grid>
       </TabItem>
     </TabControl>

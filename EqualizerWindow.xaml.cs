@@ -506,8 +506,7 @@ public partial class EqualizerWindow : Window
             "Mic / DSP",
             "Mic Compare",
             "Mixing",
-            "Karaoke",
-            "About"
+            "Karaoke"
         ];
 
         var tabs = MainTabControl.Items.OfType<TabItem>().ToList();
@@ -1551,6 +1550,202 @@ public partial class EqualizerWindow : Window
             : "Audio devices refreshed; no microphones found.";
     }
 
+    private void RefreshVideoDevicesFromSystem()
+    {
+        var previousCamera = CameraComboBox?.SelectedItem as CameraDevice;
+        var previousModeLabel = CameraModeComboBox?.SelectedItem is CameraVideoMode selectedMode
+            ? selectedMode.Label
+            : _appSettings.CameraModeLabel;
+        if (_isCameraEnabled)
+        {
+            CancelPendingCameraPreviewStart();
+        }
+
+        IReadOnlyList<CameraDevice> cameras;
+        try
+        {
+            cameras = CameraSourceSelection.GetCameras();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Video device refresh failed: {ex.Message}";
+            CameraPreviewStatusText.Text = $"Video device refresh failed: {ex.Message}";
+            return;
+        }
+
+        CameraDevice? selectedCamera = null;
+        _isUpdatingCameraUi = true;
+        try
+        {
+            if (cameras.Count > 0)
+            {
+                selectedCamera = CameraSourceSelection.FindCamera(
+                    cameras,
+                    previousCamera?.DevicePath,
+                    previousCamera?.Source,
+                    previousCamera?.Name) ?? cameras[0];
+                CameraComboBox!.ItemsSource = cameras;
+                CameraComboBox.SelectedItem = selectedCamera;
+                CameraComboBox.IsEnabled = true;
+                _cameraAvailable = true;
+            }
+            else
+            {
+                _cameraAvailable = false;
+                _isCameraEnabled = false;
+                CameraComboBox!.ItemsSource = new[] { "No cameras found" };
+                CameraComboBox.SelectedIndex = 0;
+                CameraComboBox.IsEnabled = false;
+                CameraModeComboBox!.ItemsSource = new[] { CameraVideoMode.Auto };
+                CameraModeComboBox.SelectedIndex = 0;
+            }
+        }
+        finally
+        {
+            _isUpdatingCameraUi = false;
+        }
+
+        if (!_cameraAvailable)
+        {
+            StopCameraPreview("Video devices refreshed; no cameras found.");
+            ResetCameraControlPanel("No camera source found.");
+            StatusText.Text = "Video devices refreshed; no cameras found.";
+            UpdateCameraEnabledState();
+            PersistAppState();
+            return;
+        }
+
+        _pendingCameraProfileModeLabel = string.IsNullOrWhiteSpace(previousModeLabel)
+            ? CameraVideoMode.Auto.Label
+            : previousModeLabel;
+        ResetCameraControlPanel("Video devices refreshed. Use Refresh after modes load if you want to query Windows camera controls.");
+        var cameraCountText = cameras.Count == 1 ? "1 camera source" : $"{cameras.Count} camera sources";
+        var selectedName = selectedCamera?.Name ?? "selected camera";
+        StatusText.Text = $"Video devices refreshed: {cameraCountText}.";
+        CameraPreviewStatusText.Text = $"Video devices refreshed: {selectedName}.";
+        _ = LoadCameraModesAsync();
+        PersistAppState();
+    }
+
+    private void PodcastSettingsMenuClicked(object sender, RoutedEventArgs e)
+    {
+        SelectMainTabFromMenu("Podcast", "Podcast settings selected.");
+    }
+
+    private void KaraokeSettingsMenuClicked(object sender, RoutedEventArgs e)
+    {
+        SelectMainTabFromMenu("Karaoke", "Karaoke settings selected.");
+    }
+
+    private void SelectMainTabFromMenu(string header, string status)
+    {
+        if (MainTabControl is null)
+        {
+            StatusText.Text = $"{header} settings unavailable.";
+            return;
+        }
+
+        var tab = MainTabControl.Items
+            .OfType<TabItem>()
+            .FirstOrDefault(item => string.Equals(item.Header?.ToString(), header, StringComparison.OrdinalIgnoreCase));
+        if (tab is null)
+        {
+            StatusText.Text = $"{header} settings unavailable.";
+            return;
+        }
+
+        MainTabControl.SelectedItem = tab;
+        StatusText.Text = status;
+    }
+
+    private void RefreshAudioDevicesMenuClicked(object sender, RoutedEventArgs e)
+    {
+        RefreshAudioDevicesFromSystem();
+    }
+
+    private void RefreshVideoDevicesMenuClicked(object sender, RoutedEventArgs e)
+    {
+        RefreshVideoDevicesFromSystem();
+    }
+
+    private void AsioSettingsMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var endpointId = ResolvePreferredAsioSettingsEndpointId();
+        var opened = MicrophoneSpectrumService.TryShowAsioControlPanel(endpointId, out var status);
+        StatusText.Text = status;
+        if (opened && OutputStatusText is not null && _selectedOutputDevice?.IsAsio == true)
+        {
+            OutputStatusText.Text = status;
+        }
+
+        if (opened && KaraokeMonitorStatusText is not null && _selectedOutputDevice?.IsAsio == true)
+        {
+            KaraokeMonitorStatusText.Text = status;
+        }
+    }
+
+    private void AboutMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Window
+        {
+            Title = "About Jericho Down",
+            Owner = this,
+            Width = Math.Min(1380d, Math.Max(980d, ActualWidth * 0.82d)),
+            Height = Math.Min(860d, Math.Max(620d, ActualHeight * 0.82d)),
+            MinWidth = 900d,
+            MinHeight = 560d,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromRgb(5, 7, 10)),
+            Content = new AboutView(),
+            ShowInTaskbar = false
+        };
+
+        dialog.ShowDialog();
+    }
+
+    private string? ResolvePreferredAsioSettingsEndpointId()
+    {
+        var selectedEndpoint = ResolvePreferredAsioSettingsEndpointId(
+            _activeMicChannel?.SelectedDevice,
+            _selectedOutputDevice,
+            [],
+            []);
+        if (!string.IsNullOrWhiteSpace(selectedEndpoint))
+        {
+            return selectedEndpoint;
+        }
+
+        var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
+        var outputEndpoint = outputDevices.FirstOrDefault(device => device.IsAsio)?.EndpointId;
+        if (!string.IsNullOrWhiteSpace(outputEndpoint))
+        {
+            return outputEndpoint;
+        }
+
+        var inputDevices = MicrophoneSpectrumService.GetInputDevices();
+        return inputDevices.FirstOrDefault(device => device.IsAsio)?.EndpointId;
+    }
+
+    private static string? ResolvePreferredAsioSettingsEndpointId(
+        AudioInputDevice? selectedInput,
+        AudioOutputDevice? selectedOutput,
+        IEnumerable<AudioInputDevice> inputDevices,
+        IEnumerable<AudioOutputDevice> outputDevices)
+    {
+        if (selectedOutput?.IsAsio == true)
+        {
+            return selectedOutput.EndpointId;
+        }
+
+        if (selectedInput?.IsAsio == true)
+        {
+            return selectedInput.EndpointId;
+        }
+
+        return outputDevices.FirstOrDefault(device => device.IsAsio)?.EndpointId
+            ?? inputDevices.FirstOrDefault(device => device.IsAsio)?.EndpointId;
+    }
+
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         SaveAppStateNow();
@@ -2563,6 +2758,11 @@ public partial class EqualizerWindow : Window
 
     private void CameraSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_isUpdatingCameraUi)
+        {
+            return;
+        }
+
         if (_isCameraEnabled)
         {
             CancelPendingCameraPreviewStart();

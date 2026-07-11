@@ -36,11 +36,14 @@ var tests = new (string Name, Action Test)[]
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
+    ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
+    ("ASIO control panel rejects non-ASIO endpoints", AsioControlPanelRejectsNonAsioEndpoints),
+    ("ASIO settings menu prefers selected and installed drivers", AsioSettingsMenuPrefersSelectedAndInstalledDrivers),
     ("ASIO input devices carry endpoint identity", AsioInputDevicesCarryEndpointIdentity),
     ("ASIO input selections restore by endpoint", AsioInputSelectionsRestoreByEndpoint),
     ("ASIO input capture converts interleaved floats", AsioInputCaptureConvertsInterleavedFloats),
@@ -508,6 +511,26 @@ static void EqScreenBindsEveryVoiceProcessorSetting()
     Assert(missing.Length == 0, $"EQ screen is missing DSP bindings: {string.Join(", ", missing)}");
 }
 
+static void MainMenuExposesGlobalDeviceAndHelpActions()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("Header=\"_File\"", StringComparison.Ordinal), "main window should expose a File menu");
+    Assert(xaml.Contains("Header=\"Refresh Audio Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Audio Devices");
+    Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Refresh Video Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Video Devices");
+    Assert(xaml.Contains("Click=\"RefreshVideoDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Video Devices should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Settings\"", StringComparison.Ordinal), "File menu should expose a Settings submenu");
+    Assert(xaml.Contains("Header=\"Podcast Settings\"", StringComparison.Ordinal), "Settings submenu should expose Podcast Settings");
+    Assert(xaml.Contains("Click=\"PodcastSettingsMenuClicked\"", StringComparison.Ordinal), "Podcast Settings should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Karaoke Settings\"", StringComparison.Ordinal), "Settings submenu should expose Karaoke Settings");
+    Assert(xaml.Contains("Click=\"KaraokeSettingsMenuClicked\"", StringComparison.Ordinal), "Karaoke Settings should be wired to a handler");
+    Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
+    Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
+    Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
+    Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
+    Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+}
+
 static void VoiceProcessorUsesEveryDspSetting()
 {
     var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs")));
@@ -604,6 +627,57 @@ static void AsioOutputRoutingIsOptIn()
 
     var asioDevice = new AudioOutputDevice(-1, "ASIO: Interface ASIO Driver", endpointId, AudioOutputBackend.Asio);
     Assert(asioDevice.IsAsio, "ASIO output devices should be identifiable without inspecting display text");
+}
+
+static void AsioControlPanelRejectsNonAsioEndpoints()
+{
+    Assert(!MicrophoneSpectrumService.TryShowAsioControlPanel(null, out var blankStatus), "blank endpoints should not open an ASIO control panel");
+    Assert(blankStatus.Contains("ASIO", StringComparison.OrdinalIgnoreCase) || blankStatus.Contains("Select", StringComparison.OrdinalIgnoreCase), "blank endpoint status should explain that an ASIO device is required");
+
+    Assert(!MicrophoneSpectrumService.TryShowAsioControlPanel("not-asio", out var invalidStatus), "non-ASIO endpoints should not open an ASIO control panel");
+    Assert(invalidStatus.Contains("ASIO", StringComparison.OrdinalIgnoreCase) || invalidStatus.Contains("Select", StringComparison.OrdinalIgnoreCase), "invalid endpoint status should explain that an ASIO device is required");
+}
+
+static void AsioSettingsMenuPrefersSelectedAndInstalledDrivers()
+{
+    var method = typeof(EqualizerWindow)
+        .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+        .FirstOrDefault(candidate => candidate.Name == "ResolvePreferredAsioSettingsEndpointId" && candidate.GetParameters().Length == 4);
+    Assert(method is not null, "ASIO settings menu endpoint resolver should be available");
+
+    var selectedInputEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Selected Input ASIO");
+    var selectedOutputEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Selected Output ASIO");
+    var fallbackInputEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Fallback Input ASIO");
+    var fallbackOutputEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Fallback Output ASIO");
+
+    var selectedInput = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Selected Input ASIO",
+        2,
+        selectedInputEndpoint,
+        AudioInputBackend.Asio);
+    var selectedOutput = new AudioOutputDevice(-1, "ASIO: Selected Output ASIO", selectedOutputEndpoint, AudioOutputBackend.Asio);
+    var fallbackInput = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Fallback Input ASIO",
+        2,
+        fallbackInputEndpoint,
+        AudioInputBackend.Asio);
+    var fallbackOutput = new AudioOutputDevice(-1, "ASIO: Fallback Output ASIO", fallbackOutputEndpoint, AudioOutputBackend.Asio);
+    var windowsInput = new AudioInputDevice(0, "Windows Mic", 2);
+    var windowsOutput = new AudioOutputDevice(0, "Windows Speakers");
+
+    var selectedOutputResult = (string?)method!.Invoke(null, [selectedInput, selectedOutput, Array.Empty<AudioInputDevice>(), Array.Empty<AudioOutputDevice>()]);
+    Assert(selectedOutputResult == selectedOutputEndpoint, "ASIO settings should prefer the selected ASIO output driver");
+
+    var selectedInputResult = (string?)method.Invoke(null, [selectedInput, windowsOutput, Array.Empty<AudioInputDevice>(), Array.Empty<AudioOutputDevice>()]);
+    Assert(selectedInputResult == selectedInputEndpoint, "ASIO settings should use the selected ASIO input driver when output is not ASIO");
+
+    var fallbackResult = (string?)method.Invoke(null, [windowsInput, windowsOutput, new[] { fallbackInput }, new[] { fallbackOutput }]);
+    Assert(fallbackResult == fallbackOutputEndpoint, "ASIO settings should fall back to installed ASIO output drivers before input drivers");
+
+    var missingResult = (string?)method.Invoke(null, [windowsInput, windowsOutput, Array.Empty<AudioInputDevice>(), Array.Empty<AudioOutputDevice>()]);
+    Assert(missingResult is null, "ASIO settings should report no endpoint when no ASIO driver is available");
 }
 
 static void AsioInputDevicesCarryEndpointIdentity()

@@ -1015,6 +1015,32 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return !string.IsNullOrWhiteSpace(driverName);
     }
 
+    public static bool TryShowAsioControlPanel(string? endpointId, out string status)
+    {
+        if (!TryGetAsioDriverName(endpointId, out var driverName))
+        {
+            status = "Select an ASIO device first.";
+            return false;
+        }
+
+        using var dispatcher = new StaThreadDispatcher($"Jericho ASIO Control Panel ({driverName})");
+        try
+        {
+            dispatcher.Invoke(() =>
+            {
+                using var asio = new AsioOut(driverName);
+                asio.ShowControlPanel();
+            });
+            status = $"Opened ASIO control panel for {driverName}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            status = $"ASIO control panel unavailable for {driverName}: {ex.Message}";
+            return false;
+        }
+    }
+
     private static int FindMatchingWaveOutDeviceNumber(string endpointName)
     {
         for (var deviceNumber = 0; deviceNumber < WaveOut.DeviceCount; deviceNumber++)
