@@ -1118,6 +1118,15 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(windowXaml.Contains("CoreAudioSessionsItemsControl", StringComparison.Ordinal), "CoreAudio session controls should render as a controllable list");
     Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
     Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
+
+    var mixingTab = ExtractSourceBetween(
+        windowXaml,
+        "      <TabItem Header=\"Mixing\">",
+        "      <TabItem Header=\"MIDI\">");
+    var recordingIndex = mixingTab.IndexOf("Text=\"Recording\"", StringComparison.Ordinal);
+    var coreAudioIndex = mixingTab.IndexOf("Text=\"CoreAudio App Mix\"", StringComparison.Ordinal);
+    Assert(recordingIndex >= 0, "Mixing tab should include the recording section");
+    Assert(coreAudioIndex > recordingIndex, "CoreAudio App Mix should sit below the recording section in the Mixing tab");
 }
 
 static void ProcessedOutputStatusReportsActualPlaybackFormat()
