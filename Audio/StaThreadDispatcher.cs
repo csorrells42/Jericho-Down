@@ -7,7 +7,7 @@ internal sealed class StaThreadDispatcher : IDisposable
 {
     private readonly BlockingCollection<Action> _workItems = [];
     private readonly Thread _thread;
-    private bool _disposed;
+    private int _disposeRequested;
 
     public StaThreadDispatcher(string name)
     {
@@ -31,7 +31,11 @@ internal sealed class StaThreadDispatcher : IDisposable
 
     public T Invoke<T>(Func<T> action)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Volatile.Read(ref _disposeRequested) != 0 && !ReferenceEquals(Thread.CurrentThread, _thread))
+        {
+            throw new ObjectDisposedException(GetType().Name);
+        }
+
         if (ReferenceEquals(Thread.CurrentThread, _thread))
         {
             return action();
@@ -40,21 +44,29 @@ internal sealed class StaThreadDispatcher : IDisposable
         using var completed = new ManualResetEventSlim(false);
         Exception? exception = null;
         T? result = default;
-        _workItems.Add(() =>
+        try
         {
-            try
+            _workItems.Add(() =>
             {
-                result = action();
-            }
-            catch (Exception ex)
-            {
-                exception = ex;
-            }
-            finally
-            {
-                completed.Set();
-            }
-        });
+                try
+                {
+                    result = action();
+                }
+                catch (Exception ex)
+                {
+                    exception = ex;
+                }
+                finally
+                {
+                    completed.Set();
+                }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new ObjectDisposedException(GetType().Name, ex);
+        }
+
         completed.Wait();
         if (exception is not null)
         {
@@ -66,26 +78,30 @@ internal sealed class StaThreadDispatcher : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
         {
             return;
         }
 
-        _disposed = true;
         _workItems.CompleteAdding();
         if (!ReferenceEquals(Thread.CurrentThread, _thread))
         {
             _thread.Join(TimeSpan.FromSeconds(2));
         }
-
-        _workItems.Dispose();
     }
 
     private void Run()
     {
-        foreach (var workItem in _workItems.GetConsumingEnumerable())
+        try
         {
-            workItem();
+            foreach (var workItem in _workItems.GetConsumingEnumerable())
+            {
+                workItem();
+            }
+        }
+        finally
+        {
+            _workItems.Dispose();
         }
     }
 }

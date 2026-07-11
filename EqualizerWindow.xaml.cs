@@ -6065,7 +6065,7 @@ public partial class EqualizerWindow : Window
         if (_selectedOutputDevice?.IsAsio == true
             && MicrophoneSpectrumService.TryGetAsioDriverName(_selectedOutputDevice.EndpointId, out var asioDriverName))
         {
-            var asioOutput = new AsioOut(asioDriverName);
+            var asioOutput = new AsioOutputPlayer(asioDriverName);
             asioOutput.Init(provider);
             return asioOutput;
         }
