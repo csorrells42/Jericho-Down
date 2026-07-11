@@ -52,6 +52,7 @@ var tests = new (string Name, Action Test)[]
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
+    ("Audio device refresh suppresses mic selection churn", AudioDeviceRefreshSuppressesMicSelectionChurn),
     ("System audio loopback is selectable but not default mic fallback", SystemAudioLoopbackIsSelectableButNotDefaultMicFallback),
     ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
     ("Stereo input DSP applies independently per channel", StereoInputDspAppliesIndependentlyPerChannel),
@@ -85,6 +86,7 @@ var tests = new (string Name, Action Test)[]
     ("Spectrum lines carry NAudio metered peaks", SpectrumLinesCarryNaudioMeteredPeaks),
     ("Live program mix bus combines ten mic feeds", LiveProgramMixBusCombinesTenMicFeeds),
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
+    ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Stereo audio delay line preserves left and right", StereoAudioDelayLinePreservesLeftAndRight),
@@ -849,6 +851,22 @@ static void InputChannelModeFallsBackForMonoDevices()
 
     Assert(coerced == InputChannelMode.MonoSum, "a mono headset should not keep an unavailable right-channel route");
     Assert(coercedStereo == InputChannelMode.MonoSum, "a mono headset should not keep unavailable stereo-pair routing");
+}
+
+static void AudioDeviceRefreshSuppressesMicSelectionChurn()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var method = ExtractSourceBetween(
+        windowCode,
+        "    private void RefreshAudioDevicesFromSystem()",
+        "    private void RefreshVideoDevicesFromSystem()");
+
+    var guardIndex = method.IndexOf("_isUpdatingMicChannelUi = true;", StringComparison.Ordinal);
+    var itemsSourceIndex = method.IndexOf("MicrophoneComboBox.ItemsSource = inputDevices;", StringComparison.Ordinal);
+    var releaseIndex = method.IndexOf("_isUpdatingMicChannelUi = false;", StringComparison.Ordinal);
+    Assert(guardIndex >= 0, "audio device refresh should suppress mic selection events before replacing input device lists");
+    Assert(itemsSourceIndex > guardIndex, "microphone ItemsSource replacement should happen while mic UI events are suppressed");
+    Assert(releaseIndex > itemsSourceIndex, "audio device refresh should release mic UI event suppression after restoring selections");
 }
 
 static void SystemAudioLoopbackIsSelectableButNotDefaultMicFallback()
@@ -2425,6 +2443,27 @@ static void LiveMixAudibilityGatesMuteAndSolo()
     Assert(Math.Abs(output[0] - 0.7f) < 0.0001f, "solo should leave only soloed mics in the live program bus");
 }
 
+static void MixerChannelControlsDebounceStatePersistence()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowCode.Contains("private readonly DispatcherTimer _appStatePersistTimer", StringComparison.Ordinal), "window should have a debounced app-state persistence timer");
+    Assert(windowCode.Contains("private void ScheduleAppStatePersist()", StringComparison.Ordinal), "window should expose a debounced app-state persistence helper");
+
+    var checkBoxHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void MixerChannelControlChanged(object sender, RoutedEventArgs e)",
+        "    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)");
+    var sliderHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
+        "    private void ResetSelectedMixerChannelClicked(object sender, RoutedEventArgs e)");
+
+    Assert(checkBoxHandler.Contains("ScheduleAppStatePersist();", StringComparison.Ordinal), "mixer checkbox changes should debounce app-state saves");
+    Assert(sliderHandler.Contains("ScheduleAppStatePersist();", StringComparison.Ordinal), "mixer slider changes should debounce app-state saves");
+    Assert(!checkBoxHandler.Contains("PersistAppState();", StringComparison.Ordinal), "mixer checkbox changes should not synchronously save app state on the UI thread");
+    Assert(!sliderHandler.Contains("PersistAppState();", StringComparison.Ordinal), "mixer slider changes should not synchronously save app state on the UI thread");
+}
+
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()
 {
     var mic1 = new LiveMicBlockSampleProvider(48_000);
@@ -3165,6 +3204,15 @@ static object InvokeEqualizerWindowPrivateStaticWithArgs(string methodName, obje
     }
 
     return method.Invoke(null, args) ?? throw new InvalidOperationException($"EqualizerWindow.{methodName} returned null");
+}
+
+static string ExtractSourceBetween(string source, string startMarker, string endMarker)
+{
+    var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+    Assert(start >= 0, $"Could not find source marker: {startMarker}");
+    var end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+    Assert(end > start, $"Could not find source end marker: {endMarker}");
+    return source[start..end];
 }
 
 static string FindRepoFile(string relativePath)

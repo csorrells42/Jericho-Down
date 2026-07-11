@@ -63,6 +63,7 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan KaraokeLyricLineTransitionDuration = TimeSpan.FromMilliseconds(135);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan AppStatePersistDebounceInterval = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -115,6 +116,7 @@ public partial class EqualizerWindow : Window
     private readonly DispatcherTimer _audioDeviceRefreshTimer = new();
     private readonly DispatcherTimer _outputAudioSessionTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
+    private readonly DispatcherTimer _appStatePersistTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
     [
@@ -466,6 +468,8 @@ public partial class EqualizerWindow : Window
         _outputAudioSessionTimer.Tick += OutputAudioSessionTimerTick;
         _sessionPlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(120);
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
+        _appStatePersistTimer.Interval = AppStatePersistDebounceInterval;
+        _appStatePersistTimer.Tick += AppStatePersistTimerTick;
         _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(45);
         _karaokePlaybackPositionTimer.Tick += KaraokePlaybackPositionTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
@@ -1255,8 +1259,26 @@ public partial class EqualizerWindow : Window
         SaveAppStateNow();
     }
 
+    private void ScheduleAppStatePersist()
+    {
+        if (_isRestoringAppState || _isClosing || !IsLoaded)
+        {
+            return;
+        }
+
+        _appStatePersistTimer.Stop();
+        _appStatePersistTimer.Start();
+    }
+
+    private void AppStatePersistTimerTick(object? sender, EventArgs e)
+    {
+        _appStatePersistTimer.Stop();
+        PersistAppState();
+    }
+
     private void SaveAppStateNow()
     {
+        _appStatePersistTimer.Stop();
         SaveCurrentKaraokeLyricsForCurrentTrack();
         AppStateStore.SaveSettings(CaptureAppSettingsState());
     }
@@ -1520,19 +1542,28 @@ public partial class EqualizerWindow : Window
     private void RefreshAudioDevicesFromSystem()
     {
         var inputDevices = MicrophoneSpectrumService.GetInputDevices();
-        MicrophoneComboBox.ItemsSource = inputDevices;
-        MicCompareMic1DeviceComboBox.ItemsSource = inputDevices;
-        MicCompareMic2DeviceComboBox.ItemsSource = inputDevices;
-        foreach (var channel in _micChannels)
+        _isUpdatingMicChannelUi = true;
+        try
         {
-            if (channel.SelectedDevice is not null)
+            MicrophoneComboBox.ItemsSource = inputDevices;
+            MicCompareMic1DeviceComboBox.ItemsSource = inputDevices;
+            MicCompareMic2DeviceComboBox.ItemsSource = inputDevices;
+            foreach (var channel in _micChannels)
             {
-                channel.SelectedDevice = FindAudioInputDevice(inputDevices, channel.SelectedDevice.EndpointId, channel.SelectedDevice.Name);
+                if (channel.SelectedDevice is not null)
+                {
+                    channel.SelectedDevice = FindAudioInputDevice(inputDevices, channel.SelectedDevice.EndpointId, channel.SelectedDevice.Name);
+                }
             }
+
+            EnsureSystemAudioLoopbackChannel(inputDevices);
+            CoercePersistedMicChannelModes(inputDevices);
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
         }
 
-        EnsureSystemAudioLoopbackChannel(inputDevices);
-        CoercePersistedMicChannelModes(inputDevices);
         ApplyActiveMicChannelToUi();
         ConfigureLiveMixFromChannels();
 
@@ -1757,6 +1788,8 @@ public partial class EqualizerWindow : Window
         _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
         _audioDeviceRefreshTimer.Stop();
         _audioDeviceRefreshTimer.Tick -= AudioDeviceRefreshTimerTick;
+        _appStatePersistTimer.Stop();
+        _appStatePersistTimer.Tick -= AppStatePersistTimerTick;
         _outputAudioSessionTimer.Stop();
         _outputAudioSessionTimer.Tick -= OutputAudioSessionTimerTick;
         DisposeAudioDeviceNotificationWatcher();
@@ -5147,7 +5180,7 @@ public partial class EqualizerWindow : Window
         }
 
         ConfigureLiveMixFromChannels();
-        PersistAppState();
+        ScheduleAppStatePersist();
     }
 
     private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -5158,7 +5191,7 @@ public partial class EqualizerWindow : Window
         }
 
         ConfigureLiveMixFromChannels();
-        PersistAppState();
+        ScheduleAppStatePersist();
     }
 
     private void ResetSelectedMixerChannelClicked(object sender, RoutedEventArgs e)
