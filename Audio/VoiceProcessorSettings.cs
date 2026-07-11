@@ -115,6 +115,11 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     private double _naudioPitchShiftFftSize = 1024;
     private double _naudioPitchShiftOversampling = 4;
     private double _naudioPitchShiftMix = 1;
+    private bool _naudioConvolutionEnabled;
+    private double _naudioConvolutionLengthMs = 80;
+    private double _naudioConvolutionPreDelayMs = 8;
+    private double _naudioConvolutionDecay = 0.45;
+    private double _naudioConvolutionMix = 0.2;
 
     public double InputTrimDb
     {
@@ -750,6 +755,36 @@ public sealed class VoiceProcessorSettings : INotifyPropertyChanged
     {
         get => _naudioPitchShiftMix;
         set => SetField(ref _naudioPitchShiftMix, value);
+    }
+
+    public bool NAudioConvolutionEnabled
+    {
+        get => _naudioConvolutionEnabled;
+        set => SetField(ref _naudioConvolutionEnabled, value);
+    }
+
+    public double NAudioConvolutionLengthMs
+    {
+        get => _naudioConvolutionLengthMs;
+        set => SetField(ref _naudioConvolutionLengthMs, value);
+    }
+
+    public double NAudioConvolutionPreDelayMs
+    {
+        get => _naudioConvolutionPreDelayMs;
+        set => SetField(ref _naudioConvolutionPreDelayMs, value);
+    }
+
+    public double NAudioConvolutionDecay
+    {
+        get => _naudioConvolutionDecay;
+        set => SetField(ref _naudioConvolutionDecay, value);
+    }
+
+    public double NAudioConvolutionMix
+    {
+        get => _naudioConvolutionMix;
+        set => SetField(ref _naudioConvolutionMix, value);
     }
 
     public int EqualizerRevision => System.Threading.Volatile.Read(ref _equalizerRevision);

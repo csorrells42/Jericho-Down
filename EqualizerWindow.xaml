@@ -2056,6 +2056,32 @@
                   </Border>
                   <Border Style="{StaticResource DspBubble}">
                     <StackPanel>
+                      <TextBlock Text="NAudio Convolution" Foreground="#F8FAFC" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                      <CheckBox Content="ImpulseResponseConvolution" IsChecked="{Binding NAudioConvolutionEnabled}" Foreground="#F8FAFC" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Impulse length" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioConvolutionLengthSlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioConvolutionLengthSlider" Minimum="10" Maximum="160" Value="{Binding NAudioConvolutionLengthMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Pre-delay" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioConvolutionPreDelaySlider, Path=Value, StringFormat={}{0:0} ms}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioConvolutionPreDelaySlider" Minimum="0" Maximum="40" Value="{Binding NAudioConvolutionPreDelayMs}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Decay" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioConvolutionDecaySlider, Path=Value, StringFormat={}{0:P0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioConvolutionDecaySlider" Minimum="0.05" Maximum="0.95" Value="{Binding NAudioConvolutionDecay}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" Margin="0,0,0,8" />
+                      <Grid>
+                        <TextBlock Text="Wet mix" Foreground="#B8C7D9" />
+                        <TextBlock Text="{Binding ElementName=NAudioConvolutionMixSlider, Path=Value, StringFormat={}{0:P0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider x:Name="NAudioConvolutionMixSlider" Minimum="0" Maximum="1" Value="{Binding NAudioConvolutionMix}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                    </StackPanel>
+                  </Border>
+                  <Border Style="{StaticResource DspBubble}">
+                    <StackPanel>
                       <CheckBox Content="Noise suppression" IsChecked="{Binding NoiseSuppressionEnabled}" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" Margin="0,0,0,8">
                         <CheckBox.ToolTip>
                           <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Gently turns down steady low-level room or computer noise under your voice." />

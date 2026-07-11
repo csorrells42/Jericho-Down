@@ -13715,6 +13715,10 @@ public partial class EqualizerWindow : Window
         SetProcessingSliderDefault(NAudioPitchShiftFftSizeSlider, Settings.NAudioPitchShiftFftSize);
         SetProcessingSliderDefault(NAudioPitchShiftOversamplingSlider, Settings.NAudioPitchShiftOversampling);
         SetProcessingSliderDefault(NAudioPitchShiftMixSlider, Settings.NAudioPitchShiftMix);
+        SetProcessingSliderDefault(NAudioConvolutionLengthSlider, Settings.NAudioConvolutionLengthMs);
+        SetProcessingSliderDefault(NAudioConvolutionPreDelaySlider, Settings.NAudioConvolutionPreDelayMs);
+        SetProcessingSliderDefault(NAudioConvolutionDecaySlider, Settings.NAudioConvolutionDecay);
+        SetProcessingSliderDefault(NAudioConvolutionMixSlider, Settings.NAudioConvolutionMix);
         SetProcessingSliderDefault(DePopperSlider, Settings.DePopperAmountDb);
         SetProcessingSliderDefault(DePopperFrequencySlider, Settings.DePopperFrequencyHz);
         SetProcessingSliderDefault(DePopperThresholdSlider, Settings.DePopperThresholdDb);

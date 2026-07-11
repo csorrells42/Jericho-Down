@@ -33,6 +33,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
+    ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -508,6 +509,35 @@ static void NAudioPitchShiftMovesToneFrequency()
     Assert(xaml.Contains("NAudio Pitch Shift", StringComparison.Ordinal), "NAudio pitch controls should be grouped together");
 }
 
+static void NAudioConvolutionAddsGeneratedImpulseTail()
+{
+    const int sampleRate = 48_000;
+    var impulse = new float[sampleRate / 2];
+    impulse[0] = 0.65f;
+
+    var bypass = ProcessNAudioConvolutionTestTone(impulse, _ => { });
+    var convolved = ProcessNAudioConvolutionTestTone(impulse, settings =>
+    {
+        settings.NAudioConvolutionEnabled = true;
+        settings.NAudioConvolutionLengthMs = 90;
+        settings.NAudioConvolutionPreDelayMs = 6;
+        settings.NAudioConvolutionDecay = 0.8;
+        settings.NAudioConvolutionMix = 1;
+    });
+
+    var tailStart = sampleRate / 100;
+    Assert(CalculateTailRms(convolved, tailStart) > CalculateTailRms(bypass, tailStart) * 3d + 0.0005d, "NAudio convolution should add an audible generated impulse tail");
+    Assert(convolved.All(float.IsFinite), "NAudio convolution output should stay finite");
+
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs")));
+    Assert(processor.Contains("ImpulseResponseConvolution", StringComparison.Ordinal), "NAudio convolution should use ImpulseResponseConvolution");
+    Assert(processor.Contains(".Convolve(", StringComparison.Ordinal), "NAudio convolution should call Convolve");
+    Assert(processor.Contains(".Normalize(", StringComparison.Ordinal), "NAudio convolution should normalize generated impulses");
+
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(xaml.Contains("NAudio Convolution", StringComparison.Ordinal), "NAudio convolution controls should be grouped together");
+}
+
 static void VoiceBreathReducerTamesAiryBreathNoise()
 {
     const int sampleRate = 48_000;
@@ -617,7 +647,8 @@ static void VoiceProcessorUsesEveryDspSetting()
         Environment.NewLine,
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -3615,6 +3646,14 @@ static float[] ProcessNAudioBiQuadTestTone(float[] samples, Action<VoiceProcesso
 }
 
 static float[] ProcessNAudioPitchShiftTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
+{
+    var settings = CreateTransparentVoiceSettings();
+    configure(settings);
+    var processor = new VoiceSampleProcessor(settings, sampleRate: 48_000);
+    return processor.Process(samples);
+}
+
+static float[] ProcessNAudioConvolutionTestTone(float[] samples, Action<VoiceProcessorSettings> configure)
 {
     var settings = CreateTransparentVoiceSettings();
     configure(settings);
