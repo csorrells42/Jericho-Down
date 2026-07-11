@@ -1188,6 +1188,7 @@ static void SystemAudioLoopbackMixerStripIsLeftOfMics()
     var second = channels[1]!;
     Assert((bool)GetProperty(first, "IsSystemAudioLoopbackChannel")!, "computer audio strip should render before mic strips");
     Assert((string)GetProperty(first, "DisplayName")! == "Computer Audio", "computer audio strip should have a clear label");
+    Assert((bool)GetProperty(first, "IsMuted")!, "computer audio should start muted so loopback is opt-in");
     Assert((double)GetProperty(first, "InputGainDb")! == -6d, "computer audio should start with safe gain staging");
     Assert(((string)GetProperty(first, "RouteText")!).Contains("Stereo pair", StringComparison.Ordinal), "computer audio should default to stereo pair routing");
     Assert((int)GetProperty(second, "ChannelNumber")! == 1, "Mic 1 should render immediately after computer audio");
@@ -1287,6 +1288,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Set(settings, "MixerLimiterEnabled", true);
     Set(settings, "MixerLimiterCeilingDb", -2.5d);
     Set(settings, "MixerOutputMode", MixBusOutputMode.Mono.ToString());
+    Set(settings, "SystemAudioLoopbackDefaultMuteApplied", true);
     Set(settings, "OutputDeviceName", "Sanctuary mains");
     Set(settings, "OutputEndpointId", "{output-guid}");
     Set(settings, "ProcessedOutputEnabled", true);
@@ -1338,6 +1340,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((bool)Get(restored!, "MixerLimiterEnabled")!, "limiter toggle should survive app-state roundtrip");
     Assert((double)Get(restored!, "MixerLimiterCeilingDb")! == -2.5d, "limiter ceiling should survive app-state roundtrip");
     Assert((string)Get(restored!, "MixerOutputMode")! == MixBusOutputMode.Mono.ToString(), "output mode should survive app-state roundtrip");
+    Assert((bool)Get(restored!, "SystemAudioLoopbackDefaultMuteApplied")!, "loopback default mute migration flag should survive app-state roundtrip");
     Assert((string)Get(restored!, "OutputDeviceName")! == "Sanctuary mains", "output device name should survive app-state roundtrip");
     Assert((string)Get(restored!, "OutputEndpointId")! == "{output-guid}", "output endpoint should survive app-state roundtrip");
     Assert((bool)Get(restored!, "ProcessedOutputEnabled")!, "processed output toggle should survive app-state roundtrip");

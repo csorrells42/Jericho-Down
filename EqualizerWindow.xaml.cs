@@ -876,6 +876,7 @@ public partial class EqualizerWindow : Window
         }
 
         EnsureSystemAudioLoopbackChannel(devices);
+        ApplySystemAudioLoopbackSafeDefault();
 
         if (persistedChannels.Count == 0)
         {
@@ -1001,6 +1002,23 @@ public partial class EqualizerWindow : Window
         }
 
         channel.InputChannelMode = CoerceInputChannelModeForDevice(loopbackDevice, null, channel.InputChannelMode);
+    }
+
+    private void ApplySystemAudioLoopbackSafeDefault()
+    {
+        if (_appSettings.SystemAudioLoopbackDefaultMuteApplied)
+        {
+            return;
+        }
+
+        var channel = FindMicChannel(SystemAudioLoopbackChannelNumber);
+        if (channel is null)
+        {
+            return;
+        }
+
+        channel.IsMuted = true;
+        channel.IsSoloed = false;
     }
 
     private static AudioInputDevice? FindAudioInputDevice(
@@ -1324,6 +1342,7 @@ public partial class EqualizerWindow : Window
             MixerLimiterEnabled = _masterMixLimiterEnabled,
             MixerLimiterCeilingDb = _masterMixLimiterCeilingDb,
             MixerOutputMode = _masterMixOutputMode.ToString(),
+            SystemAudioLoopbackDefaultMuteApplied = true,
             OutputDeviceName = _selectedOutputDevice?.Name,
             OutputEndpointId = _selectedOutputDevice?.EndpointId,
             ProcessedOutputEnabled = ProcessedOutputCheckBox?.IsChecked == true,
@@ -14012,6 +14031,7 @@ public partial class EqualizerWindow : Window
                 CreateDefaultEqualizerBands())
             {
                 IsEnabled = true,
+                IsMuted = true,
                 InputGainDb = -6d,
                 InputChannelMode = InputChannelMode.StereoPair
             }

@@ -221,6 +221,8 @@ internal sealed class AppSettingsState
 
     public string? MixerOutputMode { get; set; }
 
+    public bool SystemAudioLoopbackDefaultMuteApplied { get; set; }
+
     public string? OutputDeviceName { get; set; }
 
     public string? OutputEndpointId { get; set; }
