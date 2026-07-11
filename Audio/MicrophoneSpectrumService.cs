@@ -23,8 +23,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
     private const string AsioEndpointPrefix = "asio:";
+    private const int MaximumAsioInputChannels = 10;
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
+    private static readonly int[] PreferredAsioSampleRates = [DefaultSampleRate, 44100, 96000, 192000];
     private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
     private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
@@ -50,7 +52,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private LiveProgramMixBus? _programMixer;
     private MixBusSettings _mixBusSettings = MixBusSettings.Default;
     private readonly object _additionalCaptureLock = new();
-    private readonly Dictionary<int, AdditionalCaptureRuntime> _additionalCaptures = [];
+    private readonly Dictionary<string, AdditionalCaptureRuntime> _additionalCaptures = [];
     private IWavePlayer? _processedOutput;
     private BufferedWaveProvider? _processedOutputProvider;
     private IWaveProvider? _processedOutputPlaybackProvider;
@@ -102,6 +104,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _stereoInputAnalysisEnabled;
     private int _preferWaveInCapture;
     private int _currentDeviceNumber;
+    private string? _currentInputEndpointId;
+    private AudioInputBackend _currentInputBackend = AudioInputBackend.Windows;
     private VoiceProcessorSettings? _currentProcessorSettings;
     private InputChannelMode _currentInputChannelMode = InputChannelMode.MonoSum;
     private string _captureBackendDescription = "not open";
@@ -118,6 +122,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         public required int ChannelNumber { get; init; }
 
         public required int DeviceNumber { get; init; }
+
+        public string? EndpointId { get; init; }
+
+        public AudioInputBackend Backend { get; init; }
+
+        public required string DeviceKey { get; init; }
 
         public required InputChannelMode InputChannelMode { get; init; }
 
@@ -183,13 +193,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
         private readonly MicrophoneSpectrumService _service;
         private bool _disposed;
 
-        public AdditionalCaptureRuntime(MicrophoneSpectrumService service, int deviceNumber)
+        public AdditionalCaptureRuntime(
+            MicrophoneSpectrumService service,
+            int deviceNumber,
+            string? endpointId,
+            AudioInputBackend backend,
+            string deviceKey)
         {
             _service = service;
             DeviceNumber = deviceNumber;
+            EndpointId = endpointId;
+            Backend = backend;
+            DeviceKey = deviceKey;
         }
 
         public int DeviceNumber { get; }
+
+        public string? EndpointId { get; }
+
+        public AudioInputBackend Backend { get; }
+
+        public string DeviceKey { get; }
 
         public IWaveIn? Capture { get; set; }
 
@@ -206,8 +230,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             if (!_disposed && e.Exception is not null)
             {
-                _service.ReportStreamStatus($"Aux mic device {DeviceNumber + 1} stopped: {e.Exception.Message}");
+                _service.ReportStreamStatus($"{DescribeInputDevice()} stopped: {e.Exception.Message}");
             }
+        }
+
+        private string DescribeInputDevice()
+        {
+            return MicrophoneSpectrumService.DescribeInputDevice(DeviceNumber, EndpointId, Backend);
         }
 
         public void Dispose()
@@ -497,6 +526,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             var runtime = _liveMixChannels[i];
             if (runtime.ChannelNumber != channel.ChannelNumber
                 || runtime.DeviceNumber != channel.DeviceNumber
+                || !string.Equals(runtime.EndpointId, channel.EndpointId, StringComparison.Ordinal)
+                || runtime.Backend != channel.Backend
                 || runtime.InputChannelMode != channel.InputChannelMode
                 || runtime.IsEnabled != channel.IsEnabled
                 || !ReferenceEquals(runtime.ProcessorSettings, channel.ProcessorSettings))
@@ -551,6 +582,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             {
                 var processor = new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate);
                 var preserveStereo = channel.InputChannelMode == InputChannelMode.StereoPair;
+                var deviceKey = CreateInputDeviceKey(channel.DeviceNumber, channel.EndpointId, channel.Backend);
                 var volumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent);
                 LiveMicBlockSampleProvider? sourceProvider = null;
                 LiveStereoBlockSampleProvider? stereoSourceProvider = null;
@@ -605,6 +637,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 {
                     ChannelNumber = channel.ChannelNumber,
                     DeviceNumber = channel.DeviceNumber,
+                    EndpointId = channel.EndpointId,
+                    Backend = channel.Backend,
+                    DeviceKey = deviceKey,
                     InputChannelMode = channel.InputChannelMode,
                     ProcessorSettings = channel.ProcessorSettings,
                     VolumeLinear = volumeLinear,
@@ -629,7 +664,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     ProgramMeterProvider = programMeterProvider,
                     Analyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
                     RawAnalyzer = new SpectrumAnalyzer(SpectrumDisplaySampleRate),
-                    SyncBuffer = channel.DeviceNumber == _currentDeviceNumber
+                    SyncBuffer = deviceKey == CreateCurrentInputDeviceKey()
                         ? null
                         : new AudioSyncBuffer(sampleRate, AuxiliaryCaptureTargetLatency, AuxiliaryCaptureMaximumLatency, preserveStereo ? 2 : 1)
                 };
@@ -669,6 +704,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             devices.Add(new AudioInputDevice(deviceNumber, capabilities.ProductName, capabilities.Channels));
         }
 
+        AddAsioInputDevices(devices);
         devices.Add(AudioInputDevice.CreateSystemAudioLoopback());
         return devices;
     }
@@ -721,6 +757,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         if (device.IsSystemAudioLoopback)
         {
             return TryGetSystemAudioLoopbackFormat();
+        }
+
+        if (device.IsAsio)
+        {
+            return TryGetAsioInputDeviceFormat(device);
         }
 
         try
@@ -809,6 +850,107 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return builder.ToString();
     }
 
+    private static void AddAsioInputDevices(List<AudioInputDevice> devices)
+    {
+        try
+        {
+            if (!AsioOut.isSupported())
+            {
+                return;
+            }
+
+            foreach (var driverName in AsioOut.GetDriverNames())
+            {
+                if (string.IsNullOrWhiteSpace(driverName))
+                {
+                    continue;
+                }
+
+                var inputChannels = TryGetAsioInputChannelCount(driverName, out var channelCount)
+                    ? channelCount
+                    : 2;
+                if (inputChannels <= 0)
+                {
+                    continue;
+                }
+
+                devices.Add(new AudioInputDevice(
+                    AudioInputDevice.AsioInputDeviceNumber,
+                    $"ASIO: {driverName}",
+                    Math.Clamp(inputChannels, 1, MaximumAsioInputChannels),
+                    CreateAsioEndpointId(driverName),
+                    AudioInputBackend.Asio));
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TryGetAsioInputChannelCount(string driverName, out int channelCount)
+    {
+        channelCount = 0;
+        try
+        {
+            using var asio = new AsioOut(driverName);
+            channelCount = Math.Clamp(asio.DriverInputChannelCount, 0, MaximumAsioInputChannels);
+            return channelCount > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static AudioDeviceFormat? TryGetAsioInputDeviceFormat(AudioInputDevice device)
+    {
+        if (!TryGetAsioDriverName(device.EndpointId, out var driverName))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var asio = new AsioOut(driverName);
+            var sampleRate = PreferredSampleRates.FirstOrDefault(rate => IsAsioSampleRateSupported(asio, rate));
+            if (sampleRate <= 0)
+            {
+                sampleRate = DefaultSampleRate;
+            }
+
+            var channels = Math.Clamp(asio.DriverInputChannelCount, 1, MaximumAsioInputChannels);
+            return new AudioDeviceFormat(sampleRate, channels, 32);
+        }
+        catch
+        {
+            var fallbackChannels = Math.Clamp(device.MaximumInputChannels, 1, MaximumAsioInputChannels);
+            return new AudioDeviceFormat(DefaultSampleRate, fallbackChannels, 32);
+        }
+    }
+
+    private static bool IsAsioSampleRateSupported(AsioOut asio, int sampleRate)
+    {
+        try
+        {
+            return asio.IsSampleRateSupported(sampleRate);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string CreateInputDeviceKey(int deviceNumber, string? endpointId, AudioInputBackend backend)
+    {
+        return !string.IsNullOrWhiteSpace(endpointId)
+            ? $"{backend}:{endpointId}"
+            : $"{backend}:device:{deviceNumber}";
+    }
+
+    private string CreateCurrentInputDeviceKey()
+    {
+        return CreateInputDeviceKey(_currentDeviceNumber, _currentInputEndpointId, _currentInputBackend);
+    }
     private static void AddWaveOutDevices(List<AudioOutputDevice> devices)
     {
         for (var deviceNumber = 0; deviceNumber < WaveOut.DeviceCount; deviceNumber++)
@@ -881,17 +1023,37 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     public void Start(int deviceNumber = 0, VoiceProcessorSettings? processorSettings = null, InputChannelMode inputChannelMode = InputChannelMode.MonoSum)
     {
+        Start(deviceNumber, null, AudioInputBackend.Windows, processorSettings, inputChannelMode);
+    }
+
+    public void Start(AudioInputDevice device, VoiceProcessorSettings? processorSettings = null, InputChannelMode inputChannelMode = InputChannelMode.MonoSum)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        Start(device.DeviceNumber, device.EndpointId, device.Backend, processorSettings, inputChannelMode);
+    }
+
+    private void Start(
+        int deviceNumber,
+        string? endpointId,
+        AudioInputBackend backend,
+        VoiceProcessorSettings? processorSettings,
+        InputChannelMode inputChannelMode)
+    {
         if (_capture is not null)
         {
             return;
         }
 
-        if (_currentDeviceNumber != deviceNumber)
+        var currentDeviceKey = CreateCurrentInputDeviceKey();
+        var requestedDeviceKey = CreateInputDeviceKey(deviceNumber, endpointId, backend);
+        if (!string.Equals(currentDeviceKey, requestedDeviceKey, StringComparison.Ordinal))
         {
             System.Threading.Volatile.Write(ref _preferWaveInCapture, 0);
         }
 
         _currentDeviceNumber = deviceNumber;
+        _currentInputEndpointId = endpointId;
+        _currentInputBackend = backend;
         _currentProcessorSettings = processorSettings;
         _currentInputChannelMode = inputChannelMode;
         _autoRecoverCapture = true;
@@ -901,7 +1063,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         IWaveIn capture;
         try
         {
-            capture = StartCapture(deviceNumber);
+            capture = StartCapture(deviceNumber, endpointId, backend, CaptureDataAvailable, CaptureRecordingStopped);
         }
         catch
         {
@@ -934,7 +1096,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
             RestartProcessedOutput();
         }
     }
-
     public void Stop()
     {
         _autoRecoverCapture = false;
@@ -1073,10 +1234,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     public void RestartCurrentCapture(TimeSpan stopTimeout)
     {
-        RestartCapture(_currentDeviceNumber, _currentProcessorSettings, _currentInputChannelMode, stopTimeout);
+        RestartCapture(
+            _currentDeviceNumber,
+            _currentInputEndpointId,
+            _currentInputBackend,
+            _currentProcessorSettings,
+            _currentInputChannelMode,
+            stopTimeout);
     }
 
     public void RestartCapture(int deviceNumber, VoiceProcessorSettings? processorSettings, InputChannelMode inputChannelMode, TimeSpan stopTimeout)
+    {
+        RestartCapture(deviceNumber, null, AudioInputBackend.Windows, processorSettings, inputChannelMode, stopTimeout);
+    }
+
+    private void RestartCapture(
+        int deviceNumber,
+        string? endpointId,
+        AudioInputBackend backend,
+        VoiceProcessorSettings? processorSettings,
+        InputChannelMode inputChannelMode,
+        TimeSpan stopTimeout)
     {
         var stopTask = Task.Run(Stop);
         var stoppedCleanly = stopTask.Wait(stopTimeout);
@@ -1091,7 +1269,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             try
             {
-                Start(deviceNumber, processorSettings, inputChannelMode);
+                Start(deviceNumber, endpointId, backend, processorSettings, inputChannelMode);
                 return;
             }
             catch (Exception ex)
@@ -1112,53 +1290,66 @@ public sealed class MicrophoneSpectrumService : IDisposable
             liveMixChannels = _liveMixChannels;
         }
 
-        var deviceNumbers = liveMixChannels
-            .Where(channel => channel.IsEnabled && channel.DeviceNumber != _currentDeviceNumber && channel.SyncBuffer is not null)
-            .Select(channel => channel.DeviceNumber)
-            .Distinct()
-            .OrderBy(deviceNumber => deviceNumber)
+        var currentDeviceKey = CreateCurrentInputDeviceKey();
+        var captureDevices = liveMixChannels
+            .Where(channel => channel.IsEnabled
+                && !string.Equals(channel.DeviceKey, currentDeviceKey, StringComparison.Ordinal)
+                && channel.SyncBuffer is not null)
+            .GroupBy(channel => channel.DeviceKey)
+            .Select(group => group.First())
+            .OrderBy(channel => channel.DeviceKey, StringComparer.Ordinal)
             .ToArray();
+        var deviceKeys = captureDevices.Select(channel => channel.DeviceKey).ToArray();
 
         lock (_additionalCaptureLock)
         {
-            var currentDeviceNumbers = _additionalCaptures.Keys.OrderBy(deviceNumber => deviceNumber).ToArray();
-            if (currentDeviceNumbers.SequenceEqual(deviceNumbers))
+            var currentDeviceKeys = _additionalCaptures.Keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+            if (currentDeviceKeys.SequenceEqual(deviceKeys, StringComparer.Ordinal))
             {
                 return;
             }
         }
 
         StopAdditionalCaptures();
-        foreach (var deviceNumber in deviceNumbers)
+        foreach (var device in captureDevices)
         {
-            var runtime = new AdditionalCaptureRuntime(this, deviceNumber);
+            var runtime = new AdditionalCaptureRuntime(
+                this,
+                device.DeviceNumber,
+                device.EndpointId,
+                device.Backend,
+                device.DeviceKey);
             try
             {
-                var capture = StartCapture(deviceNumber, runtime.DataAvailable, runtime.RecordingStopped);
+                var capture = StartCapture(device.DeviceNumber, device.EndpointId, device.Backend, runtime.DataAvailable, runtime.RecordingStopped);
                 runtime.Capture = capture;
                 runtime.BackendDescription = DescribeCaptureBackend(capture);
                 lock (_additionalCaptureLock)
                 {
-                    _additionalCaptures[deviceNumber] = runtime;
+                    _additionalCaptures[device.DeviceKey] = runtime;
                 }
 
-                ReportStreamStatus($"{DescribeInputDeviceNumber(deviceNumber)} listening via {runtime.BackendDescription}.");
+                ReportStreamStatus($"{DescribeInputDevice(device.DeviceNumber, device.EndpointId, device.Backend)} listening via {runtime.BackendDescription}.");
             }
             catch (Exception ex)
             {
                 runtime.Dispose();
-                ReportStreamStatus($"{DescribeInputDeviceNumber(deviceNumber)} unavailable: {ex.Message}");
+                ReportStreamStatus($"{DescribeInputDevice(device.DeviceNumber, device.EndpointId, device.Backend)} unavailable: {ex.Message}");
             }
         }
     }
 
-    private static string DescribeInputDeviceNumber(int deviceNumber)
+    private static string DescribeInputDevice(int deviceNumber, string? endpointId, AudioInputBackend backend)
     {
+        if (backend == AudioInputBackend.Asio && TryGetAsioDriverName(endpointId, out var driverName))
+        {
+            return $"ASIO input {driverName}";
+        }
+
         return IsSystemAudioLoopbackDeviceNumber(deviceNumber)
             ? "Computer audio loopback"
             : $"Aux mic device {deviceNumber + 1}";
     }
-
     public void ConfigureProcessedRecordingSource(ProcessedRecordingSource source, int selectedChannelNumber)
     {
         lock (_processedRecordingLock)
@@ -1337,7 +1528,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         var channels = liveMixChannels
             .Where(channel => channel.IsEnabled
-                && channel.DeviceNumber == runtime.DeviceNumber
+                && string.Equals(channel.DeviceKey, runtime.DeviceKey, StringComparison.Ordinal)
                 && channel.SyncBuffer is not null)
             .ToArray();
         if (channels.Length == 0)
@@ -1442,7 +1633,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
             if (channel.PreservesStereo)
             {
                 var channelStereoSamples = _mixChannelStereoInputSamples.AsSpan(0, stereoSampleCount);
-                if (channel.DeviceNumber == _currentDeviceNumber)
+                if (string.Equals(channel.DeviceKey, CreateCurrentInputDeviceKey(), StringComparison.Ordinal))
                 {
                     FillStereoSamples(buffer, captureFormat, channel.InputChannelMode, channelStereoSamples);
                 }
@@ -1469,7 +1660,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 continue;
             }
 
-            if (channel.DeviceNumber == _currentDeviceNumber)
+            if (string.Equals(channel.DeviceKey, CreateCurrentInputDeviceKey(), StringComparison.Ordinal))
             {
                 FillMonoSamples(buffer, captureFormat, channel.InputChannelMode, channelInputSamples);
             }
@@ -1953,14 +2144,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private IWaveIn StartCapture(int deviceNumber)
     {
-        return StartCapture(deviceNumber, CaptureDataAvailable, CaptureRecordingStopped);
+        return StartCapture(deviceNumber, null, AudioInputBackend.Windows, CaptureDataAvailable, CaptureRecordingStopped);
     }
 
     private IWaveIn StartCapture(
         int deviceNumber,
+        string? endpointId,
+        AudioInputBackend backend,
         EventHandler<WaveInEventArgs> dataAvailable,
         EventHandler<StoppedEventArgs> recordingStopped)
     {
+        if (backend == AudioInputBackend.Asio)
+        {
+            return StartAsioInputCapture(endpointId, dataAvailable, recordingStopped);
+        }
+
         if (IsSystemAudioLoopbackDeviceNumber(deviceNumber))
         {
             return StartSystemAudioLoopbackCapture(dataAvailable, recordingStopped);
@@ -2002,7 +2200,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         throw startException ?? new InvalidOperationException("Could not start microphone capture.");
     }
-
     private static bool IsSystemAudioLoopbackDeviceNumber(int deviceNumber)
     {
         return deviceNumber == AudioInputDevice.SystemAudioLoopbackDeviceNumber;
@@ -2027,6 +2224,40 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    private IWaveIn StartAsioInputCapture(
+        string? endpointId,
+        EventHandler<WaveInEventArgs> dataAvailable,
+        EventHandler<StoppedEventArgs> recordingStopped)
+    {
+        if (!TryGetAsioDriverName(endpointId, out var driverName))
+        {
+            throw new InvalidOperationException("Could not identify the selected ASIO input driver.");
+        }
+
+        var channelCount = TryGetAsioInputChannelCount(driverName, out var detectedChannels)
+            ? detectedChannels
+            : MaximumAsioInputChannels;
+        channelCount = Math.Clamp(channelCount, 1, MaximumAsioInputChannels);
+        Exception? startException = null;
+        foreach (var sampleRate in PreferredAsioSampleRates)
+        {
+            var capture = new AsioInputCapture(driverName, sampleRate, channelCount);
+            AttachCaptureEvents(capture, dataAvailable, recordingStopped);
+            try
+            {
+                capture.StartRecording();
+                return capture;
+            }
+            catch (Exception ex)
+            {
+                startException ??= ex;
+                DetachCaptureEvents(capture, dataAvailable, recordingStopped);
+                capture.Dispose();
+            }
+        }
+
+        throw startException ?? new InvalidOperationException("Could not start ASIO input capture.");
+    }
     private bool TryStartWasapiCapture(
         int deviceNumber,
         EventHandler<WaveInEventArgs> dataAvailable,
@@ -3602,7 +3833,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     Thread.Sleep(TimeSpan.FromMilliseconds(250 * attempt));
                     try
                     {
-                        Start(_currentDeviceNumber, _currentProcessorSettings, _currentInputChannelMode);
+                        Start(_currentDeviceNumber, _currentInputEndpointId, _currentInputBackend, _currentProcessorSettings, _currentInputChannelMode);
                         StreamStatusChanged?.Invoke(this, "Audio stream recovered.");
                         return;
                     }
@@ -3776,5 +4007,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
     [DllImport("avrt.dll", SetLastError = true)]
     private static extern bool AvSetMmThreadPriority(IntPtr avrtHandle, AvrtPriority priority);
 }
+
+
+
+
+
+
+
 
 

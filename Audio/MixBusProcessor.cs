@@ -234,4 +234,7 @@ public sealed record MicrophoneLiveChannelSettings(
     bool IsSoloed,
     double DelayMilliseconds,
     bool IsEnabled,
-    bool IsMuted);
+    bool IsMuted,
+    string? EndpointId = null,
+    AudioInputBackend Backend = AudioInputBackend.Windows);
+
