@@ -8,6 +8,7 @@ public sealed class AsioInputCapture : IWaveIn
     private readonly object _gate = new();
     private readonly int _requestedChannelCount;
     private readonly int _requestedSampleRate;
+    private StaThreadDispatcher? _dispatcher;
     private AsioOut? _asio;
     private float[] _sampleBuffer = [];
     private byte[] _byteBuffer = [];
@@ -38,6 +39,61 @@ public sealed class AsioInputCapture : IWaveIn
     public WaveFormat WaveFormat { get; set; }
 
     public void StartRecording()
+    {
+        StaThreadDispatcher dispatcher;
+        lock (_gate)
+        {
+            if (_asio is not null || _dispatcher is not null)
+            {
+                return;
+            }
+
+            dispatcher = new StaThreadDispatcher($"Jericho ASIO Input ({DriverName})");
+            _dispatcher = dispatcher;
+        }
+
+        try
+        {
+            dispatcher.Invoke(StartRecordingCore);
+        }
+        catch
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_dispatcher, dispatcher))
+                {
+                    _dispatcher = null;
+                }
+            }
+
+            dispatcher.Dispose();
+            throw;
+        }
+    }
+
+    public void StopRecording()
+    {
+        StopRecording(null, raiseStopped: true);
+    }
+
+    public void Dispose()
+    {
+        StopRecording(null, raiseStopped: true);
+    }
+
+    public static int CopyInterleavedSamplesToBytes(ReadOnlySpan<float> samples, Span<byte> destination)
+    {
+        var bytes = MemoryMarshal.AsBytes(samples);
+        if (destination.Length < bytes.Length)
+        {
+            throw new ArgumentException("Destination is too small for ASIO samples.", nameof(destination));
+        }
+
+        bytes.CopyTo(destination);
+        return bytes.Length;
+    }
+
+    private void StartRecordingCore()
     {
         lock (_gate)
         {
@@ -77,28 +133,6 @@ public sealed class AsioInputCapture : IWaveIn
         }
     }
 
-    public void StopRecording()
-    {
-        StopRecording(null, raiseStopped: true);
-    }
-
-    public void Dispose()
-    {
-        StopRecording(null, raiseStopped: true);
-    }
-
-    public static int CopyInterleavedSamplesToBytes(ReadOnlySpan<float> samples, Span<byte> destination)
-    {
-        var bytes = MemoryMarshal.AsBytes(samples);
-        if (destination.Length < bytes.Length)
-        {
-            throw new ArgumentException("Destination is too small for ASIO samples.", nameof(destination));
-        }
-
-        bytes.CopyTo(destination);
-        return bytes.Length;
-    }
-
     private void AsioAudioAvailable(object? sender, AsioAudioAvailableEventArgs e)
     {
         try
@@ -122,7 +156,7 @@ public sealed class AsioInputCapture : IWaveIn
         }
         catch (Exception ex)
         {
-            RaiseRecordingStopped(ex);
+            StopRecording(ex, raiseStopped: true);
         }
     }
 
@@ -138,6 +172,33 @@ public sealed class AsioInputCapture : IWaveIn
 
     private void StopRecording(Exception? exception, bool raiseStopped)
     {
+        StaThreadDispatcher? dispatcher;
+        lock (_gate)
+        {
+            dispatcher = _dispatcher;
+            _dispatcher = null;
+        }
+
+        if (dispatcher is not null)
+        {
+            try
+            {
+                dispatcher.Invoke(() => StopRecordingCore(ref exception));
+            }
+            finally
+            {
+                dispatcher.Dispose();
+            }
+        }
+
+        if (raiseStopped)
+        {
+            RaiseRecordingStopped(exception);
+        }
+    }
+
+    private void StopRecordingCore(ref Exception? exception)
+    {
         AsioOut? asio;
         lock (_gate)
         {
@@ -145,27 +206,24 @@ public sealed class AsioInputCapture : IWaveIn
             _asio = null;
         }
 
-        if (asio is not null)
+        if (asio is null)
         {
-            asio.AudioAvailable -= AsioAudioAvailable;
-            asio.PlaybackStopped -= AsioPlaybackStopped;
-            asio.DriverResetRequest -= AsioDriverResetRequested;
-            try
-            {
-                asio.Stop();
-            }
-            catch (Exception ex) when (exception is null)
-            {
-                exception = ex;
-            }
-
-            asio.Dispose();
+            return;
         }
 
-        if (raiseStopped)
+        asio.AudioAvailable -= AsioAudioAvailable;
+        asio.PlaybackStopped -= AsioPlaybackStopped;
+        asio.DriverResetRequest -= AsioDriverResetRequested;
+        try
         {
-            RaiseRecordingStopped(exception);
+            asio.Stop();
         }
+        catch (Exception ex) when (exception is null)
+        {
+            exception = ex;
+        }
+
+        asio.Dispose();
     }
 
     private void RaiseRecordingStopped(Exception? exception)
@@ -183,4 +241,3 @@ public sealed class AsioInputCapture : IWaveIn
         RecordingStopped?.Invoke(this, new StoppedEventArgs(exception));
     }
 }
-

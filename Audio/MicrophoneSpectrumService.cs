@@ -2546,7 +2546,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         try
         {
-            player = new AsioOut(driverName);
+            player = new AsioOutputPlayer(driverName);
             player.Init(provider);
             player.Play();
             return true;
