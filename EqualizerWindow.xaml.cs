@@ -5993,8 +5993,7 @@ public partial class EqualizerWindow : Window
     {
         if (MicrophoneSpectrumService.TrySetOutputAudioSessionControls(
                 _selectedOutputDevice,
-                item.SessionInstanceIdentifier,
-                item.SessionIdentifier,
+                item.ControlTargets,
                 volume,
                 isMuted,
                 out var status))
@@ -14087,8 +14086,8 @@ public partial class EqualizerWindow : Window
             State = snapshot.State;
             ProcessId = snapshot.ProcessId;
             ProcessName = snapshot.ProcessName;
-            SessionIdentifier = snapshot.SessionIdentifier;
-            SessionInstanceIdentifier = snapshot.SessionInstanceIdentifier;
+            ControlTargets = snapshot.ControlTargets;
+            SessionCount = snapshot.SessionCount;
             PeakDisplayText = FormatPeak(snapshot.PeakLevel);
             _isMuted = snapshot.IsMuted;
             _volumePercent = Math.Clamp(snapshot.Volume * 100d, 0d, 100d);
@@ -14104,13 +14103,17 @@ public partial class EqualizerWindow : Window
 
         public string ProcessName { get; }
 
-        public string SessionIdentifier { get; }
-
-        public string SessionInstanceIdentifier { get; }
-
         public string PeakDisplayText { get; }
 
-        public string Details => $"{State} | {(IsMuted ? "muted" : VolumeDisplayText)} | peak {PeakDisplayText}";
+        public IReadOnlyList<CoreAudioSessionControlTarget> ControlTargets { get; }
+
+        public int SessionCount { get; }
+
+        public string Details => $"{SessionCountText}{State} | {(IsMuted ? "muted" : VolumeDisplayText)} | peak {PeakDisplayText}";
+
+        private string SessionCountText => SessionCount > 1
+            ? $"{SessionCount} sessions | "
+            : string.Empty;
 
         public string VolumeDisplayText => $"{VolumePercent:0}%";
 

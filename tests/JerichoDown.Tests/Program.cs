@@ -1094,11 +1094,28 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         State: "Active",
         SessionIdentifier: "session",
         SessionInstanceIdentifier: "instance");
+    var duplicateSession = new CoreAudioSessionSnapshot(
+        string.Empty,
+        "MusicApp",
+        1300,
+        IsSystemSoundsSession: false,
+        IsMuted: false,
+        Volume: 0.25f,
+        PeakLevel: 0.75f,
+        State: "Inactive",
+        SessionIdentifier: "session-2",
+        SessionInstanceIdentifier: "instance-2");
+    var collapsedSessions = CoreAudioSessionCatalog.CollapseDuplicateSessions([activeSession, duplicateSession]);
+    Assert(collapsedSessions.Count == 1, "duplicate visible app sessions should collapse into one widget row");
+    Assert(collapsedSessions[0].SessionCount == 2, "collapsed app session should preserve the hidden session count");
+    Assert(collapsedSessions[0].ControlTargets.Count == 2, "collapsed app session should keep every Windows session control target");
+    Assert(Math.Abs(collapsedSessions[0].PeakLevel - 0.75f) < 0.0001f, "collapsed app session should show the loudest duplicate peak");
     var text = (string)InvokeEqualizerWindowPrivateStaticWithArgs(
         "BuildOutputAudioSessionText",
-        [windowsDevice, new[] { activeSession }]);
+        [windowsDevice, collapsedSessions]);
     Assert(text.Contains("MusicApp", StringComparison.Ordinal), "output panel should show active app session names");
     Assert(text.Contains("Active", StringComparison.Ordinal), "output panel should show active app session state");
+    Assert(text.Contains("2 sessions", StringComparison.Ordinal), "output panel should explain when Windows exposes multiple sessions for one app");
 
     var asioText = (string)InvokeEqualizerWindowPrivateStaticWithArgs(
         "BuildOutputAudioSessionText",
@@ -1109,6 +1126,8 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(catalogSource.Contains("SimpleAudioVolume", StringComparison.Ordinal), "CoreAudio controls should use Windows SimpleAudioVolume");
     Assert(catalogSource.Contains("simpleVolume.Volume =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session volume");
     Assert(catalogSource.Contains("simpleVolume.Mute =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session mute");
+    Assert(catalogSource.Contains("CollapseDuplicateSessions", StringComparison.Ordinal), "CoreAudio app controls should collapse duplicate Windows sessions");
+    Assert(catalogSource.Contains("validTargets.Any", StringComparison.Ordinal), "CoreAudio grouped controls should apply to every hidden session target");
 
     var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(windowXaml.Contains("CoreAudio App Mix", StringComparison.Ordinal), "Mixing tab should expose CoreAudio app-session controls");
