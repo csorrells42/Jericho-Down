@@ -1023,6 +1023,10 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         AudioOutputBackend.Asio);
     var sessions = MicrophoneSpectrumService.GetOutputAudioSessions(asioDevice);
     Assert(sessions.Count == 0, "ASIO drivers should not be queried as Windows CoreAudio app sessions");
+    Assert(
+        !MicrophoneSpectrumService.TrySetOutputAudioSessionControls(asioDevice, "instance", "session", 0.5f, false, out var asioControlStatus),
+        "ASIO drivers should not accept Windows CoreAudio app-session control updates");
+    Assert(asioControlStatus.Contains("ASIO", StringComparison.OrdinalIgnoreCase), "ASIO CoreAudio control status should explain why controls are unavailable");
 
     Assert(
         CoreAudioSessionCatalog.CreateDisplayTitle(string.Empty, "MusicApp", 1200, isSystemSoundsSession: false) == "MusicApp",
@@ -1056,6 +1060,17 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         "BuildOutputAudioSessionText",
         [asioDevice, Array.Empty<CoreAudioSessionSnapshot>()]);
     Assert(asioText.Contains("ASIO", StringComparison.Ordinal), "output panel should explain ASIO session visibility");
+
+    var catalogSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "CoreAudioSessionCatalog.cs")));
+    Assert(catalogSource.Contains("SimpleAudioVolume", StringComparison.Ordinal), "CoreAudio controls should use Windows SimpleAudioVolume");
+    Assert(catalogSource.Contains("simpleVolume.Volume =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session volume");
+    Assert(catalogSource.Contains("simpleVolume.Mute =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session mute");
+
+    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(windowXaml.Contains("CoreAudio App Mix", StringComparison.Ordinal), "Mixing tab should expose CoreAudio app-session controls");
+    Assert(windowXaml.Contains("CoreAudioSessionsItemsControl", StringComparison.Ordinal), "CoreAudio session controls should render as a controllable list");
+    Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
+    Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
 }
 
 static void ProcessedOutputStatusReportsActualPlaybackFormat()

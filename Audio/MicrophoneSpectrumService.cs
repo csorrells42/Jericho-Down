@@ -859,6 +859,23 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return CoreAudioSessionCatalog.GetRenderSessions(device);
     }
 
+    public static bool TrySetOutputAudioSessionControls(
+        AudioOutputDevice? device,
+        string sessionInstanceIdentifier,
+        string sessionIdentifier,
+        float? volume,
+        bool? isMuted,
+        out string status)
+    {
+        return CoreAudioSessionCatalog.TrySetRenderSessionControls(
+            device,
+            sessionInstanceIdentifier,
+            sessionIdentifier,
+            volume,
+            isMuted,
+            out status);
+    }
+
     private static bool DeviceNamesMatch(string waveInName, string endpointName)
     {
         var normalizedWaveInName = NormalizeDeviceName(waveInName);

@@ -114,6 +114,7 @@ public partial class EqualizerWindow : Window
     private readonly MidiInputMonitor _midiInputMonitor = new();
     private readonly MidiOutputPort _midiOutputPort = new();
     private readonly ObservableCollection<MidiMessageSnapshot> _midiMessages = [];
+    private readonly ObservableCollection<CoreAudioSessionControlItem> _coreAudioSessionItems = [];
     private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
     private readonly DispatcherTimer _audioDeviceRefreshTimer = new();
@@ -261,6 +262,7 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingOutputRoutingUi;
     private bool _isUpdatingMicChannelUi;
     private bool _isUpdatingMixerUi;
+    private bool _isUpdatingCoreAudioSessionUi;
     private int _audioStreamOperationVersion;
     private int _selectedDeviceFormatRefreshVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
@@ -712,6 +714,7 @@ public partial class EqualizerWindow : Window
         UpdateStandaloneAudioRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
         MidiMessageListBox.ItemsSource = _midiMessages;
+        CoreAudioSessionsItemsControl.ItemsSource = _coreAudioSessionItems;
         RefreshMidiDevicesFromSystem(updateStatus: false);
 
         RestorePersistedPresetOrDefault();
@@ -6087,6 +6090,34 @@ public partial class EqualizerWindow : Window
             ? []
             : MicrophoneSpectrumService.GetOutputAudioSessions(_selectedOutputDevice);
         OutputAudioSessionsText.Text = BuildOutputAudioSessionText(_selectedOutputDevice, sessions);
+        RefreshCoreAudioSessionItems(sessions);
+    }
+
+    private void RefreshCoreAudioSessionItems(IReadOnlyList<CoreAudioSessionSnapshot> sessions)
+    {
+        if (CoreAudioSessionsItemsControl is null)
+        {
+            return;
+        }
+
+        _isUpdatingCoreAudioSessionUi = true;
+        try
+        {
+            _coreAudioSessionItems.Clear();
+            if (_selectedOutputDevice is null || _selectedOutputDevice.IsAsio)
+            {
+                return;
+            }
+
+            foreach (var session in sessions.Take(10))
+            {
+                _coreAudioSessionItems.Add(new CoreAudioSessionControlItem(session));
+            }
+        }
+        finally
+        {
+            _isUpdatingCoreAudioSessionUi = false;
+        }
     }
 
     private static string BuildOutputAudioSessionText(
@@ -6113,6 +6144,61 @@ public partial class EqualizerWindow : Window
         return activeSessions.Length == 0
             ? "Apps on selected output: none active."
             : $"Apps on selected output: {string.Join("; ", activeSessions)}";
+    }
+
+    private void RefreshCoreAudioSessionsClicked(object sender, RoutedEventArgs e)
+    {
+        UpdateOutputAudioSessionText();
+        StatusText.Text = "CoreAudio app sessions refreshed.";
+    }
+
+    private void CoreAudioSessionMuteChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingCoreAudioSessionUi || sender is not CheckBox { DataContext: CoreAudioSessionControlItem item })
+        {
+            return;
+        }
+
+        ApplyCoreAudioSessionControls(item, null, item.IsMuted);
+    }
+
+    private void CoreAudioSessionVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_isUpdatingCoreAudioSessionUi || sender is not Slider { DataContext: CoreAudioSessionControlItem item } slider || !slider.IsLoaded)
+        {
+            return;
+        }
+
+        item.VolumePercent = Math.Clamp(e.NewValue, 0d, 100d);
+        ApplyCoreAudioSessionControls(item, (float)(item.VolumePercent / 100d), null);
+    }
+
+    private void ApplyCoreAudioSessionControls(CoreAudioSessionControlItem item, float? volume, bool? isMuted)
+    {
+        if (MicrophoneSpectrumService.TrySetOutputAudioSessionControls(
+                _selectedOutputDevice,
+                item.SessionInstanceIdentifier,
+                item.SessionIdentifier,
+                volume,
+                isMuted,
+                out var status))
+        {
+            if (volume.HasValue)
+            {
+                item.VolumePercent = Math.Clamp(volume.Value * 100d, 0d, 100d);
+            }
+
+            if (isMuted.HasValue)
+            {
+                item.IsMuted = isMuted.Value;
+            }
+
+            StatusText.Text = status;
+            return;
+        }
+
+        StatusText.Text = status;
+        UpdateOutputAudioSessionText();
     }
 
     private void UpdateAudioFormatRouteText()
@@ -14272,6 +14358,98 @@ public partial class EqualizerWindow : Window
             new EqualizerBand("16k", 16000),
             new EqualizerBand("20k", 20000)
         ];
+    }
+
+    private sealed class CoreAudioSessionControlItem : INotifyPropertyChanged
+    {
+        private bool _isMuted;
+        private double _volumePercent;
+
+        public CoreAudioSessionControlItem(CoreAudioSessionSnapshot snapshot)
+        {
+            DisplayTitle = snapshot.DisplayTitle;
+            State = snapshot.State;
+            ProcessId = snapshot.ProcessId;
+            ProcessName = snapshot.ProcessName;
+            SessionIdentifier = snapshot.SessionIdentifier;
+            SessionInstanceIdentifier = snapshot.SessionInstanceIdentifier;
+            PeakDisplayText = FormatPeak(snapshot.PeakLevel);
+            _isMuted = snapshot.IsMuted;
+            _volumePercent = Math.Clamp(snapshot.Volume * 100d, 0d, 100d);
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string DisplayTitle { get; }
+
+        public string State { get; }
+
+        public int ProcessId { get; }
+
+        public string ProcessName { get; }
+
+        public string SessionIdentifier { get; }
+
+        public string SessionInstanceIdentifier { get; }
+
+        public string PeakDisplayText { get; }
+
+        public string Details => $"{State} | {(IsMuted ? "muted" : VolumeDisplayText)} | peak {PeakDisplayText}";
+
+        public string VolumeDisplayText => $"{VolumePercent:0}%";
+
+        public bool IsMuted
+        {
+            get => _isMuted;
+            set
+            {
+                if (SetField(ref _isMuted, value))
+                {
+                    OnPropertyChanged(nameof(Details));
+                }
+            }
+        }
+
+        public double VolumePercent
+        {
+            get => _volumePercent;
+            set
+            {
+                var normalized = Math.Clamp(double.IsFinite(value) ? value : 0d, 0d, 100d);
+                if (SetField(ref _volumePercent, normalized))
+                {
+                    OnPropertyChanged(nameof(VolumeDisplayText));
+                    OnPropertyChanged(nameof(Details));
+                }
+            }
+        }
+
+        private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value))
+            {
+                return false;
+            }
+
+            field = value;
+            OnPropertyChanged(propertyName);
+            return true;
+        }
+
+        private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        private static string FormatPeak(float peakLevel)
+        {
+            if (peakLevel <= 0f)
+            {
+                return "-inf dB";
+            }
+
+            return $"{20d * Math.Log10(Math.Clamp(peakLevel, float.Epsilon, 1f)):0.0} dB";
+        }
     }
 
     private sealed class MicChannelStrip : INotifyPropertyChanged
