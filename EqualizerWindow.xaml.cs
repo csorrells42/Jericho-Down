@@ -2034,6 +2034,95 @@ public partial class EqualizerWindow : Window
         SelectMainTabFromMenu("Karaoke", "Karaoke settings selected.");
     }
 
+    private void AudioDeviceDiagnosticsMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedInput = _activeMicChannel?.SelectedDevice ?? _selectedDevice;
+        var selectedOutput = _selectedOutputDevice;
+        var inputFormat = ReferenceEquals(selectedInput, _selectedDevice)
+            ? _selectedDeviceFormat ?? GetSelectedDeviceFormat()
+            : selectedInput is null
+                ? null
+                : MicrophoneSpectrumService.TryGetInputDeviceFormat(selectedInput);
+        var outputFormat = selectedOutput is null
+            ? null
+            : MicrophoneSpectrumService.TryGetOutputDeviceFormat(selectedOutput);
+        var inputDevices = MicrophoneSpectrumService.GetInputDevices();
+        var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
+        var report = AudioDeviceDiagnostics.BuildReport(
+            selectedInput,
+            selectedOutput,
+            inputFormat,
+            outputFormat,
+            inputDevices,
+            outputDevices);
+
+        ShowAudioDeviceDiagnosticsDialog(report);
+        StatusText.Text = "Audio device diagnostics opened.";
+    }
+
+    private void ShowAudioDeviceDiagnosticsDialog(string report)
+    {
+        var reportBox = new TextBox
+        {
+            Text = report,
+            IsReadOnly = true,
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            Background = new SolidColorBrush(Color.FromRgb(8, 16, 23)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(51, 75, 92)),
+            Padding = new Thickness(12)
+        };
+        var closeButton = new Button
+        {
+            Content = "Close",
+            Width = 96,
+            Padding = new Thickness(12, 6, 12, 6),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0)
+        };
+        var content = new Grid
+        {
+            Margin = new Thickness(18)
+        };
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.Children.Add(new TextBlock
+        {
+            Text = "Audio Device Diagnostics",
+            Foreground = new SolidColorBrush(Color.FromRgb(248, 250, 252)),
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+        Grid.SetRow(reportBox, 1);
+        content.Children.Add(reportBox);
+        Grid.SetRow(closeButton, 2);
+        content.Children.Add(closeButton);
+
+        var dialog = new Window
+        {
+            Title = "Audio Device Diagnostics",
+            Owner = this,
+            Width = Math.Min(920d, Math.Max(720d, ActualWidth * 0.62d)),
+            Height = Math.Min(760d, Math.Max(540d, ActualHeight * 0.72d)),
+            MinWidth = 640d,
+            MinHeight = 460d,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromRgb(5, 7, 10)),
+            Content = content,
+            ShowInTaskbar = false
+        };
+        closeButton.Click += (_, _) => dialog.Close();
+        dialog.SourceInitialized += (_, _) => ApplyDarkTitleBar(dialog);
+        dialog.ShowDialog();
+    }
+
     private void SelectMainTabFromMenu(string header, string status)
     {
         if (MainTabControl is null)

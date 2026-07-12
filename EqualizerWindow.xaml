@@ -904,6 +904,8 @@
           <MenuItem Header="Settings">
             <MenuItem Header="Podcast Settings" Click="PodcastSettingsMenuClicked" />
             <MenuItem Header="Karaoke Settings" Click="KaraokeSettingsMenuClicked" />
+            <Separator />
+            <MenuItem Header="Audio Device Diagnostics" Click="AudioDeviceDiagnosticsMenuClicked" />
           </MenuItem>
           <MenuItem Header="ASIO Settings" Click="AsioSettingsMenuClicked" />
         </MenuItem>

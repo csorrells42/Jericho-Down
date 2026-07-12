@@ -47,6 +47,7 @@ var tests = new (string Name, Action Test)[]
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
+    ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
@@ -819,6 +820,8 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Click=\"PodcastSettingsMenuClicked\"", StringComparison.Ordinal), "Podcast Settings should be wired to a handler");
     Assert(xaml.Contains("Header=\"Karaoke Settings\"", StringComparison.Ordinal), "Settings submenu should expose Karaoke Settings");
     Assert(xaml.Contains("Click=\"KaraokeSettingsMenuClicked\"", StringComparison.Ordinal), "Karaoke Settings should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Audio Device Diagnostics\"", StringComparison.Ordinal), "Settings submenu should expose Audio Device Diagnostics");
+    Assert(xaml.Contains("Click=\"AudioDeviceDiagnosticsMenuClicked\"", StringComparison.Ordinal), "Audio Device Diagnostics should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
@@ -871,6 +874,34 @@ static void AudioDeviceFormatDisplayText()
     var format = new AudioDeviceFormat(48_000, 2, 24);
 
     Assert(format.ToString() == "48 kHz, 2 ch, 24-bit", "audio format display text changed unexpectedly");
+}
+
+static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
+{
+    var appInput = AudioInputDevice.CreateProcessLoopback(4242, "MusicApp");
+    var output = new AudioOutputDevice(-1, "Default playback device");
+    var report = AudioDeviceDiagnostics.BuildReport(
+        appInput,
+        output,
+        new AudioDeviceFormat(48_000, 2, 32),
+        new AudioDeviceFormat(44_100, 2, 16),
+        [appInput],
+        [output]);
+
+    Assert(report.Contains("Audio Device Diagnostics", StringComparison.Ordinal), "diagnostics report should have a clear title");
+    Assert(report.Contains("Selected Input", StringComparison.Ordinal), "diagnostics report should identify the selected input");
+    Assert(report.Contains("MusicApp", StringComparison.Ordinal), "diagnostics report should include the selected app audio input");
+    Assert(report.Contains("Process loopback target PID: 4242", StringComparison.Ordinal), "diagnostics report should show app-loopback process IDs");
+    Assert(report.Contains("sample rates differ", StringComparison.OrdinalIgnoreCase), "diagnostics report should warn when output resampling will be used");
+    Assert(report.Contains("refresh audio devices", StringComparison.OrdinalIgnoreCase), "diagnostics report should explain app-loopback refresh behavior");
+
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
+    Assert(diagnosticsSource.Contains("AudioEndpointVolume", StringComparison.Ordinal), "diagnostics should inspect Windows endpoint volume/mute state");
+    Assert(diagnosticsSource.Contains("AudioMeterInformation", StringComparison.Ordinal), "diagnostics should inspect current endpoint meter state");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowSource.Contains("AudioDeviceDiagnostics.BuildReport", StringComparison.Ordinal), "diagnostics menu should build a device report");
+    Assert(windowSource.Contains("ShowAudioDeviceDiagnosticsDialog", StringComparison.Ordinal), "diagnostics menu should open a popup window");
 }
 
 static void ProcessedMonitorUsesStabilityFirstBuffering()
