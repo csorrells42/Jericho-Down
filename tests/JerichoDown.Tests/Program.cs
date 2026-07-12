@@ -742,6 +742,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("SelectMidiInputDevice", StringComparison.Ordinal), "MIDI input selection should restore by saved device identity");
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
     Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI sequence speed should be captured in app state");
+    Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI sequence stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active sequence playback before resetting output");
     var expectedSectionOrder = new[]
     {
         "1 MIDI Devices",

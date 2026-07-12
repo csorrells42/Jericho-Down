@@ -2007,6 +2007,7 @@ public partial class EqualizerWindow : Window
     {
         try
         {
+            StopMidiSequencePlayback("MIDI sequence stopped by panic.", resetOutput: false);
             _midiOutputPort.Reset();
             SetMidiStatus("MIDI panic sent.");
         }
@@ -2579,6 +2580,7 @@ public partial class EqualizerWindow : Window
                     SetMidiStatus("Recording transport toggled from MIDI.");
                     break;
                 case MidiControlMappingActions.MidiPanic:
+                    StopMidiSequencePlayback("MIDI sequence stopped by panic.", resetOutput: false);
                     _midiOutputPort.Reset();
                     SetMidiStatus("MIDI panic sent from mapping.");
                     break;
