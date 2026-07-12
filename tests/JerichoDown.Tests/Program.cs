@@ -37,6 +37,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
     ("NAudio envelope generator shapes attack", NAudioEnvelopeGeneratorShapesAttack),
     ("NAudio DMO effect chain exposes DirectSound effects", NAudioDmoEffectChainExposesDirectSoundEffects),
+    ("DSP screen separates custom and NAudio families", DspScreenSeparatesCustomAndNaudioFamilies),
     ("NAudio DMO effect chain processes safely", NAudioDmoEffectChainProcessesSafely),
     ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
     ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
@@ -650,6 +651,62 @@ static void NAudioDmoEffectChainExposesDirectSoundEffects()
     Assert(xaml.Contains("DMO Waves Reverb", StringComparison.Ordinal), "NAudio DMO controls should include Waves reverb");
 }
 
+static void DspScreenSeparatesCustomAndNaudioFamilies()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+
+    Assert(xaml.Contains("Text=\"Jericho DSP\"", StringComparison.Ordinal), "custom DSP controls should have a Jericho DSP family bubble");
+    Assert(xaml.Contains("Text=\"Custom chain\"", StringComparison.Ordinal), "custom DSP bubble should be labeled as the custom chain");
+    Assert(xaml.Contains("Text=\"NAudio DSP\"", StringComparison.Ordinal), "NAudio controls should have a NAudio DSP family bubble");
+    Assert(xaml.Contains("Text=\"Library-backed\"", StringComparison.Ordinal), "NAudio DSP bubble should be labeled as library-backed");
+    Assert(xaml.Contains("x:Key=\"DspGroupedPanel\"", StringComparison.Ordinal), "family bubbles should use flat nested DSP panels");
+
+    var customGroup = ExtractSourceBetween(xaml, "Text=\"Jericho DSP\"", "Text=\"NAudio DSP\"");
+    foreach (var marker in new[]
+    {
+        "Text=\"Input Trim\"",
+        "Content=\"De-popper\"",
+        "Content=\"High-pass filter\"",
+        "Content=\"Low-pass filter\"",
+        "Content=\"Hum removal\"",
+        "Content=\"Notch filter\"",
+        "Content=\"Parametric EQ\"",
+        "Content=\"Shelf EQ\"",
+        "Content=\"Noise suppression\"",
+        "Content=\"Expander\"",
+        "Content=\"Noise gate\"",
+        "Content=\"Echo reducer\"",
+        "Content=\"Compressor\"",
+        "Content=\"De-esser\"",
+        "Content=\"Breath reducer\"",
+        "Content=\"Presence enhancer\"",
+        "Content=\"Warmth\"",
+        "Text=\"Makeup Gain\"",
+        "Content=\"Limiter\""
+    })
+    {
+        Assert(customGroup.Contains(marker, StringComparison.Ordinal), $"Jericho DSP group should contain {marker}");
+    }
+
+    Assert(!customGroup.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "Jericho DSP group should not contain NAudio controls");
+    Assert(Regex.Matches(customGroup, "StaticResource DspGroupedPanel").Count >= 10, "custom DSP controls should be nested inside the Jericho DSP bubble");
+
+    var naudioGroup = ExtractSourceBetween(xaml, "Text=\"NAudio DSP\"", "<TabItem Header=\"Mixing\">");
+    foreach (var marker in new[]
+    {
+        "Text=\"NAudio BiQuad Filter Rack\"",
+        "Text=\"NAudio Special Effects\"",
+        "Text=\"NAudio DMO Effects\""
+    })
+    {
+        Assert(naudioGroup.Contains(marker, StringComparison.Ordinal), $"NAudio DSP group should contain {marker}");
+    }
+
+    Assert(!naudioGroup.Contains("Text=\"Input Trim\"", StringComparison.Ordinal), "NAudio DSP group should not contain custom controls");
+    Assert(!naudioGroup.Contains("Content=\"Noise gate\"", StringComparison.Ordinal), "NAudio DSP group should not contain custom gate controls");
+    Assert(!naudioGroup.Contains("StaticResource DspBubble", StringComparison.Ordinal), "individual NAudio sections should be flat grouped panels inside the NAudio DSP bubble");
+    Assert(Regex.Matches(naudioGroup, "StaticResource DspGroupedPanel").Count >= 3, "NAudio DSP sections should be nested inside the NAudio DSP bubble");
+}
 static void NAudioDmoEffectChainProcessesSafely()
 {
     var source = GenerateSine(48_000, 440, 0.22, 0.12);
