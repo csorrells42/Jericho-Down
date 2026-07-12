@@ -103,6 +103,8 @@ public partial class EqualizerWindow : Window
         .OrderBy(property => property.Name)
         .ToArray();
     private static readonly double EqualizerHoverHalfPowerRatio = CalculateEqualizerHoverHalfPowerRatio();
+    private const double MixerUnityVolumePercent = 100d;
+    private const double MixerUnityMagnetismPercent = 2d;
     private readonly MicrophoneSpectrumService _spectrumService = new();
     private readonly MediaFoundationCameraPreviewService _cameraPreviewService = new();
     private readonly DirectShowCameraPreviewService _directShowPreviewService = new();
@@ -239,6 +241,7 @@ public partial class EqualizerWindow : Window
     private readonly Dictionary<Slider, double> _processingSliderDefaults = [];
     private readonly Dictionary<Slider, string> _processingSliderBaseToolTips = [];
     private bool _isSnappingProcessingSlider;
+    private bool _isSnappingMixerUnitySlider;
     private bool _isSnappingVideoDenoiseSlider;
     private AudioInputDevice? _selectedDevice;
     private AudioOutputDevice? _selectedOutputDevice;
@@ -6626,9 +6629,59 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private bool TrySnapMixerUnitySlider(object sender)
+    {
+        if (_isSnappingMixerUnitySlider
+            || sender is not Slider slider
+            || !IsMixerUnityVolumeSlider(slider))
+        {
+            return false;
+        }
+
+        var snappedValue = SnapMixerUnityVolumePercent(slider.Value);
+        if (Math.Abs(snappedValue - slider.Value) < 0.001d)
+        {
+            return false;
+        }
+
+        _isSnappingMixerUnitySlider = true;
+        try
+        {
+            slider.Value = snappedValue;
+        }
+        finally
+        {
+            _isSnappingMixerUnitySlider = false;
+        }
+
+        return true;
+    }
+
+    private static bool IsMixerUnityVolumeSlider(Slider slider)
+    {
+        return Math.Abs(slider.Minimum) < 0.001d
+            && Math.Abs(slider.Maximum - 150d) < 0.001d;
+    }
+
+    private static double SnapMixerUnityVolumePercent(double value)
+    {
+        if (!double.IsFinite(value)
+            || Math.Abs(value - MixerUnityVolumePercent) > MixerUnityMagnetismPercent)
+        {
+            return value;
+        }
+
+        return MixerUnityVolumePercent;
+    }
+
     private void MixerChannelControlChanged(object sender, RoutedEventArgs e)
     {
         if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        if (TrySnapMixerUnitySlider(sender))
         {
             return;
         }
@@ -6640,6 +6693,11 @@ public partial class EqualizerWindow : Window
     private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        if (TrySnapMixerUnitySlider(sender))
         {
             return;
         }
@@ -6678,6 +6736,11 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (TrySnapMixerUnitySlider(sender))
+        {
+            return;
+        }
+
         ReadMasterMixControls();
         ConfigureLiveMixFromChannels();
         PersistAppState();
@@ -6686,6 +6749,11 @@ public partial class EqualizerWindow : Window
     private void MasterMixControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_isUpdatingMixerUi)
+        {
+            return;
+        }
+
+        if (TrySnapMixerUnitySlider(sender))
         {
             return;
         }

@@ -107,6 +107,7 @@ var tests = new (string Name, Action Test)[]
     ("Mixer strip clicks select channels cheaply", MixerStripClicksSelectChannelsCheaply),
     ("Active mic selection avoids synchronous format probe", ActiveMicSelectionAvoidsSynchronousFormatProbe),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
+    ("Mixer volume controls mark and snap unity", MixerVolumeControlsMarkAndSnapUnity),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Stereo audio delay line preserves left and right", StereoAudioDelayLinePreservesLeftAndRight),
@@ -3228,6 +3229,51 @@ static void MixerChannelControlsDebounceStatePersistence()
     Assert(!sliderHandler.Contains("PersistAppState();", StringComparison.Ordinal), "mixer slider changes should not synchronously save app state on the UI thread");
     Assert(!checkBoxHandler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mixer checkbox changes should not fully reconfigure the live mix");
     Assert(!sliderHandler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mixer slider changes should not fully reconfigure the live mix");
+}
+
+static void MixerVolumeControlsMarkAndSnapUnity()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var mixerFaderStyle = ExtractSourceBetween(
+        xaml,
+        "    <Style x:Key=\"MixerFaderSlider\"",
+        "    <Style x:Key=\"ProcessedOutputToggle\"");
+    Assert(mixerFaderStyle.Contains("Ticks=\"{TemplateBinding Ticks}\"", StringComparison.Ordinal), "mixer fader style should render slider-provided tick marks");
+    Assert(mixerFaderStyle.Contains("IsDirectionReversed=\"True\"", StringComparison.Ordinal), "mixer fader unity tick marks should follow the fader direction");
+    Assert(!mixerFaderStyle.Contains("VerticalAlignment=\"Center\" Margin=\"5,0\"", StringComparison.Ordinal), "mixer faders should not use a fixed center marker for unity");
+
+    var mixingTab = ExtractSourceBetween(
+        xaml,
+        "      <TabItem Header=\"Mixing\">",
+        "      <TabItem Header=\"MIDI\">");
+    Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\"", StringComparison.Ordinal), "mixer tab should expose the master volume slider");
+    Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\" Width=\"128\" Minimum=\"0\" Maximum=\"150\" Value=\"100\" Ticks=\"100\"", StringComparison.Ordinal), "master volume should mark unity at 100 percent");
+    Assert(mixingTab.Contains("Style=\"{StaticResource MixerFaderSlider}\" Minimum=\"0\" Maximum=\"150\"", StringComparison.Ordinal)
+        && mixingTab.Contains("Value=\"{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\" Ticks=\"100\"", StringComparison.Ordinal), "channel faders should mark unity at 100 percent");
+
+    var snapMethod = typeof(EqualizerWindow).GetMethod(
+        "SnapMixerUnityVolumePercent",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(snapMethod is not null, "mixer unity snap helper should be available");
+    double Snap(double value) => (double)snapMethod!.Invoke(null, [value])!;
+
+    Assert(Math.Abs(Snap(98d) - 100d) < 0.0001d, "mixer volume should snap up to unity inside the magnet zone");
+    Assert(Math.Abs(Snap(102d) - 100d) < 0.0001d, "mixer volume should snap down to unity inside the magnet zone");
+    Assert(Math.Abs(Snap(97.9d) - 97.9d) < 0.0001d, "mixer volume should remain free below the magnet zone");
+    Assert(Math.Abs(Snap(102.1d) - 102.1d) < 0.0001d, "mixer volume should remain free above the magnet zone");
+    Assert(double.IsNaN(Snap(double.NaN)), "mixer volume snap should leave non-finite values for existing clamping paths");
+
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var mixerSliderHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
+        "    private void ResetSelectedMixerChannelClicked");
+    var masterSliderHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void MasterMixControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
+        "    private void MasterOutputModeChanged");
+    Assert(mixerSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "channel faders should apply the unity magnet before updating the live mix");
+    Assert(masterSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "master volume should apply the unity magnet before rebuilding the live mix");
 }
 
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()

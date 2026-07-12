@@ -419,7 +419,8 @@
                   </Thumb>
                 </Track.Thumb>
               </Track>
-              <Rectangle Height="2" Fill="#F4C542" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="5,0" />
+              <TickBar Width="13" HorizontalAlignment="Left" Margin="3,11,0,11" Fill="#F4C542" Placement="Left" ReservedSpace="10" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Ticks="{TemplateBinding Ticks}" IsDirectionReversed="True" />
+              <TickBar Width="13" HorizontalAlignment="Right" Margin="0,11,3,11" Fill="#F4C542" Placement="Right" ReservedSpace="10" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Ticks="{TemplateBinding Ticks}" IsDirectionReversed="True" />
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsEnabled" Value="False">
@@ -2683,7 +2684,7 @@
               </Grid.ColumnDefinitions>
               <TextBlock Text="Master" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0" />
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Slider x:Name="MasterVolumeSlider" Width="128" Minimum="0" Maximum="150" Value="100" TickFrequency="10" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
+                <Slider x:Name="MasterVolumeSlider" Width="128" Minimum="0" Maximum="150" Value="100" Ticks="100" TickPlacement="BottomRight" TickFrequency="10" VerticalAlignment="Center" ValueChanged="MasterMixControlChanged" />
                 <TextBlock Text="{Binding ElementName=MasterVolumeSlider, Path=Value, StringFormat={}{0:0}%}" Foreground="#F8FAFC" Width="52" VerticalAlignment="Center" Margin="8,0,0,0" />
               </StackPanel>
               <TextBlock Grid.Column="2" Text="Mode" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="8,0,6,0" />
@@ -2777,7 +2778,7 @@
                         <StackPanel Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,8">
                           <CheckBox Content="Mute" IsChecked="{Binding IsMuted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Checked="MixerChannelControlChanged" Unchecked="MixerChannelControlChanged" />
                         </StackPanel>
-                        <Slider Grid.Row="3" Style="{StaticResource MixerFaderSlider}" Minimum="0" Maximum="150" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="10" HorizontalAlignment="Center" ValueChanged="MixerChannelControlChanged" />
+                        <Slider Grid.Row="3" Style="{StaticResource MixerFaderSlider}" Minimum="0" Maximum="150" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Ticks="100" TickPlacement="Both" TickFrequency="10" HorizontalAlignment="Center" ValueChanged="MixerChannelControlChanged" />
                         <Grid Grid.Row="4" Margin="0,8,0,8">
                           <TextBlock Text="{Binding VolumeDisplayText}" Foreground="#F8FAFC" FontWeight="SemiBold" HorizontalAlignment="Center" />
                           <Ellipse Width="9" Height="9" Stroke="#D7FFF9" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center">
