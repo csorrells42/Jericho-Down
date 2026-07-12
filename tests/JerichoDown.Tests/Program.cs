@@ -115,6 +115,8 @@ var tests = new (string Name, Action Test)[]
     ("Audio sync buffer holds target latency", AudioSyncBufferHoldsTargetLatency),
     ("Audio sync buffer preserves interleaved stereo", AudioSyncBufferPreservesInterleavedStereo),
     ("Audio sync buffer resamples and trims drift", AudioSyncBufferResamplesAndTrimsDrift),
+    ("Audio sync buffer uses NAudio WDL resampler", AudioSyncBufferUsesNAudioWdlResampler),
+    ("Processed output resamples ASIO fallback formats", ProcessedOutputResamplesAsioFallbackFormats),
     ("Camera mode auto display text is stable", CameraModeAutoDisplayText),
     ("Enhanced karaoke LRC parses inline timings", EnhancedKaraokeLrcParsesInlineTimings),
     ("Timed karaoke word selection waits for first timestamp", TimedKaraokeWordSelectionWaitsForFirstTimestamp),
@@ -3433,7 +3435,8 @@ static void AudioSyncBufferResamplesAndTrimsDrift()
     resampleBuffer.Write(source, 44_100);
     Assert(resampleBuffer.ReadAligned(output), "resampled buffer should provide the requested output");
     Assert(Math.Abs(output[0]) < 0.0001f, "resampled output should start at the first source sample");
-    Assert(output[^1] > 0.99f, "resampled output should reach the end of the source ramp");
+    Assert(output.Max() > 0.9f, "resampled output should preserve the high end of the source ramp");
+    Assert(output.Skip(output.Length / 2).Average() > 0.45f, "resampled output should keep the ramp energy through the later samples");
     Assert(output.All(float.IsFinite), "resampled output should stay finite");
 
     var driftBuffer = new AudioSyncBuffer(1_000, TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(20));
@@ -3442,6 +3445,49 @@ static void AudioSyncBufferResamplesAndTrimsDrift()
     Assert(driftBuffer.ReadAligned(new float[5]), "drift buffer should still produce output after trimming");
     Assert(driftBuffer.DriftTrimCount > 0, "excess buffered audio should be trimmed as drift");
     Assert(driftBuffer.BufferedSamples < beforeTrimCount, "drift trim should reduce buffered audio");
+}
+
+static void AudioSyncBufferUsesNAudioWdlResampler()
+{
+    const int sourceSampleRate = 44_100;
+    const int targetSampleRate = 48_000;
+    var source = GenerateSine(sourceSampleRate, 1_000, 0.35, 0.1);
+    var outputLength = NAudioSampleRateConverter.EstimateOutputSampleCount(source.Length, sourceSampleRate, targetSampleRate, channelCount: 1);
+    var output = new float[outputLength];
+
+    Assert(NAudioSampleRateConverter.TryResampleInterleaved(source, sourceSampleRate, targetSampleRate, 1, output, 0, output.Length, out var written), "NAudio WDL resampler should convert mixed sample-rate input blocks");
+    Assert(written > outputLength * 0.9, "NAudio WDL resampler should produce the expected amount of output audio");
+    Assert(output.Take(written).All(float.IsFinite), "NAudio WDL resampler output should stay finite");
+
+    var expectedTone = CalculateToneMagnitude(output, targetSampleRate, 1_000, targetSampleRate / 100, Math.Min(2048, written - targetSampleRate / 100));
+    var wrongTone = CalculateToneMagnitude(output, targetSampleRate, 1_600, targetSampleRate / 100, Math.Min(2048, written - targetSampleRate / 100));
+    Assert(expectedTone > wrongTone * 3d, "resampled output should preserve the source tone at the target sample rate");
+
+    var converterSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioSampleRateConverter.cs")));
+    var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioSyncBuffer.cs")));
+    Assert(converterSource.Contains("WdlResamplingSampleProvider", StringComparison.Ordinal), "sample-rate conversion should use NAudio's WDL resampler");
+    Assert(syncBufferSource.Contains("NAudioSampleRateConverter.TryResampleInterleaved", StringComparison.Ordinal), "auxiliary sync buffers should use the NAudio resampler before falling back");
+}
+
+static void ProcessedOutputResamplesAsioFallbackFormats()
+{
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var asioOutputMethod = ExtractSourceBetween(
+        serviceSource,
+        "private bool TryStartAsioProcessedOutput(IWaveProvider provider, out IWavePlayer? player, out IWaveProvider? playbackProvider)",
+        "private static bool TryStartAsioProcessedOutputProvider");
+    Assert(asioOutputMethod.Contains("PreferredAsioSampleRates", StringComparison.Ordinal), "ASIO output should try known stable sample rates when the active rate fails");
+    Assert(asioOutputMethod.Contains("CreateBestOutputResampler", StringComparison.Ordinal), "ASIO output should resample rather than failing immediately on a sample-rate mismatch");
+
+    var resamplerMethod = typeof(MicrophoneSpectrumService).GetMethod("CreateWdlOutputResampler", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("processed output should expose a WDL output resampler helper");
+    var source = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(44_100, 2))
+    {
+        ReadFully = true
+    };
+    var provider = (IWaveProvider)resamplerMethod.Invoke(null, [source, 48_000])!;
+    Assert(provider.WaveFormat.SampleRate == 48_000, "WDL output resampler should advertise the fallback sample rate");
+    Assert(provider.WaveFormat.Channels == 2, "WDL output resampler should preserve stereo routing");
 }
 
 static void CameraModeAutoDisplayText()

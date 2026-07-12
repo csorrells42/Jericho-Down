@@ -2615,7 +2615,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return backend switch
         {
             ProcessedOutputRouteBackend.AsioFloat or ProcessedOutputRouteBackend.AsioPcm
-                => TryStartAsioProcessedOutput(provider, out player),
+                => TryStartAsioProcessedOutput(provider, out player, out playbackProvider),
             ProcessedOutputRouteBackend.WasapiFloat or ProcessedOutputRouteBackend.WasapiPcm
                 => TryStartWasapiProcessedOutput(provider, out player, out playbackProvider),
             ProcessedOutputRouteBackend.WaveOutFloat or ProcessedOutputRouteBackend.WaveOutPcm
@@ -2714,18 +2714,48 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
-    private bool TryStartAsioProcessedOutput(IWaveProvider provider, out IWavePlayer? player)
+    private bool TryStartAsioProcessedOutput(IWaveProvider provider, out IWavePlayer? player, out IWaveProvider? playbackProvider)
     {
         player = null;
+        playbackProvider = null;
         if (!TryGetAsioDriverName(_processedOutputEndpointId, out var driverName))
         {
             return false;
         }
 
+        if (TryStartAsioProcessedOutputProvider(driverName, provider, out player))
+        {
+            playbackProvider = provider;
+            return true;
+        }
+
+        foreach (var sampleRate in PreferredAsioSampleRates.Where(rate => rate != provider.WaveFormat.SampleRate))
+        {
+            var resampledProvider = CreateBestOutputResampler(provider, sampleRate);
+            if (ReferenceEquals(resampledProvider, provider))
+            {
+                continue;
+            }
+
+            if (TryStartAsioProcessedOutputProvider(driverName, resampledProvider, out player))
+            {
+                playbackProvider = resampledProvider;
+                return true;
+            }
+
+            DisposePlaybackProvider(resampledProvider, provider);
+        }
+
+        return false;
+    }
+
+    private static bool TryStartAsioProcessedOutputProvider(string driverName, IWaveProvider playbackProvider, out IWavePlayer? player)
+    {
+        player = null;
         try
         {
             player = new AsioOutputPlayer(driverName);
-            player.Init(provider);
+            player.Init(playbackProvider);
             player.Play();
             return true;
         }
@@ -2739,18 +2769,27 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private static IWaveProvider CreateWasapiOutputProvider(IWaveProvider provider, MMDevice endpoint)
     {
-        var endpointSampleRate = endpoint.AudioClient.MixFormat.SampleRate;
-        if (endpointSampleRate == provider.WaveFormat.SampleRate)
+        return CreateBestOutputResampler(provider, endpoint.AudioClient.MixFormat.SampleRate);
+    }
+
+    private static IWaveProvider CreateBestOutputResampler(IWaveProvider provider, int outputSampleRate)
+    {
+        if (outputSampleRate <= 0 || outputSampleRate == provider.WaveFormat.SampleRate)
         {
             return provider;
         }
 
-        if (TryCreateHighQualityOutputResampler(provider, endpointSampleRate, out var mediaFoundationResampler))
+        if (TryCreateHighQualityOutputResampler(provider, outputSampleRate, out var mediaFoundationResampler))
         {
             return mediaFoundationResampler;
         }
 
-        var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), endpointSampleRate);
+        return CreateWdlOutputResampler(provider, outputSampleRate);
+    }
+
+    private static IWaveProvider CreateWdlOutputResampler(IWaveProvider provider, int outputSampleRate)
+    {
+        var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), outputSampleRate);
         return resampler.ToWaveProvider();
     }
 

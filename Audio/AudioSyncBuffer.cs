@@ -67,22 +67,36 @@ public sealed class AudioSyncBuffer
             return;
         }
 
-        var sourceFrames = Math.Max(1, samples.Length / _channelCount);
-        var outputFrames = Math.Max(1, (int)Math.Round(sourceFrames * (double)_targetSampleRate / sourceSampleRate));
-        var outputLength = outputFrames * _channelCount;
+        var outputLength = NAudioSampleRateConverter.EstimateOutputSampleCount(
+            samples.Length,
+            sourceSampleRate,
+            _targetSampleRate,
+            _channelCount);
+        if (outputLength <= 0)
+        {
+            return;
+        }
+
         var resampled = ArrayPool<float>.Shared.Rent(outputLength);
         try
         {
-            if (_channelCount == 1)
+            if (NAudioSampleRateConverter.TryResampleInterleaved(
+                samples,
+                sourceSampleRate,
+                _targetSampleRate,
+                _channelCount,
+                resampled,
+                0,
+                outputLength,
+                out var samplesWritten))
             {
-                ResampleLinear(samples, sourceSampleRate, resampled.AsSpan(0, outputLength), _targetSampleRate);
+                Append(resampled.AsSpan(0, samplesWritten));
             }
             else
             {
                 ResampleLinearInterleaved(samples, sourceSampleRate, resampled.AsSpan(0, outputLength), _targetSampleRate, _channelCount);
+                Append(resampled.AsSpan(0, outputLength));
             }
-
-            Append(resampled.AsSpan(0, outputLength));
         }
         finally
         {
