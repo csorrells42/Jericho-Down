@@ -615,22 +615,33 @@ public partial class EqualizerWindow : Window
         UpdateVideoColorPolishSettings();
         UpdateAdvancedCameraControlsVisibility(loadWhenOpened: false);
         RefreshActiveSpectrumWaterfallHosts();
+
         UpdateRecordingDspIndicator();
         UpdateGraphSurfaceVisibility();
         NormalSpectrumLegendPanel.Visibility = Visibility.Collapsed;
 
         ApplyDarkTitleBar();
         var devices = MicrophoneSpectrumService.GetInputDevices();
-        MicrophoneComboBox.ItemsSource = devices;
-        RestoreMicChannelState(devices);
-        MicChannelComboBox.ItemsSource = _micChannels;
+        var equalizerInputDevices = GetEqualizerInputDevices(devices);
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            MicrophoneComboBox.ItemsSource = equalizerInputDevices;
+            RestoreMicChannelState(devices);
+            RefreshEqualizerMicChannelList();
+            MicChannelComboBox.SelectedItem = FindMicChannel(GetEqualizerMicChannels(), _appSettings.SelectedMicChannelNumber)
+                ?? GetDefaultEqualizerMicChannel()
+                ?? _micChannels[0];
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
         MixingChannelsItemsControl.ItemsSource = _micChannels;
         UpdateMixingMicLegend();
-        MicChannelComboBox.SelectedItem = FindMicChannel(_appSettings.SelectedMicChannelNumber)
-            ?? GetDefaultActiveMicChannel()
-            ?? _micChannels[0];
         ApplyMixerStateToUi();
-        if (devices.Count > 0)
+        if (equalizerInputDevices.Count > 0)
         {
             ApplyActiveMicChannelToUi();
         }
@@ -1008,6 +1019,64 @@ public partial class EqualizerWindow : Window
             ?? _micChannels.FirstOrDefault();
     }
 
+    private MicChannelStrip? GetDefaultEqualizerMicChannel()
+    {
+        return FindMicChannel(1) is { } firstMicChannel && IsEqualizerEditableMicChannel(firstMicChannel)
+            ? firstMicChannel
+            : _micChannels.FirstOrDefault(IsEqualizerEditableMicChannel);
+    }
+
+    private IReadOnlyList<MicChannelStrip> GetEqualizerMicChannels()
+    {
+        return _micChannels
+            .Where(IsEqualizerEditableMicChannel)
+            .ToArray();
+    }
+
+    private static bool IsEqualizerEditableMicChannel(MicChannelStrip channel)
+    {
+        return !channel.IsSystemAudioLoopbackChannel
+            && (channel.SelectedDevice is null || IsEqualizerInputDevice(channel.SelectedDevice));
+    }
+
+    private static IReadOnlyList<AudioInputDevice> GetEqualizerInputDevices(IEnumerable<AudioInputDevice> devices)
+    {
+        return devices
+            .Where(IsEqualizerInputDevice)
+            .ToArray();
+    }
+
+    private static bool IsEqualizerInputDevice(AudioInputDevice device)
+    {
+        return !device.IsSystemAudioLoopback
+            && !device.IsProcessLoopback
+            && !device.IsStereoTestTone;
+    }
+
+    private void RefreshEqualizerMicChannelList()
+    {
+        if (MicChannelComboBox is null)
+        {
+            return;
+        }
+
+        var channels = GetEqualizerMicChannels();
+        var selected = MicChannelComboBox.SelectedItem as MicChannelStrip;
+        MicChannelComboBox.ItemsSource = channels;
+        if (selected is not null && channels.Contains(selected))
+        {
+            MicChannelComboBox.SelectedItem = selected;
+        }
+        else if (_activeMicChannel is not null && channels.Contains(_activeMicChannel))
+        {
+            MicChannelComboBox.SelectedItem = _activeMicChannel;
+        }
+        else
+        {
+            MicChannelComboBox.SelectedItem = GetDefaultEqualizerMicChannel();
+        }
+    }
+
     private void EnsureSystemAudioLoopbackChannel(IReadOnlyList<AudioInputDevice> devices)
     {
         var channel = FindMicChannel(SystemAudioLoopbackChannelNumber);
@@ -1114,8 +1183,7 @@ public partial class EqualizerWindow : Window
     }
     private static AudioInputDevice? GetDefaultPhysicalInputDevice(IReadOnlyList<AudioInputDevice> devices)
     {
-        return devices.FirstOrDefault(device => !device.IsSystemAudioLoopback)
-            ?? devices.FirstOrDefault();
+        return devices.FirstOrDefault(IsEqualizerInputDevice);
     }
 
     private static AudioOutputDevice? FindAudioOutputDevice(
@@ -1586,10 +1654,11 @@ public partial class EqualizerWindow : Window
     private void RefreshAudioDevicesFromSystem()
     {
         var inputDevices = MicrophoneSpectrumService.GetInputDevices();
+        var equalizerInputDevices = GetEqualizerInputDevices(inputDevices);
         _isUpdatingMicChannelUi = true;
         try
         {
-            MicrophoneComboBox.ItemsSource = inputDevices;
+            MicrophoneComboBox.ItemsSource = equalizerInputDevices;
             foreach (var channel in _micChannels)
             {
                 if (channel.SelectedDevice is not null)
@@ -1600,13 +1669,22 @@ public partial class EqualizerWindow : Window
 
             EnsureSystemAudioLoopbackChannel(inputDevices);
             CoercePersistedMicChannelModes(inputDevices);
+            RefreshEqualizerMicChannelList();
         }
         finally
         {
             _isUpdatingMicChannelUi = false;
         }
 
-        ApplyActiveMicChannelToUi();
+        if (IsEqualizerEditableMicChannel(_activeMicChannel))
+        {
+            ApplyActiveMicChannelToUi();
+        }
+        else
+        {
+            ApplyActiveMicChannelSelectionToMixerUi();
+        }
+
         ConfigureLiveMixFromChannels();
 
         var outputDevices = MicrophoneSpectrumService.GetOutputDevices();
@@ -4068,7 +4146,7 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
-    private void MainTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void MainTabSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ReferenceEquals(e.Source, MainTabControl) || _isClosing)
         {
@@ -4076,6 +4154,10 @@ public partial class EqualizerWindow : Window
         }
 
         RefreshActiveSpectrumWaterfallHosts();
+        if (IsMicDspTabSelected())
+        {
+            await EnsureEqualizerEditorChannelSelectedAsync();
+        }
         if (IsMicDspTabSelected() && _showWaveform3D)
         {
             EnsureInlineWaveform3DView();
@@ -4114,6 +4196,31 @@ public partial class EqualizerWindow : Window
             || IsKaraokeTabSelected() && _karaokeRecordVideoEnabled)
         {
             ReinitializeCameraForFocusedPreview();
+        }
+    }
+
+    private async Task EnsureEqualizerEditorChannelSelectedAsync()
+    {
+        _isUpdatingMicChannelUi = true;
+        try
+        {
+            RefreshEqualizerMicChannelList();
+        }
+        finally
+        {
+            _isUpdatingMicChannelUi = false;
+        }
+
+        if (IsEqualizerEditableMicChannel(_activeMicChannel))
+        {
+            ApplyActiveMicChannelToUi();
+            return;
+        }
+
+        var fallback = GetDefaultEqualizerMicChannel();
+        if (fallback is not null)
+        {
+            await SetActiveMicChannelAsync(fallback, restartAudio: true);
         }
     }
 
@@ -5782,6 +5889,7 @@ public partial class EqualizerWindow : Window
         UpdateDx12EqualizerHoverRegion();
         WaterfallLinesPanel.Visibility = _showWaveform3D ? Visibility.Visible : Visibility.Collapsed;
         RefreshActiveSpectrumWaterfallHosts();
+
     }
 
     private void UpdateGraphViewButtonStates()
@@ -6063,6 +6171,12 @@ public partial class EqualizerWindow : Window
         }
 
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
+        if (_selectedDevice is not null && !IsEqualizerInputDevice(_selectedDevice))
+        {
+            StatusText.Text = "Computer audio and loopback inputs are mixer-only sources.";
+            return;
+        }
+
         _activeMicChannel.SelectedDevice = _selectedDevice;
         var selectedDevice = _selectedDevice;
         var selectedDeviceFormat = await GetDeviceFormatAsync(selectedDevice);
@@ -6111,6 +6225,12 @@ public partial class EqualizerWindow : Window
     {
         if (_isUpdatingMicChannelUi || MicChannelComboBox.SelectedItem is not MicChannelStrip channel)
         {
+            return;
+        }
+
+        if (!IsEqualizerEditableMicChannel(channel))
+        {
+            StatusText.Text = "Computer audio and loopback inputs are controlled from the Mixing tab.";
             return;
         }
 
@@ -6176,12 +6296,21 @@ public partial class EqualizerWindow : Window
 
     private void ApplyActiveMicChannelToUi()
     {
+        if (!IsEqualizerEditableMicChannel(_activeMicChannel))
+        {
+            ApplySelectedMixerInputPanelToUi();
+            return;
+        }
+
         var previousSelectedDevice = _selectedDevice;
         var previousSelectedDeviceFormat = _selectedDeviceFormat;
         _isUpdatingMicChannelUi = true;
         try
         {
-            if (MicChannelComboBox is not null && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
+            RefreshEqualizerMicChannelList();
+            if (MicChannelComboBox is not null
+                && IsEqualizerEditableMicChannel(_activeMicChannel)
+                && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
             {
                 MicChannelComboBox.SelectedItem = _activeMicChannel;
             }
@@ -6213,7 +6342,10 @@ public partial class EqualizerWindow : Window
         _isUpdatingMicChannelUi = true;
         try
         {
-            if (MicChannelComboBox is not null && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
+            RefreshEqualizerMicChannelList();
+            if (MicChannelComboBox is not null
+                && IsEqualizerEditableMicChannel(_activeMicChannel)
+                && !ReferenceEquals(MicChannelComboBox.SelectedItem, _activeMicChannel))
             {
                 MicChannelComboBox.SelectedItem = _activeMicChannel;
             }

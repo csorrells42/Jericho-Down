@@ -67,6 +67,7 @@ var tests = new (string Name, Action Test)[]
     ("Input channel modes map interface lanes", InputChannelModesMapInterfaceLanes),
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Audio device refresh suppresses mic selection churn", AudioDeviceRefreshSuppressesMicSelectionChurn),
+    ("Mic DSP tab excludes loopback inputs", MicDspTabExcludesLoopbackInputs),
     ("System audio loopback is selectable but not default mic fallback", SystemAudioLoopbackIsSelectableButNotDefaultMicFallback),
     ("App audio loopback routes through the mixer capture path", AppAudioLoopbackRoutesThroughMixerCapturePath),
     ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
@@ -1436,11 +1437,53 @@ static void AudioDeviceRefreshSuppressesMicSelectionChurn()
         "    private void RefreshVideoDevicesFromSystem()");
 
     var guardIndex = method.IndexOf("_isUpdatingMicChannelUi = true;", StringComparison.Ordinal);
-    var itemsSourceIndex = method.IndexOf("MicrophoneComboBox.ItemsSource = inputDevices;", StringComparison.Ordinal);
+    var itemsSourceIndex = method.IndexOf("MicrophoneComboBox.ItemsSource = equalizerInputDevices;", StringComparison.Ordinal);
     var releaseIndex = method.IndexOf("_isUpdatingMicChannelUi = false;", StringComparison.Ordinal);
     Assert(guardIndex >= 0, "audio device refresh should suppress mic selection events before replacing input device lists");
     Assert(itemsSourceIndex > guardIndex, "microphone ItemsSource replacement should happen while mic UI events are suppressed");
     Assert(releaseIndex > itemsSourceIndex, "audio device refresh should release mic UI event suppression after restoring selections");
+}
+
+static void MicDspTabExcludesLoopbackInputs()
+{
+    var appAudio = AudioInputDevice.CreateProcessLoopback(4242, "MusicApp");
+    var systemAudio = AudioInputDevice.CreateSystemAudioLoopback();
+    var testTone = AudioInputDevice.CreateStereoTestTone();
+    var physical = new AudioInputDevice(0, "Interface input", 2);
+    var asio = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Interface",
+        2,
+        MicrophoneSpectrumService.CreateAsioEndpointId("Interface"),
+        AudioInputBackend.Asio);
+
+    var filterMethod = typeof(EqualizerWindow).GetMethod(
+        "GetEqualizerInputDevices",
+        BindingFlags.NonPublic | BindingFlags.Static);
+    Assert(filterMethod is not null, "Mic/DSP input filter should be available");
+    var filtered = ((IEnumerable<AudioInputDevice>)filterMethod!.Invoke(null, [new[] { appAudio, systemAudio, testTone, physical, asio }])!).ToArray();
+
+    Assert(filtered.Contains(physical), "Mic/DSP input picker should keep physical Windows capture inputs");
+    Assert(filtered.Contains(asio), "Mic/DSP input picker should keep ASIO capture inputs");
+    Assert(!filtered.Any(device => device.IsSystemAudioLoopback), "Mic/DSP input picker should hide computer audio loopback");
+    Assert(!filtered.Any(device => device.IsProcessLoopback), "Mic/DSP input picker should hide app loopback inputs");
+    Assert(!filtered.Any(device => device.IsStereoTestTone), "Mic/DSP input picker should hide mixer-only test tone inputs");
+
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var refreshMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void RefreshAudioDevicesFromSystem()",
+        "    private void RefreshVideoDevicesFromSystem()");
+    Assert(refreshMethod.Contains("MicrophoneComboBox.ItemsSource = equalizerInputDevices;", StringComparison.Ordinal), "audio refresh should bind the Mic/DSP picker to the filtered input list");
+    Assert(refreshMethod.Contains("RefreshEqualizerMicChannelList();", StringComparison.Ordinal), "audio refresh should rebuild the Mic/DSP channel list without mixer-only channels");
+
+    var mixerSelectionHelper = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()",
+        "    private void ApplySelectedMixerInputPanelToUi()");
+    Assert(mixerSelectionHelper.Contains("IsEqualizerEditableMicChannel(_activeMicChannel)", StringComparison.Ordinal), "mixer-only selections should not force the Mic/DSP channel picker onto loopback");
+    Assert(windowCode.Contains("EnsureEqualizerEditorChannelSelectedAsync", StringComparison.Ordinal), "entering Mic/DSP should restore an editable mic channel if mixer selected loopback");
+    Assert(windowCode.Contains("Computer audio and loopback inputs are mixer-only sources.", StringComparison.Ordinal), "Mic/DSP source changes should reject loopback defensively");
 }
 
 static void SystemAudioLoopbackIsSelectableButNotDefaultMicFallback()
