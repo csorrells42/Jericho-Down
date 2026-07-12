@@ -1115,6 +1115,7 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
+    Assert(!xaml.Contains("RecordRawBackupCheckBox", StringComparison.Ordinal), "Podcast recording UI should not expose a raw-backup checkbox unless it is wired to recording behavior");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
 }
 
@@ -1457,6 +1458,14 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(windowXaml.Contains("PeakLevelPercent", StringComparison.Ordinal), "CoreAudio app-session rows should expose live activity meters");
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(windowCode.Contains("ProcessDisplayText", StringComparison.Ordinal), "CoreAudio app-session rows should include stable process identity details");
+    var controlMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyCoreAudioSessionControls(CoreAudioSessionControlItem item, float? volume, bool? isMuted)",
+        "    private void UpdateAudioFormatRouteText()");
+    var successStatusIndex = controlMethod.IndexOf("StatusText.Text = status;", StringComparison.Ordinal);
+    var successRefreshIndex = controlMethod.IndexOf("UpdateOutputAudioSessionText();", successStatusIndex, StringComparison.Ordinal);
+    var successReturnIndex = controlMethod.IndexOf("return;", successStatusIndex, StringComparison.Ordinal);
+    Assert(successRefreshIndex > successStatusIndex && successRefreshIndex < successReturnIndex, "CoreAudio successful app-session control updates should refresh grouped app state immediately");
 
     var mixingTab = ExtractSourceBetween(
         windowXaml,
@@ -3522,6 +3531,8 @@ static void NAudioFileAnalyzerReportsRecordingQualityDetails()
         Assert(analysis.Channels == 1, "audio analyzer should preserve the file channel count");
         Assert(analysis.BitsPerSample == 32, "float WAV analysis should report 32-bit samples");
         Assert(analysis.SampleCount == samples.Length, "audio analyzer should account for every mono sample");
+        Assert(!analysis.IsPartial, "uncapped audio analysis should scan the whole file");
+        Assert(analysis.AnalyzedDuration >= TimeSpan.FromMilliseconds(240), "uncapped audio analysis should report the scanned duration");
         Assert(analysis.PeakLevel >= 0.999f, "audio analyzer should report clipped peaks");
         Assert(analysis.ClippedSamples == 1, "audio analyzer should count clipped samples");
         Assert(analysis.RmsLevel > 0.05d, "audio analyzer should report a useful RMS level");
@@ -3531,10 +3542,21 @@ static void NAudioFileAnalyzerReportsRecordingQualityDetails()
         Assert(analysis.BrowserSummary.Contains("peak", StringComparison.OrdinalIgnoreCase), "recording browser summary should include peak information");
         Assert(analysis.DetailSummary.Contains("silence", StringComparison.OrdinalIgnoreCase), "recording detail summary should include silence information");
 
+        Assert(AudioFileAnalyzer.TryAnalyze(path, out var partialAnalysis, out var partialStatus, TimeSpan.FromMilliseconds(120)), partialStatus);
+        Assert(partialAnalysis.IsPartial, "capped audio analysis should report partial scan scope");
+        Assert(partialAnalysis.SampleCount < analysis.SampleCount, "capped audio analysis should avoid reading the whole file");
+        Assert(partialAnalysis.AnalyzedDuration <= TimeSpan.FromMilliseconds(125), "capped audio analysis should stay inside the requested scan window");
+        Assert(partialAnalysis.BrowserSummary.Contains("analyzed first", StringComparison.OrdinalIgnoreCase), "partial recording summaries should tell the user the scan is bounded");
+
+        Assert(AudioFileAnalyzer.TryAnalyze(path, out var silentWindowAnalysis, out var silentWindowStatus, TimeSpan.FromMilliseconds(80)), silentWindowStatus);
+        Assert(silentWindowAnalysis.IsPartial, "silent bounded windows should still report partial scan scope");
+        Assert(silentWindowAnalysis.LeadingSilence <= TimeSpan.FromMilliseconds(85), "silent bounded windows should report silence for the scanned window, not the full file");
+
         var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
         Assert(windowCode.Contains("CreateAudioRecordingFileItem", StringComparison.Ordinal), "recording browser should create analyzed file rows");
-        Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis work");
-        Assert(windowCode.Contains("AudioFileAnalyzer.TryAnalyze", StringComparison.Ordinal), "recording browser should use the NAudio analyzer helper");
+        Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis rows");
+        Assert(windowCode.Contains("EagerRecordingAnalysisDuration", StringComparison.Ordinal), "recording browser should cap eager analysis duration");
+        Assert(windowCode.Contains("AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, EagerRecordingAnalysisDuration)", StringComparison.Ordinal), "recording browser should use bounded NAudio analysis for eager file rows");
     }
     finally
     {

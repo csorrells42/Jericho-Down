@@ -55,6 +55,7 @@ public partial class EqualizerWindow : Window
     private const int MaximumKaraokeBrowserFolders = 100000;
     private const int MaximumKaraokeBrowserTracks = 20000;
     private const int MaximumAnalyzedRecordingRows = 24;
+    private static readonly TimeSpan EagerRecordingAnalysisDuration = TimeSpan.FromSeconds(10);
     private const long MaximumKaraokeEmbeddedLyricsProbeBytes = 256L * 1024L * 1024L;
     private const int MaximumKaraokeMp4AtomDepth = 24;
     private const int MaximumKaraokeMp4AtomCount = 100000;
@@ -7393,6 +7394,7 @@ public partial class EqualizerWindow : Window
             }
 
             StatusText.Text = status;
+            UpdateOutputAudioSessionText();
             return;
         }
 
@@ -14514,7 +14516,7 @@ public partial class EqualizerWindow : Window
     {
         AudioFileAnalysis? analysis = null;
         var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}";
-        if (analyze && AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _))
+        if (analyze && AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, EagerRecordingAnalysisDuration))
         {
             analysis = fileAnalysis;
             details = $"{details}    {fileAnalysis.BrowserSummary}";

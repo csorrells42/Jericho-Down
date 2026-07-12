@@ -8,6 +8,7 @@ public sealed record AudioWaveformPeak(float Minimum, float Maximum);
 public sealed record AudioFileAnalysis(
     string Path,
     TimeSpan Duration,
+    TimeSpan AnalyzedDuration,
     int SampleRate,
     int Channels,
     int BitsPerSample,
@@ -25,6 +26,8 @@ public sealed record AudioFileAnalysis(
         ? 0d
         : ClippedSamples * 100d / SampleCount;
 
+    public bool IsPartial => AnalyzedDuration + TimeSpan.FromMilliseconds(1) < Duration;
+
     public string BrowserSummary
     {
         get
@@ -32,7 +35,10 @@ public sealed record AudioFileAnalysis(
             var clippingText = HasClipping
                 ? $" | clips {ClippedSamples} ({ClippedSamplePercent:0.###}%)"
                 : string.Empty;
-            return $"{FormatDuration(Duration)} | {SampleRate / 1000d:0.#} kHz, {Channels} ch, {BitsPerSample}-bit | peak {FormatLevelDb(PeakLevel)} | RMS {FormatLevelDb(RmsLevel)}{clippingText}";
+            var scopeText = IsPartial
+                ? $" | analyzed first {FormatDuration(AnalyzedDuration)}"
+                : string.Empty;
+            return $"{FormatDuration(Duration)} | {SampleRate / 1000d:0.#} kHz, {Channels} ch, {BitsPerSample}-bit | peak {FormatLevelDb(PeakLevel)} | RMS {FormatLevelDb(RmsLevel)}{clippingText}{scopeText}";
         }
     }
 
@@ -68,7 +74,11 @@ public static class AudioFileAnalyzer
     private const float SilenceThreshold = 0.001f;
     private const float ClipThreshold = 0.999f;
 
-    public static bool TryAnalyze(string path, out AudioFileAnalysis analysis, out string status)
+    public static bool TryAnalyze(
+        string path,
+        out AudioFileAnalysis analysis,
+        out string status,
+        TimeSpan? maximumAnalysisDuration = null)
     {
         analysis = default!;
         status = string.Empty;
@@ -87,8 +97,9 @@ public static class AudioFileAnalyzer
             var bitsPerSample = waveFormat.BitsPerSample > 0 ? waveFormat.BitsPerSample : 32;
             var duration = reader.TotalTime;
             var estimatedFrames = Math.Max(1L, (long)Math.Round(Math.Max(0d, duration.TotalSeconds) * sampleRate));
-            var bucketCount = (int)Math.Clamp(estimatedFrames, 1L, MaximumWaveformBuckets);
-            var bucketFrameSize = Math.Max(1L, (long)Math.Ceiling(estimatedFrames / (double)bucketCount));
+            var maximumFramesToRead = GetMaximumFramesToRead(estimatedFrames, sampleRate, maximumAnalysisDuration);
+            var bucketCount = (int)Math.Clamp(maximumFramesToRead, 1L, MaximumWaveformBuckets);
+            var bucketFrameSize = Math.Max(1L, (long)Math.Ceiling(maximumFramesToRead / (double)bucketCount));
             var waveformPeaks = new List<AudioWaveformPeak>(bucketCount);
             var buffer = new float[ReadBufferSampleCount];
             long frameIndex = 0;
@@ -103,10 +114,13 @@ public static class AudioFileAnalyzer
             var bucketHasSamples = false;
 
             int samplesRead;
-            while ((samplesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
+            while (frameIndex < maximumFramesToRead
+                && (samplesRead = reader.Read(buffer, 0, buffer.Length)) > 0)
             {
                 var wholeFrameSamples = samplesRead - samplesRead % channels;
-                for (var offset = 0; offset < wholeFrameSamples; offset += channels)
+                var remainingFrameSamples = Math.Max(0L, maximumFramesToRead - frameIndex) * channels;
+                var samplesToProcess = (int)Math.Min(wholeFrameSamples, remainingFrameSamples);
+                for (var offset = 0; offset < samplesToProcess; offset += channels)
                 {
                     var frameMinimum = 0f;
                     var frameMaximum = 0f;
@@ -165,9 +179,10 @@ public static class AudioFileAnalyzer
                 waveformPeaks.Add(new AudioWaveformPeak(bucketMinimum, bucketMaximum));
             }
 
+            var analyzedDuration = TimeSpan.FromSeconds(frameIndex / (double)sampleRate);
             var rmsLevel = sampleCount > 0 ? Math.Sqrt(sumSquares / sampleCount) : 0d;
             var leadingSilence = firstAudibleFrame < 0
-                ? duration
+                ? analyzedDuration
                 : TimeSpan.FromSeconds(firstAudibleFrame / (double)sampleRate);
             var trailingFrames = firstAudibleFrame < 0
                 ? frameIndex
@@ -177,6 +192,7 @@ public static class AudioFileAnalyzer
             analysis = new AudioFileAnalysis(
                 path,
                 duration,
+                analyzedDuration,
                 sampleRate,
                 channels,
                 bitsPerSample,
@@ -202,5 +218,19 @@ public static class AudioFileAnalyzer
         return float.IsFinite(sample)
             ? Math.Clamp(sample, -1f, 1f)
             : 0f;
+    }
+
+    private static long GetMaximumFramesToRead(
+        long estimatedFrames,
+        int sampleRate,
+        TimeSpan? maximumAnalysisDuration)
+    {
+        if (maximumAnalysisDuration is not { } limit || limit <= TimeSpan.Zero)
+        {
+            return estimatedFrames;
+        }
+
+        var requestedFrames = (long)Math.Ceiling(limit.TotalSeconds * Math.Max(1, sampleRate));
+        return Math.Clamp(requestedFrames, 1L, estimatedFrames);
     }
 }

@@ -1120,11 +1120,6 @@
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="When checked, the eventual video file will use the EQ/gate/compressor/limiter signal." />
                     </CheckBox.ToolTip>
                   </CheckBox>
-                  <CheckBox x:Name="RecordRawBackupCheckBox" Content="Also save raw backup" IsChecked="True" Foreground="#F8FAFC" Margin="0,0,0,8">
-                    <CheckBox.ToolTip>
-                      <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Keeps a natural unprocessed WAV backup so a session can be fixed later." />
-                    </CheckBox.ToolTip>
-                  </CheckBox>
                   <CheckBox x:Name="VideoColorPolishCheckBox" Content="Color polish" Foreground="#F8FAFC" Margin="0,0,0,8" Checked="VideoColorPolishChanged" Unchecked="VideoColorPolishChanged">
                     <CheckBox.ToolTip>
                       <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Applies lightweight exposure, contrast, saturation, and warmth polish to the preview and matching recording paths." />
