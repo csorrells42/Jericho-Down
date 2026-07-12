@@ -1456,6 +1456,7 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
     Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
     Assert(windowXaml.Contains("PeakLevelPercent", StringComparison.Ordinal), "CoreAudio app-session rows should expose live activity meters");
+    Assert(windowXaml.Contains("Value=\"{Binding PeakLevelPercent, Mode=OneWay}\"", StringComparison.Ordinal), "CoreAudio peak meters should bind one-way so the read-only meter property cannot crash the Mixing tab template");
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(windowCode.Contains("ProcessDisplayText", StringComparison.Ordinal), "CoreAudio app-session rows should include stable process identity details");
     var controlMethod = ExtractSourceBetween(
