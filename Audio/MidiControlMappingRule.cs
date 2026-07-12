@@ -93,6 +93,8 @@ public static class MidiControlMappingActions
     public const string ToggleSelectedInputSolo = "Toggle selected input solo";
     public const string ToggleProcessedOutput = "Toggle processed output";
     public const string StartOrStopRecording = "Start or stop recording";
+    public const string SendAllNotesOff = "Send all notes off";
+    public const string ResetMidiControllers = "Reset MIDI controllers";
     public const string MidiPanic = "MIDI panic";
 
     public static IReadOnlyList<string> DefaultActions { get; } =
@@ -101,6 +103,8 @@ public static class MidiControlMappingActions
         ToggleSelectedInputSolo,
         ToggleProcessedOutput,
         StartOrStopRecording,
+        SendAllNotesOff,
+        ResetMidiControllers,
         MidiPanic
     ];
 }

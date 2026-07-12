@@ -687,7 +687,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(monitor.Contains("CreateSysexBuffers", StringComparison.Ordinal), "MIDI input monitor should allocate sysex buffers");
 
     var output = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiOutputPort.cs")));
-    foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBankSelect", "SendBuffer", "Reset" })
+    foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBankSelect", "SendAllNotesOff", "SendResetAllControllers", "SendBuffer", "Reset" })
     {
         Assert(output.Contains(api, StringComparison.Ordinal), $"MIDI output should expose NAudio {api}");
     }
@@ -695,7 +695,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiFileService.cs")));
     Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
     Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
-    Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose sequence track summaries");
+    Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose file-test track summaries");
 
     var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiSequenceService.cs")));
     Assert(sequenceService.Contains("GetAsShortMessage", StringComparison.Ordinal), "MIDI sequence service should emit playable short messages");
@@ -711,19 +711,23 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
+    Assert(xaml.Contains("MIDI Utility", StringComparison.Ordinal), "MIDI tab should present itself as a utility surface");
     Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
     Assert(xaml.Contains("MidiOutputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose output device selection");
     Assert(xaml.Contains("SelectionChanged=\"MidiDeviceSelectionChanged\"", StringComparison.Ordinal), "MIDI device selections should persist through a shared handler");
+    Assert(xaml.Contains("MidiInputDeviceDetailsText", StringComparison.Ordinal), "MIDI tab should show selected input diagnostics");
+    Assert(xaml.Contains("MidiOutputDeviceDetailsText", StringComparison.Ordinal), "MIDI tab should show selected output diagnostics");
+    Assert(xaml.Contains("MidiSelectedMessageDetailsText", StringComparison.Ordinal), "MIDI tab should inspect the selected monitor message");
     Assert(xaml.Contains("SendMidiSysexClicked", StringComparison.Ordinal), "MIDI tab should expose sysex output");
     Assert(xaml.Contains("MidiControlMappingActionComboBox", StringComparison.Ordinal), "MIDI tab should expose control mapping actions");
-    Assert(xaml.Contains("MidiSequenceTracksItemsControl", StringComparison.Ordinal), "MIDI tab should expose sequence tracks");
-    Assert(xaml.Contains("PlayMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should play MIDI sequences");
-    Assert(xaml.Contains("StopMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should stop MIDI sequences");
-    Assert(xaml.Contains("MidiSequenceTempoSlider", StringComparison.Ordinal), "MIDI tab should control MIDI sequence speed");
+    Assert(xaml.Contains("MidiSequenceTracksItemsControl", StringComparison.Ordinal), "MIDI file test should expose track summaries");
+    Assert(xaml.Contains("PlayMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should play MIDI files to the selected output");
+    Assert(xaml.Contains("StopMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should stop MIDI file tests");
+    Assert(xaml.Contains("MidiSequenceTempoSlider", StringComparison.Ordinal), "MIDI tab should control MIDI file-test speed");
     Assert(xaml.Contains("MidiSoundFontPresetComboBox", StringComparison.Ordinal), "MIDI tab should expose SoundFont presets");
     Assert(xaml.Contains("LoadSoundFontClicked", StringComparison.Ordinal), "MIDI tab should load SoundFont files");
-    Assert(xaml.Contains("Apply Bank + Patch", StringComparison.Ordinal), "MIDI tab should apply SoundFont bank and patch selections");
-    Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should preview selected instrument notes");
+    Assert(xaml.Contains("Send Bank + Patch", StringComparison.Ordinal), "MIDI tab should send SoundFont bank and patch selections to the selected output");
+    Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should send selected SoundFont preset preview notes through MIDI output");
     Assert(xaml.Contains("PreviewSoundFontSampleClicked", StringComparison.Ordinal), "MIDI tab should preview loaded SoundFont samples inside the app");
     Assert(xaml.Contains("MidiSoundFontSampleSelectionChanged", StringComparison.Ordinal), "MIDI tab should update sample preview state when sample selection changes");
     foreach (var outputControl in new[]
@@ -735,6 +739,8 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
                  "MidiPitchWheelButton",
                  "MidiRawSendButton",
                  "MidiSysexSendButton",
+                 "MidiAllNotesOffButton",
+                 "MidiResetControllersButton",
                  "MidiSoundFontApplyButton",
                  "MidiSoundFontPreviewButton"
              })
@@ -748,22 +754,25 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("RestoreMidiWorkflowState", StringComparison.Ordinal), "MIDI workflow should restore persisted state");
     Assert(windowSource.Contains("SelectMidiInputDevice", StringComparison.Ordinal), "MIDI input selection should restore by saved device identity");
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
-    Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI sequence speed should be captured in app state");
-    Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI sequence stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active sequence playback before resetting output");
+    Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI file-test speed should be captured in app state");
+    Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI file test stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active file-test playback before resetting output");
     Assert(windowSource.Contains("StopSoundFontSamplePreview", StringComparison.Ordinal), "SoundFont sample preview should be disposed during MIDI cleanup");
     Assert(windowSource.Contains("Select an incoming MIDI message before mapping.", StringComparison.Ordinal), "MIDI mapping workflow should reject outbound monitor messages");
     Assert(windowSource.Contains("if (message.Channel is null)", StringComparison.Ordinal), "MIDI mapping workflow should reject channel-less system messages");
     Assert(windowSource.Contains("GetTriggeredMappings", StringComparison.Ordinal), "MIDI mapping workflow should use edge-gated trigger state");
-    Assert(windowSource.Contains("Task.Run(async () =>", StringComparison.Ordinal), "MIDI sequence playback should send timed events off the UI thread");
-    Assert(windowSource.Contains("PostMidiMessage", StringComparison.Ordinal), "MIDI sequence playback should marshal monitor updates safely");
+    Assert(windowSource.Contains("UpdateMidiDeviceDetails", StringComparison.Ordinal), "MIDI workflow should surface selected device diagnostics");
+    Assert(windowSource.Contains("UpdateSelectedMidiMessageDetails", StringComparison.Ordinal), "MIDI workflow should surface selected message diagnostics");
+    Assert(windowSource.Contains("SendMidiBatchMessages", StringComparison.Ordinal), "MIDI workflow should monitor multi-channel reset sends");
+    Assert(windowSource.Contains("Task.Run(async () =>", StringComparison.Ordinal), "MIDI file-test playback should send timed events off the UI thread");
+    Assert(windowSource.Contains("PostMidiMessage", StringComparison.Ordinal), "MIDI file-test playback should marshal monitor updates safely");
     var expectedSectionOrder = new[]
     {
-        "1 MIDI Devices",
+        "1 Device Check",
         "2 Live Monitor",
-        "3 Control Mapping",
-        "4 MIDI File / Sequence",
-        "5 SoundFont / Instrument",
-        "6 Output / Routing"
+        "3 Utility Mapping",
+        "4 MIDI File Test",
+        "5 SoundFont Inspector",
+        "6 Message Sender"
     };
     var lastSectionIndex = xaml.IndexOf("Header=\"MIDI\"", StringComparison.Ordinal);
     foreach (var section in expectedSectionOrder)
@@ -801,6 +810,19 @@ static void NAudioMidiMessageUtilitiesClampAndParseSafely()
     var parsedSnapshot = MidiMessageSnapshot.FromRaw(parsed, 789);
     Assert(parsedSnapshot.MessageType == "Note On", "parsed MIDI status should identify note on");
     Assert(parsedSnapshot.Channel == 1 && parsedSnapshot.Data1 == 60 && parsedSnapshot.Data2 == 127, "parsed MIDI data bytes should be ordered as status/data1/data2");
+    Assert(parsedSnapshot.Details.Contains("C4", StringComparison.Ordinal), "MIDI monitor details should decode note names for troubleshooting");
+    Assert(parsedSnapshot.InspectionText.Contains("raw 90 3C 7F", StringComparison.Ordinal), "MIDI message inspection should include raw hex bytes");
+    Assert(MidiMessageSnapshot.FormatControllerName(123) == "All Notes Off", "MIDI controller labels should identify all-notes-off messages");
+
+    var allNotesOff = MidiOutputPort.CreateAllNotesOffRawMessages();
+    Assert(allNotesOff.Count == 16, "all-notes-off should target every MIDI channel");
+    var allNotesOffFirst = MidiMessageSnapshot.FromRaw(allNotesOff[0], 900, "Out");
+    var allNotesOffLast = MidiMessageSnapshot.FromRaw(allNotesOff[^1], 901, "Out");
+    Assert(allNotesOffFirst.Channel == 1 && allNotesOffFirst.Data1 == 123, "all-notes-off should start on channel 1 with controller 123");
+    Assert(allNotesOffLast.Channel == 16 && allNotesOffLast.Data1 == 123, "all-notes-off should include channel 16 with controller 123");
+    var resetControllers = MidiOutputPort.CreateResetAllControllersRawMessages();
+    Assert(resetControllers.Count == 16, "controller reset should target every MIDI channel");
+    Assert(MidiMessageSnapshot.FromRaw(resetControllers[0], 902, "Out").Data1 == 121, "controller reset should use controller 121");
 
     Assert(MidiHexParser.TryParseBytes("F0 7E 00 F7", out var sysex), "MIDI hex parser should accept sysex byte streams");
     var sysexSnapshot = MidiMessageSnapshot.FromSysex(sysex, 999);
@@ -829,6 +851,8 @@ static void MidiControlMappingsMatchIncomingChannelMessages()
     var patchRule = MidiControlMappingRule.FromMessage(patchSnapshot, MidiControlMappingActions.ToggleProcessedOutput);
     Assert(patchRule.ShouldTrigger(patchSnapshot), "MIDI mapping should allow patch change messages even though their second data byte is zero");
     Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ToggleProcessedOutput), "MIDI mapping actions should include processed output routing");
+    Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.SendAllNotesOff), "MIDI mapping actions should include all-notes-off troubleshooting");
+    Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ResetMidiControllers), "MIDI mapping actions should include controller reset troubleshooting");
 }
 
 static void MidiControlMappingTriggerStateIsEdgeGated()

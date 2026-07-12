@@ -4,6 +4,8 @@ namespace JerichoDown.Audio;
 
 public sealed class MidiOutputPort : IDisposable
 {
+    private const int ControllerResetAllControllers = 121;
+    private const int ControllerAllNotesOff = 123;
     private readonly object _gate = new();
     private MidiOut? _midiOut;
 
@@ -73,6 +75,16 @@ public sealed class MidiOutputPort : IDisposable
             SendControlChange(channel, (int)MidiController.BankSelect, bankMsb),
             SendControlChange(channel, (int)MidiController.BankSelectLsb, bankLsb)
         ];
+    }
+
+    public IReadOnlyList<int> SendAllNotesOff()
+    {
+        return SendControlChangeToAllChannels(ControllerAllNotesOff, 0);
+    }
+
+    public IReadOnlyList<int> SendResetAllControllers()
+    {
+        return SendControlChangeToAllChannels(ControllerResetAllControllers, 0);
     }
 
     public int SendPitchWheel(int channel, int value)
@@ -156,6 +168,16 @@ public sealed class MidiOutputPort : IDisposable
         ];
     }
 
+    public static IReadOnlyList<int> CreateAllNotesOffRawMessages()
+    {
+        return CreateControlChangeRawMessagesForAllChannels(ControllerAllNotesOff, 0);
+    }
+
+    public static IReadOnlyList<int> CreateResetAllControllersRawMessages()
+    {
+        return CreateControlChangeRawMessagesForAllChannels(ControllerResetAllControllers, 0);
+    }
+
     public static int CreatePitchWheelRawMessage(int channel, int value)
     {
         var normalized = Math.Clamp(value, 0, 16383);
@@ -173,6 +195,28 @@ public sealed class MidiOutputPort : IDisposable
     public static int NormalizeSevenBit(int value)
     {
         return Math.Clamp(value, 0, 127);
+    }
+
+    private IReadOnlyList<int> SendControlChangeToAllChannels(int controller, int value)
+    {
+        var rawMessages = CreateControlChangeRawMessagesForAllChannels(controller, value);
+        foreach (var rawMessage in rawMessages)
+        {
+            SendRawMessage(rawMessage);
+        }
+
+        return rawMessages;
+    }
+
+    private static IReadOnlyList<int> CreateControlChangeRawMessagesForAllChannels(int controller, int value)
+    {
+        var messages = new int[16];
+        for (var channel = 1; channel <= 16; channel++)
+        {
+            messages[channel - 1] = CreateControlChangeRawMessage(channel, controller, value);
+        }
+
+        return messages;
     }
 
     private void EnsureOpen()
