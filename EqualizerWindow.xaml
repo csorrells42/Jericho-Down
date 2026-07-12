@@ -3275,10 +3275,11 @@
                 <Border Style="{StaticResource DspBubble}" Padding="14" Margin="0,0,7,0">
                   <StackPanel>
                     <TextBlock Text="5 SoundFont / Instrument" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
                       <Button Style="{StaticResource ConsolePushButton}" Content="Load SF2" Padding="10,5" Margin="0,0,4,0" Click="LoadSoundFontClicked" />
                       <Button x:Name="MidiSoundFontApplyButton" Style="{StaticResource ConsolePushButton}" Content="Apply Bank + Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
-                      <Button x:Name="MidiSoundFontPreviewButton" Style="{StaticResource ConsolePushButton}" Content="Preview Note" Padding="10,5" Margin="4,0,0,0" Click="PreviewSoundFontNoteClicked" />
+                      <Button x:Name="MidiSoundFontPreviewButton" Style="{StaticResource ConsolePushButton}" Content="Preview MIDI Note" Padding="10,5" Margin="0,8,4,0" Click="PreviewSoundFontNoteClicked" />
+                      <Button x:Name="MidiSoundFontSamplePreviewButton" Style="{StaticResource ConsolePushButton}" Content="Preview SF2 Sample" Padding="10,5" Margin="4,8,0,0" Click="PreviewSoundFontSampleClicked" />
                     </UniformGrid>
                     <TextBlock x:Name="MidiSoundFontStatusText" Text="No SoundFont loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <TextBlock Text="Preset" Foreground="#B8C7D9" />
@@ -3306,7 +3307,7 @@
                       <StackPanel Grid.Column="1" Margin="6,0,0,0">
                         <TextBlock Text="Samples" Foreground="#B8C7D9" Margin="0,0,0,4" />
                         <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" Height="145">
-                          <ListBox x:Name="MidiSoundFontSamplesListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                          <ListBox x:Name="MidiSoundFontSamplesListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="MidiSoundFontSampleSelectionChanged">
                             <ListBox.ItemTemplate>
                               <DataTemplate>
                                 <StackPanel Margin="8,5">

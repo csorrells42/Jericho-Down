@@ -1,4 +1,5 @@
 using NAudio.SoundFont;
+using NAudio.Wave;
 using System.IO;
 
 namespace JerichoDown.Audio;
@@ -32,6 +33,8 @@ public static class SoundFontLibrary
                 sample.SampleName,
                 ClampToInt(sample.SampleRate),
                 sample.OriginalPitch,
+                sample.Start,
+                sample.End,
                 ClampToInt(sample.End > sample.Start ? sample.End - sample.Start : 0u)))
             .OrderBy(sample => sample.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -47,6 +50,47 @@ public static class SoundFontLibrary
     private static int ClampToInt(uint value)
     {
         return value > int.MaxValue ? int.MaxValue : (int)value;
+    }
+
+    public static WaveStream CreateSamplePreviewStream(string filePath, int sampleIndex)
+    {
+        var soundFont = new SoundFont(filePath);
+        if (sampleIndex < 0 || sampleIndex >= soundFont.SampleHeaders.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleIndex), "SoundFont sample index is unavailable.");
+        }
+
+        var sampleHeader = soundFont.SampleHeaders[sampleIndex];
+        var sampleRate = ClampToInt(sampleHeader.SampleRate);
+        if (sampleRate <= 0)
+        {
+            throw new InvalidOperationException("SoundFont sample has no playable sample rate.");
+        }
+
+        var sampleBytes = CopySamplePcm16(soundFont.SampleData, sampleHeader.Start, sampleHeader.End);
+        return new RawSourceWaveStream(
+            new MemoryStream(sampleBytes, writable: false),
+            new WaveFormat(sampleRate, bits: 16, channels: 1));
+    }
+
+    public static byte[] CopySamplePcm16(byte[] sampleData, uint startSample, uint endSample)
+    {
+        if (endSample <= startSample)
+        {
+            throw new InvalidOperationException("SoundFont sample has no playable data.");
+        }
+
+        var startByte = checked((long)startSample * 2L);
+        var endByte = checked((long)endSample * 2L);
+        if (startByte < 0 || endByte > sampleData.LongLength || endByte <= startByte)
+        {
+            throw new InvalidOperationException("SoundFont sample data is outside the loaded sample buffer.");
+        }
+
+        var length = checked((int)(endByte - startByte));
+        var preview = new byte[length];
+        Buffer.BlockCopy(sampleData, checked((int)startByte), preview, 0, length);
+        return preview;
     }
 }
 
@@ -91,6 +135,8 @@ public sealed record SoundFontSampleSummary(
     string Name,
     int SampleRate,
     int OriginalPitch,
+    uint Start,
+    uint End,
     int SampleLength)
 {
     public string DisplayName => Name;

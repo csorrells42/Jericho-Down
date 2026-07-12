@@ -43,6 +43,7 @@ var tests = new (string Name, Action Test)[]
     ("MIDI control mappings match incoming channel messages", MidiControlMappingsMatchIncomingChannelMessages),
     ("MIDI control mapping trigger state is edge gated", MidiControlMappingTriggerStateIsEdgeGated),
     ("MIDI sequence playback plan schedules tempo aware events", MidiSequencePlaybackPlanSchedulesTempoAwareEvents),
+    ("SoundFont sample preview copies PCM slices safely", SoundFontSamplePreviewCopiesPcmSlicesSafely),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -704,6 +705,8 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(soundFontLibrary.Contains("Presets", StringComparison.Ordinal), "SoundFont library should expose presets");
     Assert(soundFontLibrary.Contains("Instruments", StringComparison.Ordinal), "SoundFont library should expose instruments");
     Assert(soundFontLibrary.Contains("SampleHeaders", StringComparison.Ordinal), "SoundFont library should expose samples");
+    Assert(soundFontLibrary.Contains("CreateSamplePreviewStream", StringComparison.Ordinal), "SoundFont library should create sample preview streams");
+    Assert(soundFontLibrary.Contains("RawSourceWaveStream", StringComparison.Ordinal), "SoundFont sample preview should use NAudio wave playback primitives");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
@@ -720,6 +723,8 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(xaml.Contains("LoadSoundFontClicked", StringComparison.Ordinal), "MIDI tab should load SoundFont files");
     Assert(xaml.Contains("Apply Bank + Patch", StringComparison.Ordinal), "MIDI tab should apply SoundFont bank and patch selections");
     Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should preview selected instrument notes");
+    Assert(xaml.Contains("PreviewSoundFontSampleClicked", StringComparison.Ordinal), "MIDI tab should preview loaded SoundFont samples inside the app");
+    Assert(xaml.Contains("MidiSoundFontSampleSelectionChanged", StringComparison.Ordinal), "MIDI tab should update sample preview state when sample selection changes");
     foreach (var outputControl in new[]
              {
                  "MidiNoteOnButton",
@@ -744,6 +749,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
     Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI sequence speed should be captured in app state");
     Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI sequence stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active sequence playback before resetting output");
+    Assert(windowSource.Contains("StopSoundFontSamplePreview", StringComparison.Ordinal), "SoundFont sample preview should be disposed during MIDI cleanup");
     Assert(windowSource.Contains("Select an incoming MIDI message before mapping.", StringComparison.Ordinal), "MIDI mapping workflow should reject outbound monitor messages");
     Assert(windowSource.Contains("GetTriggeredMappings", StringComparison.Ordinal), "MIDI mapping workflow should use edge-gated trigger state");
     var expectedSectionOrder = new[]
@@ -882,6 +888,29 @@ static void MidiSequencePlaybackPlanSchedulesTempoAwareEvents()
     Assert(plan.Events[3].SysexBytes?.Length == 4, "MIDI sequence sysex payload should be preserved");
     Assert(plan.Events[3].Details.Contains("F0 7E 00 F7", StringComparison.Ordinal), "MIDI sequence sysex display should show payload bytes");
     Assert(plan.DisplayText.Contains("5 playable events", StringComparison.Ordinal), "MIDI playback plan display should name playable event count");
+}
+
+static void SoundFontSamplePreviewCopiesPcmSlicesSafely()
+{
+    var source = new byte[]
+    {
+        0x00, 0x10,
+        0x01, 0x11,
+        0x02, 0x12,
+        0x03, 0x13,
+        0x04, 0x14
+    };
+
+    var preview = SoundFontLibrary.CopySamplePcm16(source, startSample: 1, endSample: 4);
+    AssertSequenceEqual(new byte[] { 0x01, 0x11, 0x02, 0x12, 0x03, 0x13 }, preview, "SoundFont preview should copy the requested PCM16 sample range");
+    preview[0] = 0xFF;
+    Assert(source[2] == 0x01, "SoundFont preview should copy data instead of aliasing the source buffer");
+    AssertThrows<InvalidOperationException>(
+        () => SoundFontLibrary.CopySamplePcm16(source, startSample: 3, endSample: 3),
+        "empty SoundFont samples should be rejected");
+    AssertThrows<InvalidOperationException>(
+        () => SoundFontLibrary.CopySamplePcm16(source, startSample: 4, endSample: 8),
+        "out-of-range SoundFont samples should be rejected");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()
@@ -3891,6 +3920,21 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static void AssertThrows<TException>(Action action, string message)
+    where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException(message);
 }
 
 static void AssertSequenceEqual<T>(IReadOnlyList<T> expected, IReadOnlyList<T> actual, string message)

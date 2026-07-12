@@ -401,6 +401,8 @@ public partial class EqualizerWindow : Window
     private bool _isMidiSequencePlaying;
     private bool _isRestoringMidiState;
     private SoundFontSummary? _loadedMidiSoundFont;
+    private IWavePlayer? _midiSoundFontPreviewOutput;
+    private WaveStream? _midiSoundFontPreviewStream;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
@@ -1870,6 +1872,7 @@ public partial class EqualizerWindow : Window
     {
         var midiOutputReady = _midiOutputPort.IsOpen;
         var soundFontPresetReady = midiOutputReady && MidiSoundFontPresetComboBox?.SelectedItem is SoundFontPresetSummary;
+        var soundFontSampleReady = _loadedMidiSoundFont is not null && MidiSoundFontSamplesListBox?.SelectedItem is SoundFontSampleSummary;
         if (MidiInputStartButton is not null)
         {
             MidiInputStartButton.IsEnabled = MidiInputDeviceComboBox.SelectedItem is MidiInputDevice && !_midiInputMonitor.IsRunning;
@@ -1935,6 +1938,11 @@ public partial class EqualizerWindow : Window
         if (MidiSoundFontPreviewButton is not null)
         {
             MidiSoundFontPreviewButton.IsEnabled = soundFontPresetReady;
+        }
+
+        if (MidiSoundFontSamplePreviewButton is not null)
+        {
+            MidiSoundFontSamplePreviewButton.IsEnabled = soundFontSampleReady;
         }
     }
 
@@ -2397,6 +2405,7 @@ public partial class EqualizerWindow : Window
 
         try
         {
+            StopSoundFontSamplePreview();
             var summary = SoundFontLibrary.LoadSummary(dialog.FileName);
             _loadedMidiSoundFont = summary;
             _midiSoundFontPresets.Clear();
@@ -2422,6 +2431,11 @@ public partial class EqualizerWindow : Window
                 MidiSoundFontPresetComboBox.SelectedIndex = 0;
             }
 
+            if (_midiSoundFontSamples.Count > 0)
+            {
+                MidiSoundFontSamplesListBox.SelectedIndex = 0;
+            }
+
             MidiSoundFontStatusText.Text = summary.DisplayText;
             UpdateMidiControlState();
             SetMidiStatus($"SoundFont loaded: {summary.FileName}.");
@@ -2441,6 +2455,7 @@ public partial class EqualizerWindow : Window
     private void ClearSoundFontClicked(object sender, RoutedEventArgs e)
     {
         _loadedMidiSoundFont = null;
+        StopSoundFontSamplePreview();
         _midiSoundFontPresets.Clear();
         _midiSoundFontInstruments.Clear();
         _midiSoundFontSamples.Clear();
@@ -2459,6 +2474,71 @@ public partial class EqualizerWindow : Window
         MidiPatchSlider.Value = Math.Clamp(preset.Patch, MidiPatchSlider.Minimum, MidiPatchSlider.Maximum);
         UpdateMidiControlState();
         SetMidiStatus($"SoundFont preset selected: {preset.DisplayName}.");
+    }
+
+    private void MidiSoundFontSampleSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateMidiControlState();
+    }
+
+    private void PreviewSoundFontSampleClicked(object sender, RoutedEventArgs e)
+    {
+        if (_loadedMidiSoundFont is not SoundFontSummary summary
+            || MidiSoundFontSamplesListBox.SelectedItem is not SoundFontSampleSummary sample)
+        {
+            SetMidiStatus("Load a SoundFont and select a sample first.");
+            return;
+        }
+
+        try
+        {
+            StopSoundFontSamplePreview();
+            _midiSoundFontPreviewStream = SoundFontLibrary.CreateSamplePreviewStream(summary.FilePath, sample.Index);
+            _midiSoundFontPreviewOutput = new WaveOutEvent();
+            _midiSoundFontPreviewOutput.PlaybackStopped += MidiSoundFontPreviewPlaybackStopped;
+            _midiSoundFontPreviewOutput.Init(_midiSoundFontPreviewStream);
+            _midiSoundFontPreviewOutput.Play();
+            MidiSoundFontStatusText.Text = $"Previewing SF2 sample: {sample.DisplayName}.";
+            SetMidiStatus($"SoundFont sample preview started: {sample.DisplayName}.");
+        }
+        catch (Exception ex)
+        {
+            StopSoundFontSamplePreview();
+            SetMidiStatus($"SoundFont sample preview failed: {ex.Message}");
+        }
+    }
+
+    private void MidiSoundFontPreviewPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            StopSoundFontSamplePreview();
+            if (e.Exception is not null)
+            {
+                SetMidiStatus($"SoundFont sample preview failed: {e.Exception.Message}");
+            }
+        }));
+    }
+
+    private void StopSoundFontSamplePreview()
+    {
+        if (_midiSoundFontPreviewOutput is not null)
+        {
+            _midiSoundFontPreviewOutput.PlaybackStopped -= MidiSoundFontPreviewPlaybackStopped;
+            try
+            {
+                _midiSoundFontPreviewOutput.Stop();
+            }
+            catch
+            {
+            }
+
+            _midiSoundFontPreviewOutput.Dispose();
+            _midiSoundFontPreviewOutput = null;
+        }
+
+        _midiSoundFontPreviewStream?.Dispose();
+        _midiSoundFontPreviewStream = null;
     }
 
     private void ApplySoundFontPresetToMidiOutputClicked(object sender, RoutedEventArgs e)
@@ -2877,6 +2957,7 @@ public partial class EqualizerWindow : Window
         _midiInputMonitor.MessageReceived -= MidiInputMonitorMessageReceived;
         _midiInputMonitor.StatusChanged -= MidiInputMonitorStatusChanged;
         StopMidiSequencePlayback("MIDI sequence stopped.", resetOutput: true, updateStatus: false);
+        StopSoundFontSamplePreview();
         _midiInputMonitor.Dispose();
         _midiOutputPort.Dispose();
         DisposeAudioRecordingFolderWatcher();
