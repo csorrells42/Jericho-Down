@@ -70,6 +70,7 @@ var tests = new (string Name, Action Test)[]
     ("Mic DSP tab excludes loopback inputs", MicDspTabExcludesLoopbackInputs),
     ("System audio loopback is selectable but not default mic fallback", SystemAudioLoopbackIsSelectableButNotDefaultMicFallback),
     ("App audio loopback routes through the mixer capture path", AppAudioLoopbackRoutesThroughMixerCapturePath),
+    ("Loopback captures shut down without zombie workers", LoopbackCapturesShutDownWithoutZombieWorkers),
     ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
     ("Stereo input DSP applies independently per channel", StereoInputDspAppliesIndependentlyPerChannel),
     ("System audio loopback stereo provider preserves channels", SystemAudioLoopbackStereoProviderPreservesChannels),
@@ -1507,7 +1508,16 @@ static void MicDspTabExcludesLoopbackInputs()
         "    private void ApplySelectedMixerInputPanelToUi()");
     Assert(mixerSelectionHelper.Contains("IsEqualizerEditableMicChannel(_activeMicChannel)", StringComparison.Ordinal), "mixer-only selections should not force the Mic/DSP channel picker onto loopback");
     Assert(windowCode.Contains("EnsureEqualizerEditorChannelSelectedAsync", StringComparison.Ordinal), "entering Mic/DSP should restore an editable mic channel if mixer selected loopback");
-    Assert(windowCode.Contains("Computer audio and loopback inputs are mixer-only sources.", StringComparison.Ordinal), "Mic/DSP source changes should reject loopback defensively");
+
+    var micSelectionMethod = ExtractSourceBetween(
+        windowCode,
+        "    private async void MicrophoneSelectionChanged",
+        "    private async void InputChannelSelectionChanged");
+    var rejectionIndex = micSelectionMethod.IndexOf("!IsEqualizerInputDevice(_selectedDevice)", StringComparison.Ordinal);
+    var assignmentIndex = micSelectionMethod.IndexOf("_activeMicChannel.SelectedDevice = _selectedDevice;", StringComparison.Ordinal);
+    Assert(rejectionIndex >= 0, "Mic/DSP source changes should reject loopback defensively");
+    Assert(assignmentIndex > rejectionIndex, "Mic/DSP source changes should reject loopback before assigning the active editor channel");
+    Assert(micSelectionMethod.Contains("Computer audio and loopback inputs are mixer-only sources.", StringComparison.Ordinal), "Mic/DSP source changes should explain that loopback belongs on the Mixing tab");
 }
 
 static void SystemAudioLoopbackIsSelectableButNotDefaultMicFallback()
@@ -1549,6 +1559,40 @@ static void AppAudioLoopbackRoutesThroughMixerCapturePath()
     Assert(serviceSource.Contains("CoreAudioSessionCatalog.GetProcessLoopbackInputDevices()", StringComparison.Ordinal), "audio input discovery should expose active app audio sessions as mixer inputs");
     Assert(serviceSource.Contains("StartProcessLoopbackCapture", StringComparison.Ordinal), "mixer capture startup should route app audio devices through process loopback");
     Assert(serviceSource.Contains("WASAPI process loopback", StringComparison.Ordinal), "stream status should name process loopback clearly");
+}
+
+static void LoopbackCapturesShutDownWithoutZombieWorkers()
+{
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    Assert(captureSource.Contains("IsBackground = true", StringComparison.Ordinal), "process loopback capture should not keep the app process alive if Windows audio is slow to stop");
+    Assert(captureSource.Contains("captureThread.Join(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
+    Assert(captureSource.Contains("ReleaseAudioClient();", StringComparison.Ordinal), "process loopback capture should release Windows audio clients on stop and dispose");
+    Assert(captureSource.Contains("Windows did not complete process-loopback activation", StringComparison.Ordinal), "process loopback activation should time out instead of hanging forever");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var stopMethod = ExtractSourceBetween(
+        serviceSource,
+        "    public void Stop()",
+        "    private void RestartProcessedOutput()");
+    Assert(stopMethod.Contains("_autoRecoverCapture = false;", StringComparison.Ordinal), "stopping audio should disable capture auto-recovery");
+    Assert(stopMethod.Contains("StopAdditionalCaptures();", StringComparison.Ordinal), "stopping audio should dispose mixer-only loopback captures");
+
+    var disposeMethod = ExtractSourceBetween(
+        serviceSource,
+        "        _isDisposing = true;",
+        "    public void StartProcessedAudioRecording");
+    Assert(disposeMethod.Contains("_isDisposing = true;", StringComparison.Ordinal), "disposing audio should mark the service as closing");
+    Assert(disposeMethod.Contains("Stop();", StringComparison.Ordinal), "disposing audio should stop active capture paths");
+    Assert(serviceSource.Contains("&& !_isDisposing", StringComparison.Ordinal), "capture recovery should not restart streams while the service is disposing");
+    Assert(serviceSource.Contains("capture.Dispose();", StringComparison.Ordinal), "released capture devices should be disposed");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var closingMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void WindowClosing",
+        "    private static void DisposeGraphHost");
+    Assert(closingMethod.Contains("_isClosing = true;", StringComparison.Ordinal), "window close should enter closing mode before tearing down audio");
+    Assert(closingMethod.Contains("_spectrumService.Dispose();", StringComparison.Ordinal), "window close should dispose the audio service that owns loopback capture");
 }
 
 static void SystemAudioLoopbackMixerStripIsLeftOfMics()
