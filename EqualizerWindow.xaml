@@ -3236,6 +3236,21 @@
                       <Button Style="{StaticResource ConsolePushButton}" Content="Open File" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiFileClicked" />
                       <Button x:Name="MidiFileExportButton" Style="{StaticResource ConsolePushButton}" Content="Export Copy" Padding="10,5" Margin="4,0,0,0" Click="ExportMidiFileCopyClicked" IsEnabled="False" />
                     </UniformGrid>
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                      <Button x:Name="MidiSequencePlayButton" Style="{StaticResource ConsolePushButton}" Content="Play Sequence" Padding="10,5" Margin="0,0,4,0" Click="PlayMidiSequenceClicked" />
+                      <Button x:Name="MidiSequenceStopButton" Style="{StaticResource ConsolePushButton}" Content="Stop Sequence" Padding="10,5" Margin="4,0,0,0" Click="StopMidiSequenceClicked" />
+                    </UniformGrid>
+                    <Grid Margin="0,0,0,10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="58" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Speed" Foreground="#B8C7D9" VerticalAlignment="Center" Margin="0,0,8,0" />
+                      <Slider x:Name="MidiSequenceTempoSlider" Grid.Column="1" Minimum="50" Maximum="200" Value="100" TickFrequency="10" TickPlacement="BottomRight" ValueChanged="MidiSequenceTempoSliderValueChanged" />
+                      <TextBlock x:Name="MidiSequenceTempoValueText" Grid.Column="2" Text="100%" Foreground="#F8FAFC" FontWeight="SemiBold" TextAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock x:Name="MidiSequenceStatusText" Text="No MIDI sequence queued." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <TextBlock x:Name="MidiFileStatusText" Text="No MIDI file loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" MinHeight="150">
                       <ItemsControl x:Name="MidiSequenceTracksItemsControl">
@@ -3262,7 +3277,7 @@
                     <TextBlock Text="5 SoundFont / Instrument" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                     <UniformGrid Columns="3" Margin="0,0,0,10">
                       <Button Style="{StaticResource ConsolePushButton}" Content="Load SF2" Padding="10,5" Margin="0,0,4,0" Click="LoadSoundFontClicked" />
-                      <Button Style="{StaticResource ConsolePushButton}" Content="Apply Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Apply Bank + Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
                       <Button Style="{StaticResource ConsolePushButton}" Content="Preview Note" Padding="10,5" Margin="4,0,0,0" Click="PreviewSoundFontNoteClicked" />
                     </UniformGrid>
                     <TextBlock x:Name="MidiSoundFontStatusText" Text="No SoundFont loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />

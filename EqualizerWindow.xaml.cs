@@ -395,6 +395,9 @@ public partial class EqualizerWindow : Window
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
     private string? _loadedMidiFilePath;
+    private MidiSequencePlaybackPlan? _midiSequencePlaybackPlan;
+    private CancellationTokenSource? _midiSequencePlaybackCancellation;
+    private bool _isMidiSequencePlaying;
     private SoundFontSummary? _loadedMidiSoundFont;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
@@ -1803,6 +1806,16 @@ public partial class EqualizerWindow : Window
         {
             MidiFileExportButton.IsEnabled = !string.IsNullOrWhiteSpace(_loadedMidiFilePath);
         }
+
+        if (MidiSequencePlayButton is not null)
+        {
+            MidiSequencePlayButton.IsEnabled = _midiSequencePlaybackPlan is not null && _midiOutputPort.IsOpen && !_isMidiSequencePlaying;
+        }
+
+        if (MidiSequenceStopButton is not null)
+        {
+            MidiSequenceStopButton.IsEnabled = _isMidiSequencePlaying;
+        }
     }
 
     private void StartMidiInputClicked(object sender, RoutedEventArgs e)
@@ -1866,6 +1879,7 @@ public partial class EqualizerWindow : Window
 
     private void CloseMidiOutputClicked(object sender, RoutedEventArgs e)
     {
+        StopMidiSequencePlayback("MIDI sequence stopped because output closed.", resetOutput: false);
         _midiOutputPort.Close();
         SetMidiStatus("MIDI output closed.");
         UpdateMidiControlState();
@@ -1967,7 +1981,10 @@ public partial class EqualizerWindow : Window
         try
         {
             var summary = MidiFileService.ReadSummary(dialog.FileName);
+            var playbackPlan = MidiSequenceService.CreatePlaybackPlan(dialog.FileName);
+            StopMidiSequencePlayback("MIDI sequence replaced by newly loaded file.", resetOutput: false, updateStatus: false);
             _loadedMidiFilePath = dialog.FileName;
+            _midiSequencePlaybackPlan = playbackPlan;
             _midiSequenceTracks.Clear();
             foreach (var track in summary.TrackSummaries)
             {
@@ -1975,12 +1992,16 @@ public partial class EqualizerWindow : Window
             }
 
             MidiFileStatusText.Text = summary.DisplayText;
+            MidiSequenceStatusText.Text = playbackPlan.DisplayText;
             SetMidiStatus($"MIDI file loaded: {summary.FileName}.");
         }
         catch (Exception ex)
         {
+            StopMidiSequencePlayback("MIDI sequence cleared after file load failure.", resetOutput: false, updateStatus: false);
             _loadedMidiFilePath = null;
+            _midiSequencePlaybackPlan = null;
             _midiSequenceTracks.Clear();
+            MidiSequenceStatusText.Text = "No MIDI sequence queued.";
             MidiFileStatusText.Text = $"MIDI file failed: {ex.Message}";
             SetMidiStatus($"MIDI file failed: {ex.Message}");
         }
@@ -2019,6 +2040,151 @@ public partial class EqualizerWindow : Window
         {
             SetMidiStatus($"MIDI export failed: {ex.Message}");
         }
+    }
+
+    private void PlayMidiSequenceClicked(object sender, RoutedEventArgs e)
+    {
+        if (_midiSequencePlaybackPlan is not MidiSequencePlaybackPlan playbackPlan)
+        {
+            SetMidiStatus("Open a MIDI file before playing a sequence.");
+            return;
+        }
+
+        if (!_midiOutputPort.IsOpen)
+        {
+            SetMidiStatus("Open a MIDI output before playing a sequence.");
+            return;
+        }
+
+        if (playbackPlan.Events.Count == 0)
+        {
+            SetMidiStatus("MIDI sequence has no playable channel events.");
+            return;
+        }
+
+        StopMidiSequencePlayback("Restarting MIDI sequence.", resetOutput: true, updateStatus: false);
+        var cancellation = new CancellationTokenSource();
+        _midiSequencePlaybackCancellation = cancellation;
+        _isMidiSequencePlaying = true;
+        UpdateMidiControlState();
+        MidiSequenceStatusText.Text = $"Playing {playbackPlan.FileName} at {MidiSequenceSpeedRatio() * 100d:0}% speed.";
+        _ = PlayMidiSequenceAsync(playbackPlan, MidiSequenceSpeedRatio(), cancellation);
+    }
+
+    private void StopMidiSequenceClicked(object sender, RoutedEventArgs e)
+    {
+        StopMidiSequencePlayback("MIDI sequence stopped.");
+    }
+
+    private async Task PlayMidiSequenceAsync(MidiSequencePlaybackPlan playbackPlan, double speedRatio, CancellationTokenSource cancellation)
+    {
+        var sentEvents = 0;
+        var previousOffset = TimeSpan.Zero;
+        try
+        {
+            foreach (var playbackEvent in playbackPlan.Events)
+            {
+                cancellation.Token.ThrowIfCancellationRequested();
+                var scaledOffset = ScaleMidiSequenceOffset(playbackEvent.Offset, speedRatio);
+                var delay = scaledOffset - previousOffset;
+                previousOffset = scaledOffset;
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, cancellation.Token);
+                }
+
+                _midiOutputPort.SendRawMessage(playbackEvent.RawMessage);
+                AddMidiMessage(MidiMessageSnapshot.FromRaw(playbackEvent.RawMessage, Environment.TickCount, "Out"));
+                sentEvents++;
+                if (sentEvents == 1 || sentEvents % 32 == 0)
+                {
+                    MidiSequenceStatusText.Text = $"Playing {playbackPlan.FileName}: {sentEvents}/{playbackPlan.Events.Count} events.";
+                }
+            }
+
+            _midiOutputPort.Reset();
+            MidiSequenceStatusText.Text = $"Sequence complete: {sentEvents} events sent.";
+            SetMidiStatus($"MIDI sequence complete: {playbackPlan.FileName}.");
+        }
+        catch (OperationCanceledException)
+        {
+            MidiSequenceStatusText.Text = "MIDI sequence stopped.";
+        }
+        catch (Exception ex)
+        {
+            MidiSequenceStatusText.Text = $"MIDI sequence failed: {ex.Message}";
+            SetMidiStatus($"MIDI sequence failed: {ex.Message}");
+        }
+        finally
+        {
+            var ownsCurrentPlayback = ReferenceEquals(_midiSequencePlaybackCancellation, cancellation);
+            if (ownsCurrentPlayback)
+            {
+                _midiSequencePlaybackCancellation = null;
+                _isMidiSequencePlaying = false;
+            }
+
+            cancellation.Dispose();
+            if (ownsCurrentPlayback)
+            {
+                UpdateMidiControlState();
+            }
+        }
+    }
+
+    private void StopMidiSequencePlayback(string status, bool resetOutput = true, bool updateStatus = true)
+    {
+        var wasPlaying = _isMidiSequencePlaying;
+        _midiSequencePlaybackCancellation?.Cancel();
+        _midiSequencePlaybackCancellation = null;
+        _isMidiSequencePlaying = false;
+        if (resetOutput && _midiOutputPort.IsOpen)
+        {
+            try
+            {
+                _midiOutputPort.Reset();
+            }
+            catch
+            {
+            }
+        }
+
+        if (updateStatus && (wasPlaying || MidiSequenceStatusText is not null))
+        {
+            MidiSequenceStatusText.Text = status;
+            if (wasPlaying)
+            {
+                SetMidiStatus(status);
+            }
+        }
+
+        UpdateMidiControlState();
+    }
+
+    private void MidiSequenceTempoSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (MidiSequenceTempoValueText is null)
+        {
+            return;
+        }
+
+        MidiSequenceTempoValueText.Text = $"{Math.Round(e.NewValue):0}%";
+        if (_midiSequencePlaybackPlan is not null && !_isMidiSequencePlaying)
+        {
+            MidiSequenceStatusText.Text = $"{_midiSequencePlaybackPlan.DisplayText} | speed {Math.Round(e.NewValue):0}%";
+        }
+    }
+
+    private double MidiSequenceSpeedRatio()
+    {
+        return Math.Clamp((MidiSequenceTempoSlider?.Value ?? 100d) / 100d, 0.5d, 2d);
+    }
+
+    private static TimeSpan ScaleMidiSequenceOffset(TimeSpan offset, double speedRatio)
+    {
+        return speedRatio <= 0d
+            ? offset
+            : TimeSpan.FromTicks(Math.Max(0L, (long)Math.Round(offset.Ticks / speedRatio)));
     }
 
     private void AddMidiControlMappingClicked(object sender, RoutedEventArgs e)
@@ -2153,9 +2319,15 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        SendMidiShortMessage(
-            () => _midiOutputPort.SendPatchChange(MidiChannel(), preset.Patch),
-            $"MIDI patch set from SoundFont preset: {preset.DisplayName}.");
+        try
+        {
+            SendSoundFontPresetSelection(preset);
+            SetMidiStatus($"MIDI bank and patch set from SoundFont preset: {preset.DisplayName}.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
     }
 
     private void PreviewSoundFontNoteClicked(object sender, RoutedEventArgs e)
@@ -2168,9 +2340,8 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            var patchRaw = _midiOutputPort.SendPatchChange(MidiChannel(), preset.Patch);
+            SendSoundFontPresetSelection(preset);
             var noteRaw = _midiOutputPort.SendNoteOn(MidiChannel(), MidiNote(), MidiVelocity());
-            AddMidiMessage(MidiMessageSnapshot.FromRaw(patchRaw, Environment.TickCount, "Out"));
             AddMidiMessage(MidiMessageSnapshot.FromRaw(noteRaw, Environment.TickCount, "Out"));
             _ = StopMidiPreviewNoteAsync(MidiChannel(), MidiNote());
             SetMidiStatus($"SoundFont preset preview sent: {preset.DisplayName}.");
@@ -2179,6 +2350,17 @@ public partial class EqualizerWindow : Window
         {
             SetMidiStatus(ex.Message);
         }
+    }
+
+    private void SendSoundFontPresetSelection(SoundFontPresetSummary preset)
+    {
+        foreach (var rawMessage in _midiOutputPort.SendBankSelect(MidiChannel(), preset.Bank))
+        {
+            AddMidiMessage(MidiMessageSnapshot.FromRaw(rawMessage, Environment.TickCount, "Out"));
+        }
+
+        var patchRaw = _midiOutputPort.SendPatchChange(MidiChannel(), preset.Patch);
+        AddMidiMessage(MidiMessageSnapshot.FromRaw(patchRaw, Environment.TickCount, "Out"));
     }
 
     private async Task StopMidiPreviewNoteAsync(int channel, int note)
@@ -2541,6 +2723,7 @@ public partial class EqualizerWindow : Window
         _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
         _midiInputMonitor.MessageReceived -= MidiInputMonitorMessageReceived;
         _midiInputMonitor.StatusChanged -= MidiInputMonitorStatusChanged;
+        StopMidiSequencePlayback("MIDI sequence stopped.", resetOutput: true, updateStatus: false);
         _midiInputMonitor.Dispose();
         _midiOutputPort.Dispose();
         DisposeAudioRecordingFolderWatcher();

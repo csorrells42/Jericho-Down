@@ -63,6 +63,18 @@ public sealed class MidiOutputPort : IDisposable
         return raw;
     }
 
+    public IReadOnlyList<int> SendBankSelect(int channel, int bank)
+    {
+        var normalizedBank = Math.Clamp(bank, 0, 16383);
+        var bankMsb = (normalizedBank >> 7) & 0x7F;
+        var bankLsb = normalizedBank & 0x7F;
+        return
+        [
+            SendControlChange(channel, (int)MidiController.BankSelect, bankMsb),
+            SendControlChange(channel, (int)MidiController.BankSelectLsb, bankLsb)
+        ];
+    }
+
     public int SendPitchWheel(int channel, int value)
     {
         var raw = CreatePitchWheelRawMessage(channel, value);
@@ -130,6 +142,18 @@ public sealed class MidiOutputPort : IDisposable
     public static int CreatePatchChangeRawMessage(int channel, int patch)
     {
         return MidiMessage.ChangePatch(NormalizeSevenBit(patch), NormalizeChannel(channel)).RawData;
+    }
+
+    public static IReadOnlyList<int> CreateBankSelectRawMessages(int channel, int bank)
+    {
+        var normalizedBank = Math.Clamp(bank, 0, 16383);
+        var bankMsb = (normalizedBank >> 7) & 0x7F;
+        var bankLsb = normalizedBank & 0x7F;
+        return
+        [
+            CreateControlChangeRawMessage(channel, (int)MidiController.BankSelect, bankMsb),
+            CreateControlChangeRawMessage(channel, (int)MidiController.BankSelectLsb, bankLsb)
+        ];
     }
 
     public static int CreatePitchWheelRawMessage(int channel, int value)

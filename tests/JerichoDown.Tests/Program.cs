@@ -10,6 +10,7 @@ using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Video;
 using JerichoDown.Visualization;
+using NAudio.Midi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -40,6 +41,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
     ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
     ("MIDI control mappings match incoming channel messages", MidiControlMappingsMatchIncomingChannelMessages),
+    ("MIDI sequence playback plan schedules tempo aware events", MidiSequencePlaybackPlanSchedulesTempoAwareEvents),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -682,7 +684,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(monitor.Contains("CreateSysexBuffers", StringComparison.Ordinal), "MIDI input monitor should allocate sysex buffers");
 
     var output = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiOutputPort.cs")));
-    foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBuffer", "Reset" })
+    foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBankSelect", "SendBuffer", "Reset" })
     {
         Assert(output.Contains(api, StringComparison.Ordinal), $"MIDI output should expose NAudio {api}");
     }
@@ -691,6 +693,10 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
     Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
     Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose sequence track summaries");
+
+    var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiSequenceService.cs")));
+    Assert(sequenceService.Contains("GetAsShortMessage", StringComparison.Ordinal), "MIDI sequence service should emit playable short messages");
+    Assert(sequenceService.Contains("TempoEvent", StringComparison.Ordinal), "MIDI sequence service should respect MIDI tempo events");
 
     var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SoundFontLibrary.cs")));
     Assert(soundFontLibrary.Contains("new SoundFont", StringComparison.Ordinal), "SoundFont library should read NAudio SoundFont files");
@@ -705,8 +711,12 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(xaml.Contains("SendMidiSysexClicked", StringComparison.Ordinal), "MIDI tab should expose sysex output");
     Assert(xaml.Contains("MidiControlMappingActionComboBox", StringComparison.Ordinal), "MIDI tab should expose control mapping actions");
     Assert(xaml.Contains("MidiSequenceTracksItemsControl", StringComparison.Ordinal), "MIDI tab should expose sequence tracks");
+    Assert(xaml.Contains("PlayMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should play MIDI sequences");
+    Assert(xaml.Contains("StopMidiSequenceClicked", StringComparison.Ordinal), "MIDI tab should stop MIDI sequences");
+    Assert(xaml.Contains("MidiSequenceTempoSlider", StringComparison.Ordinal), "MIDI tab should control MIDI sequence speed");
     Assert(xaml.Contains("MidiSoundFontPresetComboBox", StringComparison.Ordinal), "MIDI tab should expose SoundFont presets");
     Assert(xaml.Contains("LoadSoundFontClicked", StringComparison.Ordinal), "MIDI tab should load SoundFont files");
+    Assert(xaml.Contains("Apply Bank + Patch", StringComparison.Ordinal), "MIDI tab should apply SoundFont bank and patch selections");
     Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should preview selected instrument notes");
     Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
     var expectedSectionOrder = new[]
@@ -743,6 +753,13 @@ static void NAudioMidiMessageUtilitiesClampAndParseSafely()
     Assert(pitch.Channel == 16, "MIDI channels should clamp to channel 16 maximum");
     Assert(pitch.Data1 == 127 && pitch.Data2 == 127, "MIDI pitch wheel should clamp to 14-bit maximum");
 
+    var bankSelect = MidiOutputPort.CreateBankSelectRawMessages(1, 130);
+    Assert(bankSelect.Count == 2, "MIDI bank select should send MSB and LSB controller messages");
+    var bankMsb = MidiMessageSnapshot.FromRaw(bankSelect[0], 321, "Out");
+    var bankLsb = MidiMessageSnapshot.FromRaw(bankSelect[1], 322, "Out");
+    Assert(bankMsb.Data1 == (int)MidiController.BankSelect && bankMsb.Data2 == 1, "MIDI bank select MSB should carry the high bank bits");
+    Assert(bankLsb.Data1 == (int)MidiController.BankSelectLsb && bankLsb.Data2 == 2, "MIDI bank select LSB should carry the low bank bits");
+
     Assert(MidiHexParser.TryParseShortMessage("90 3C 7F", out var parsed), "MIDI short hex parser should accept spaced bytes");
     var parsedSnapshot = MidiMessageSnapshot.FromRaw(parsed, 789);
     Assert(parsedSnapshot.MessageType == "Note On", "parsed MIDI status should identify note on");
@@ -767,6 +784,29 @@ static void MidiControlMappingsMatchIncomingChannelMessages()
     var differentController = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 65, 127), 124);
     Assert(!rule.Matches(differentController), "MIDI mapping should not match a different controller");
     Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ToggleProcessedOutput), "MIDI mapping actions should include processed output routing");
+}
+
+static void MidiSequencePlaybackPlanSchedulesTempoAwareEvents()
+{
+    var events = new MidiEventCollection(1, 480);
+    events.AddEvent(new TempoEvent(500_000, 0), 0);
+    events.AddEvent(new PatchChangeEvent(0, 1, 7), 0);
+    events.AddEvent(new NoteOnEvent(480, 1, 60, 100, 240), 0);
+    events.AddEvent(new NoteEvent(720, 1, MidiCommandCode.NoteOff, 60, 0), 0);
+    events.AddEvent(new TempoEvent(1_000_000, 960), 0);
+    events.AddEvent(new ControlChangeEvent(1440, 1, MidiController.Modulation, 64), 0);
+
+    var plan = MidiSequenceService.CreatePlaybackPlan(events, "fixture.mid");
+
+    Assert(plan.FileName == "fixture.mid", "MIDI playback plan should retain the file name");
+    Assert(plan.Events.Count == 4, "MIDI playback plan should include playable channel events only");
+    Assert(plan.Events[0].Offset == TimeSpan.Zero, "MIDI patch should play at the start");
+    Assert(plan.Events[1].Offset == TimeSpan.FromMilliseconds(500), "MIDI note on should follow the initial tempo");
+    Assert(plan.Events[2].Offset == TimeSpan.FromMilliseconds(750), "MIDI note off should follow the initial tempo");
+    Assert(plan.Events[3].Offset == TimeSpan.FromMilliseconds(2000), "MIDI control change should follow the slower tempo after the tempo event");
+    Assert(plan.Events[0].RawMessage == MidiOutputPort.CreatePatchChangeRawMessage(1, 7), "MIDI sequence patch raw message should match the output helper");
+    Assert(plan.Events[1].RawMessage == MidiOutputPort.CreateNoteOnRawMessage(1, 60, 100), "MIDI sequence note raw message should match the output helper");
+    Assert(plan.DisplayText.Contains("4 playable events", StringComparison.Ordinal), "MIDI playback plan display should name playable event count");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()
