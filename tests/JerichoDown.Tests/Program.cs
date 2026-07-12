@@ -753,6 +753,8 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("Select an incoming MIDI message before mapping.", StringComparison.Ordinal), "MIDI mapping workflow should reject outbound monitor messages");
     Assert(windowSource.Contains("if (message.Channel is null)", StringComparison.Ordinal), "MIDI mapping workflow should reject channel-less system messages");
     Assert(windowSource.Contains("GetTriggeredMappings", StringComparison.Ordinal), "MIDI mapping workflow should use edge-gated trigger state");
+    Assert(windowSource.Contains("Task.Run(async () =>", StringComparison.Ordinal), "MIDI sequence playback should send timed events off the UI thread");
+    Assert(windowSource.Contains("PostMidiMessage", StringComparison.Ordinal), "MIDI sequence playback should marshal monitor updates safely");
     var expectedSectionOrder = new[]
     {
         "1 MIDI Devices",

@@ -1753,7 +1753,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(() => AddMidiMessage(message)), DispatcherPriority.Background);
+        PostMidiMessage(message);
     }
 
     private void MidiInputMonitorStatusChanged(object? sender, string status)
@@ -1763,7 +1763,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(() => SetMidiStatus(status)), DispatcherPriority.Background);
+        PostMidiUi(() => SetMidiStatus(status));
     }
 
     private void RestoreMidiWorkflowState()
@@ -1832,6 +1832,66 @@ public partial class EqualizerWindow : Window
         }
 
         ApplyMidiControlMappings(message);
+    }
+
+    private void PostMidiMessage(MidiMessageSnapshot message)
+    {
+        PostMidiUi(() => AddMidiMessage(message));
+    }
+
+    private void PostMidiSequenceStatus(string status)
+    {
+        PostMidiUi(() =>
+        {
+            if (MidiSequenceStatusText is not null)
+            {
+                MidiSequenceStatusText.Text = status;
+            }
+        });
+    }
+
+    private void PostMidiUi(Action action)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        if (Dispatcher.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!_isClosing)
+            {
+                action();
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private Task InvokeMidiUiAsync(Action action)
+    {
+        if (_isClosing)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (Dispatcher.CheckAccess())
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        return Dispatcher.InvokeAsync(new Action(() =>
+        {
+            if (!_isClosing)
+            {
+                action();
+            }
+        }), DispatcherPriority.Background).Task;
     }
 
     private void SetMidiStatus(string status)
@@ -2208,65 +2268,74 @@ public partial class EqualizerWindow : Window
     private async Task PlayMidiSequenceAsync(MidiSequencePlaybackPlan playbackPlan, double speedRatio, CancellationTokenSource cancellation)
     {
         var sentEvents = 0;
-        var previousOffset = TimeSpan.Zero;
         try
         {
-            foreach (var playbackEvent in playbackPlan.Events)
+            await Task.Run(async () =>
             {
-                cancellation.Token.ThrowIfCancellationRequested();
-                var scaledOffset = ScaleMidiSequenceOffset(playbackEvent.Offset, speedRatio);
-                var delay = scaledOffset - previousOffset;
-                previousOffset = scaledOffset;
-                if (delay > TimeSpan.Zero)
+                var previousOffset = TimeSpan.Zero;
+                foreach (var playbackEvent in playbackPlan.Events)
                 {
-                    await Task.Delay(delay, cancellation.Token);
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    var scaledOffset = ScaleMidiSequenceOffset(playbackEvent.Offset, speedRatio);
+                    var delay = scaledOffset - previousOffset;
+                    previousOffset = scaledOffset;
+                    if (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay, cancellation.Token).ConfigureAwait(false);
+                    }
+
+                    if (playbackEvent.SysexBytes is { Length: > 0 } sysexBytes)
+                    {
+                        _midiOutputPort.SendSysex(sysexBytes);
+                        PostMidiMessage(MidiMessageSnapshot.FromSysex(sysexBytes, Environment.TickCount, "Out"));
+                    }
+                    else
+                    {
+                        _midiOutputPort.SendRawMessage(playbackEvent.RawMessage);
+                        PostMidiMessage(MidiMessageSnapshot.FromRaw(playbackEvent.RawMessage, Environment.TickCount, "Out"));
+                    }
+
+                    sentEvents++;
+                    if (sentEvents == 1 || sentEvents % 32 == 0)
+                    {
+                        PostMidiSequenceStatus($"Playing {playbackPlan.FileName}: {sentEvents}/{playbackPlan.Events.Count} events.");
+                    }
                 }
 
-                if (playbackEvent.SysexBytes is { Length: > 0 } sysexBytes)
-                {
-                    _midiOutputPort.SendSysex(sysexBytes);
-                    AddMidiMessage(MidiMessageSnapshot.FromSysex(sysexBytes, Environment.TickCount, "Out"));
-                }
-                else
-                {
-                    _midiOutputPort.SendRawMessage(playbackEvent.RawMessage);
-                    AddMidiMessage(MidiMessageSnapshot.FromRaw(playbackEvent.RawMessage, Environment.TickCount, "Out"));
-                }
+                _midiOutputPort.Reset();
+            }, cancellation.Token).ConfigureAwait(false);
 
-                sentEvents++;
-                if (sentEvents == 1 || sentEvents % 32 == 0)
-                {
-                    MidiSequenceStatusText.Text = $"Playing {playbackPlan.FileName}: {sentEvents}/{playbackPlan.Events.Count} events.";
-                }
-            }
-
-            _midiOutputPort.Reset();
-            MidiSequenceStatusText.Text = $"Sequence complete: {sentEvents} events sent.";
-            SetMidiStatus($"MIDI sequence complete: {playbackPlan.FileName}.");
+            await InvokeMidiUiAsync(() =>
+            {
+                MidiSequenceStatusText.Text = $"Sequence complete: {sentEvents} events sent.";
+                SetMidiStatus($"MIDI sequence complete: {playbackPlan.FileName}.");
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            MidiSequenceStatusText.Text = "MIDI sequence stopped.";
+            await InvokeMidiUiAsync(() => MidiSequenceStatusText.Text = "MIDI sequence stopped.").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            MidiSequenceStatusText.Text = $"MIDI sequence failed: {ex.Message}";
-            SetMidiStatus($"MIDI sequence failed: {ex.Message}");
+            await InvokeMidiUiAsync(() =>
+            {
+                MidiSequenceStatusText.Text = $"MIDI sequence failed: {ex.Message}";
+                SetMidiStatus($"MIDI sequence failed: {ex.Message}");
+            }).ConfigureAwait(false);
         }
         finally
         {
-            var ownsCurrentPlayback = ReferenceEquals(_midiSequencePlaybackCancellation, cancellation);
-            if (ownsCurrentPlayback)
+            await InvokeMidiUiAsync(() =>
             {
-                _midiSequencePlaybackCancellation = null;
-                _isMidiSequencePlaying = false;
-            }
-
+                var ownsCurrentPlayback = ReferenceEquals(_midiSequencePlaybackCancellation, cancellation);
+                if (ownsCurrentPlayback)
+                {
+                    _midiSequencePlaybackCancellation = null;
+                    _isMidiSequencePlaying = false;
+                    UpdateMidiControlState();
+                }
+            }).ConfigureAwait(false);
             cancellation.Dispose();
-            if (ownsCurrentPlayback)
-            {
-                UpdateMidiControlState();
-            }
         }
     }
 
