@@ -818,19 +818,25 @@ static void MidiSequencePlaybackPlanSchedulesTempoAwareEvents()
     events.AddEvent(new NoteOnEvent(480, 1, 60, 100, 240), 0);
     events.AddEvent(new NoteEvent(720, 1, MidiCommandCode.NoteOff, 60, 0), 0);
     events.AddEvent(new TempoEvent(1_000_000, 960), 0);
+    var sysexEvent = new SysexEvent { AbsoluteTime = 1200 };
+    typeof(SysexEvent).GetField("data", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(sysexEvent, new byte[] { 0xF0, 0x7E, 0x00, 0xF7 });
+    events.AddEvent(sysexEvent, 0);
     events.AddEvent(new ControlChangeEvent(1440, 1, MidiController.Modulation, 64), 0);
 
     var plan = MidiSequenceService.CreatePlaybackPlan(events, "fixture.mid");
 
     Assert(plan.FileName == "fixture.mid", "MIDI playback plan should retain the file name");
-    Assert(plan.Events.Count == 4, "MIDI playback plan should include playable channel events only");
+    Assert(plan.Events.Count == 5, "MIDI playback plan should include playable channel and sysex events");
     Assert(plan.Events[0].Offset == TimeSpan.Zero, "MIDI patch should play at the start");
     Assert(plan.Events[1].Offset == TimeSpan.FromMilliseconds(500), "MIDI note on should follow the initial tempo");
     Assert(plan.Events[2].Offset == TimeSpan.FromMilliseconds(750), "MIDI note off should follow the initial tempo");
-    Assert(plan.Events[3].Offset == TimeSpan.FromMilliseconds(2000), "MIDI control change should follow the slower tempo after the tempo event");
+    Assert(plan.Events[3].Offset == TimeSpan.FromMilliseconds(1500), "MIDI sysex should follow the slower tempo after the tempo event");
+    Assert(plan.Events[4].Offset == TimeSpan.FromMilliseconds(2000), "MIDI control change should follow the slower tempo after the tempo event");
     Assert(plan.Events[0].RawMessage == MidiOutputPort.CreatePatchChangeRawMessage(1, 7), "MIDI sequence patch raw message should match the output helper");
     Assert(plan.Events[1].RawMessage == MidiOutputPort.CreateNoteOnRawMessage(1, 60, 100), "MIDI sequence note raw message should match the output helper");
-    Assert(plan.DisplayText.Contains("4 playable events", StringComparison.Ordinal), "MIDI playback plan display should name playable event count");
+    Assert(plan.Events[3].SysexBytes?.Length == 4, "MIDI sequence sysex payload should be preserved");
+    Assert(plan.Events[3].Details.Contains("F0 7E 00 F7", StringComparison.Ordinal), "MIDI sequence sysex display should show payload bytes");
+    Assert(plan.DisplayText.Contains("5 playable events", StringComparison.Ordinal), "MIDI playback plan display should name playable event count");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()

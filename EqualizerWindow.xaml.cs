@@ -2212,8 +2212,17 @@ public partial class EqualizerWindow : Window
                     await Task.Delay(delay, cancellation.Token);
                 }
 
-                _midiOutputPort.SendRawMessage(playbackEvent.RawMessage);
-                AddMidiMessage(MidiMessageSnapshot.FromRaw(playbackEvent.RawMessage, Environment.TickCount, "Out"));
+                if (playbackEvent.SysexBytes is { Length: > 0 } sysexBytes)
+                {
+                    _midiOutputPort.SendSysex(sysexBytes);
+                    AddMidiMessage(MidiMessageSnapshot.FromSysex(sysexBytes, Environment.TickCount, "Out"));
+                }
+                else
+                {
+                    _midiOutputPort.SendRawMessage(playbackEvent.RawMessage);
+                    AddMidiMessage(MidiMessageSnapshot.FromRaw(playbackEvent.RawMessage, Environment.TickCount, "Out"));
+                }
+
                 sentEvents++;
                 if (sentEvents == 1 || sentEvents % 32 == 0)
                 {

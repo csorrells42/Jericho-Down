@@ -1,11 +1,13 @@
 using NAudio.Midi;
 using System.IO;
+using System.Reflection;
 
 namespace JerichoDown.Audio;
 
 public static class MidiSequenceService
 {
     private const double DefaultTempoMicrosecondsPerQuarterNote = 500_000d;
+    private static readonly FieldInfo? SysexEventDataField = typeof(SysexEvent).GetField("data", BindingFlags.Instance | BindingFlags.NonPublic);
 
     public static MidiSequencePlaybackPlan CreatePlaybackPlan(string filePath, bool strictChecking = false)
     {
@@ -49,6 +51,17 @@ public static class MidiSequenceService
             if (midiEvent is TempoEvent tempoEvent)
             {
                 tempoMicrosecondsPerQuarterNote = Math.Max(1, tempoEvent.MicrosecondsPerQuarterNote);
+                continue;
+            }
+
+            if (midiEvent is SysexEvent sysexEvent && TryGetSysexBytes(sysexEvent, out var sysexBytes))
+            {
+                playbackEvents.Add(new MidiSequencePlaybackEvent(
+                    TimeSpan.FromTicks((long)Math.Round(elapsedMicroseconds * TimeSpan.TicksPerMillisecond / 1000d)),
+                    0,
+                    "System Exclusive",
+                    0,
+                    sysexBytes));
                 continue;
             }
 
@@ -105,6 +118,18 @@ public static class MidiSequenceService
                 return false;
         }
     }
+
+    private static bool TryGetSysexBytes(SysexEvent sysexEvent, out byte[] bytes)
+    {
+        bytes = [];
+        if (SysexEventDataField?.GetValue(sysexEvent) is not byte[] data || data.Length == 0)
+        {
+            return false;
+        }
+
+        bytes = data.ToArray();
+        return true;
+    }
 }
 
 public sealed record MidiSequencePlaybackPlan(
@@ -126,9 +151,12 @@ public sealed record MidiSequencePlaybackEvent(
     TimeSpan Offset,
     int RawMessage,
     string MessageType,
-    int Channel)
+    int Channel,
+    byte[]? SysexBytes = null)
 {
     public string DisplayName => $"{Offset:mm\\:ss\\.fff} {MessageType}";
 
-    public string Details => $"Raw {MidiMessageSnapshot.FormatRawMessage(RawMessage)} | channel {Channel}";
+    public string Details => SysexBytes is { Length: > 0 }
+        ? $"{SysexBytes.Length} bytes | {MidiHexParser.ToHex(SysexBytes)}"
+        : $"Raw {MidiMessageSnapshot.FormatRawMessage(RawMessage)} | channel {Channel}";
 }
