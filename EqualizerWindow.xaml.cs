@@ -113,6 +113,7 @@ public partial class EqualizerWindow : Window
     private readonly ObservableCollection<MicChannelStrip> _micChannels = CreateDefaultMicChannels();
     private readonly MidiInputMonitor _midiInputMonitor = new();
     private readonly MidiOutputPort _midiOutputPort = new();
+    private readonly MidiControlMappingTriggerState _midiControlMappingTriggerState = new();
     private readonly ObservableCollection<MidiMessageSnapshot> _midiMessages = [];
     private readonly ObservableCollection<MidiControlMappingRule> _midiControlMappings = [];
     private readonly ObservableCollection<MidiTrackSummary> _midiSequenceTracks = [];
@@ -1847,6 +1848,7 @@ public partial class EqualizerWindow : Window
     private void RestoreMidiControlMappings()
     {
         _midiControlMappings.Clear();
+        _midiControlMappingTriggerState.Clear();
         foreach (var state in _appSettings.MidiControlMappings)
         {
             if (string.IsNullOrWhiteSpace(state.ActionName)
@@ -2328,6 +2330,12 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (!string.Equals(message.Direction, "In", StringComparison.Ordinal))
+        {
+            SetMidiStatus("Select an incoming MIDI message before mapping.");
+            return;
+        }
+
         if (message.Channel is null && message.Data1 is null)
         {
             SetMidiStatus("Choose a channel message for control mapping.");
@@ -2361,6 +2369,7 @@ public partial class EqualizerWindow : Window
         }
 
         _midiControlMappings.Remove(rule);
+        _midiControlMappingTriggerState.Remove(rule);
         ScheduleAppStatePersist();
         SetMidiStatus($"MIDI control mapping removed: {rule.ActionName}.");
     }
@@ -2368,6 +2377,7 @@ public partial class EqualizerWindow : Window
     private void ClearMidiControlMappingsClicked(object sender, RoutedEventArgs e)
     {
         _midiControlMappings.Clear();
+        _midiControlMappingTriggerState.Clear();
         ScheduleAppStatePersist();
         SetMidiStatus("MIDI control mappings cleared.");
     }
@@ -2530,13 +2540,16 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var rule = _midiControlMappings.FirstOrDefault(mapping => mapping.ShouldTrigger(message));
-        if (rule is null)
+        var triggeredMappings = _midiControlMappingTriggerState.GetTriggeredMappings(_midiControlMappings, message);
+        if (triggeredMappings.Count == 0)
         {
             return;
         }
 
-        ExecuteMidiControlMapping(rule);
+        foreach (var rule in triggeredMappings)
+        {
+            ExecuteMidiControlMapping(rule);
+        }
     }
 
     private void ExecuteMidiControlMapping(MidiControlMappingRule rule)

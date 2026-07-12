@@ -41,6 +41,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
     ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
     ("MIDI control mappings match incoming channel messages", MidiControlMappingsMatchIncomingChannelMessages),
+    ("MIDI control mapping trigger state is edge gated", MidiControlMappingTriggerStateIsEdgeGated),
     ("MIDI sequence playback plan schedules tempo aware events", MidiSequencePlaybackPlanSchedulesTempoAwareEvents),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
@@ -743,6 +744,8 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
     Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI sequence speed should be captured in app state");
     Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI sequence stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active sequence playback before resetting output");
+    Assert(windowSource.Contains("Select an incoming MIDI message before mapping.", StringComparison.Ordinal), "MIDI mapping workflow should reject outbound monitor messages");
+    Assert(windowSource.Contains("GetTriggeredMappings", StringComparison.Ordinal), "MIDI mapping workflow should use edge-gated trigger state");
     var expectedSectionOrder = new[]
     {
         "1 MIDI Devices",
@@ -816,6 +819,40 @@ static void MidiControlMappingsMatchIncomingChannelMessages()
     var patchRule = MidiControlMappingRule.FromMessage(patchSnapshot, MidiControlMappingActions.ToggleProcessedOutput);
     Assert(patchRule.ShouldTrigger(patchSnapshot), "MIDI mapping should allow patch change messages even though their second data byte is zero");
     Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ToggleProcessedOutput), "MIDI mapping actions should include processed output routing");
+}
+
+static void MidiControlMappingTriggerStateIsEdgeGated()
+{
+    var muteRule = new MidiControlMappingRule(MidiControlMappingActions.ToggleSelectedInputMute, "Control Change", 2, 64);
+    var soloRule = new MidiControlMappingRule(MidiControlMappingActions.ToggleSelectedInputSolo, "Control Change", 2, 64);
+    var patchRule = new MidiControlMappingRule(MidiControlMappingActions.ToggleProcessedOutput, "Patch Change", 3, 12);
+    var triggerState = new MidiControlMappingTriggerState();
+    var mappings = new[] { muteRule, soloRule, patchRule };
+
+    var press = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 64, 127), 100);
+    var firstPress = triggerState.GetTriggeredMappings(mappings, press);
+    Assert(firstPress.Count == 2, "first MIDI control press should trigger every mapped action for that control");
+    Assert(firstPress[0] == muteRule && firstPress[1] == soloRule, "MIDI control mappings should preserve mapping order");
+
+    var repeatedPress = triggerState.GetTriggeredMappings(mappings, press);
+    Assert(repeatedPress.Count == 0, "held MIDI control messages should not retrigger toggle actions");
+
+    var release = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 64, 0), 101);
+    Assert(triggerState.GetTriggeredMappings(mappings, release).Count == 0, "MIDI control release should only re-arm the mapping");
+    Assert(triggerState.GetTriggeredMappings(mappings, press).Count == 2, "MIDI control press should trigger again after release");
+
+    var noteRule = new MidiControlMappingRule(MidiControlMappingActions.ToggleSelectedInputMute, "Note On", 1, 60);
+    var noteState = new MidiControlMappingTriggerState();
+    var notePress = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateNoteOnRawMessage(1, 60, 100), 102);
+    var noteOff = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateNoteOffRawMessage(1, 60, 0), 103);
+    Assert(noteState.GetTriggeredMappings([noteRule], notePress).Count == 1, "MIDI note-on should trigger mappings");
+    Assert(noteState.GetTriggeredMappings([noteRule], notePress).Count == 0, "held MIDI notes should not retrigger mappings");
+    Assert(noteState.GetTriggeredMappings([noteRule], noteOff).Count == 0, "MIDI note-off should only re-arm note mappings");
+    Assert(noteState.GetTriggeredMappings([noteRule], notePress).Count == 1, "MIDI note-on should trigger again after note-off");
+
+    var patchSnapshot = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreatePatchChangeRawMessage(3, 12), 104);
+    Assert(triggerState.GetTriggeredMappings(mappings, patchSnapshot).Single() == patchRule, "non-momentary MIDI messages should trigger matching mappings");
+    Assert(triggerState.GetTriggeredMappings(mappings, patchSnapshot).Single() == patchRule, "non-momentary MIDI messages should not be edge gated");
 }
 
 static void MidiSequencePlaybackPlanSchedulesTempoAwareEvents()

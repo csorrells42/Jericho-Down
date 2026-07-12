@@ -16,6 +16,9 @@ public sealed record MidiControlMappingRule(
         ? $"{MessageType} ch {channel} d1 {Data1?.ToString() ?? "any"}"
         : $"{MessageType} d1 {Data1?.ToString() ?? "any"}";
 
+    public bool IsMomentary => string.Equals(MessageType, "Note On", StringComparison.Ordinal)
+        || string.Equals(MessageType, "Control Change", StringComparison.Ordinal);
+
     public bool Matches(MidiMessageSnapshot message)
     {
         return string.Equals(message.MessageType, MessageType, StringComparison.Ordinal)
@@ -45,6 +48,25 @@ public sealed record MidiControlMappingRule(
         return true;
     }
 
+    public bool IsRelease(MidiMessageSnapshot message)
+    {
+        if (!ChannelMatches(message) || !Data1Matches(message))
+        {
+            return false;
+        }
+
+        if (string.Equals(MessageType, "Note On", StringComparison.Ordinal))
+        {
+            return string.Equals(message.MessageType, "Note Off", StringComparison.Ordinal)
+                || (string.Equals(message.MessageType, "Note On", StringComparison.Ordinal)
+                    && message.Data2.GetValueOrDefault() == 0);
+        }
+
+        return string.Equals(MessageType, "Control Change", StringComparison.Ordinal)
+            && string.Equals(message.MessageType, "Control Change", StringComparison.Ordinal)
+            && message.Data2.GetValueOrDefault() == 0;
+    }
+
     public static MidiControlMappingRule FromMessage(MidiMessageSnapshot message, string actionName)
     {
         return new MidiControlMappingRule(
@@ -52,6 +74,16 @@ public sealed record MidiControlMappingRule(
             message.MessageType,
             message.Channel,
             message.Data1);
+    }
+
+    private bool ChannelMatches(MidiMessageSnapshot message)
+    {
+        return !Channel.HasValue || message.Channel == Channel;
+    }
+
+    private bool Data1Matches(MidiMessageSnapshot message)
+    {
+        return !Data1.HasValue || message.Data1 == Data1;
     }
 }
 
