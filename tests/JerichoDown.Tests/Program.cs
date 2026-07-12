@@ -39,6 +39,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio DMO effect chain exposes DirectSound effects", NAudioDmoEffectChainExposesDirectSoundEffects),
     ("DSP screen separates custom and NAudio families", DspScreenSeparatesCustomAndNaudioFamilies),
     ("NAudio DMO effect chain processes safely", NAudioDmoEffectChainProcessesSafely),
+    ("NAudio file analyzer reports recording quality details", NAudioFileAnalyzerReportsRecordingQualityDetails),
     ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
     ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
     ("MIDI control mappings match incoming channel messages", MidiControlMappingsMatchIncomingChannelMessages),
@@ -56,6 +57,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
+    ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
     ("ASIO control panel rejects non-ASIO endpoints", AsioControlPanelRejectsNonAsioEndpoints),
     ("ASIO settings menu prefers selected and installed drivers", AsioSettingsMenuPrefersSelectedAndInstalledDrivers),
@@ -1410,7 +1412,7 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         SessionIdentifier: "session",
         SessionInstanceIdentifier: "instance");
     var duplicateSession = new CoreAudioSessionSnapshot(
-        string.Empty,
+        "Music App Stream",
         "MusicApp",
         1300,
         IsSystemSoundsSession: false,
@@ -1424,6 +1426,9 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(collapsedSessions.Count == 1, "duplicate visible app sessions should collapse into one widget row");
     Assert(collapsedSessions[0].SessionCount == 2, "collapsed app session should preserve the hidden session count");
     Assert(collapsedSessions[0].ControlTargets.Count == 2, "collapsed app session should keep every Windows session control target");
+    Assert(collapsedSessions[0].DisplayTitle == "MusicApp", "active process identity should win over duplicate display-name noise");
+    Assert(CoreAudioSessionCatalog.FormatProcessIdentity(collapsedSessions[0]).Contains("MusicApp PID 1200", StringComparison.Ordinal), "CoreAudio grouped sessions should expose app process identity");
+    Assert(CoreAudioSessionCatalog.FormatSessionSummary(collapsedSessions[0]).Contains("[MusicApp PID 1200]", StringComparison.Ordinal), "CoreAudio session summaries should include process identity for duplicate rows");
     Assert(Math.Abs(collapsedSessions[0].PeakLevel - 0.75f) < 0.0001f, "collapsed app session should show the loudest duplicate peak");
     var text = (string)InvokeEqualizerWindowPrivateStaticWithArgs(
         "BuildOutputAudioSessionText",
@@ -1449,6 +1454,9 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(windowXaml.Contains("CoreAudioSessionsItemsControl", StringComparison.Ordinal), "CoreAudio session controls should render as a controllable list");
     Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
     Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
+    Assert(windowXaml.Contains("PeakLevelPercent", StringComparison.Ordinal), "CoreAudio app-session rows should expose live activity meters");
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowCode.Contains("ProcessDisplayText", StringComparison.Ordinal), "CoreAudio app-session rows should include stable process identity details");
 
     var mixingTab = ExtractSourceBetween(
         windowXaml,
@@ -3485,6 +3493,116 @@ static void AudioSyncBufferUsesNAudioWdlResampler()
     var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioSyncBuffer.cs")));
     Assert(converterSource.Contains("WdlResamplingSampleProvider", StringComparison.Ordinal), "sample-rate conversion should use NAudio's WDL resampler");
     Assert(syncBufferSource.Contains("NAudioSampleRateConverter.TryResampleInterleaved", StringComparison.Ordinal), "auxiliary sync buffers should use the NAudio resampler before falling back");
+}
+
+static void NAudioFileAnalyzerReportsRecordingQualityDetails()
+{
+    var folder = Path.Combine(Path.GetTempPath(), "JerichoDown.Tests", Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    try
+    {
+        const int sampleRate = 48_000;
+        var path = Path.Combine(folder, "analysis.wav");
+        var samples = new float[sampleRate / 10 + sampleRate / 10 + sampleRate / 20];
+        var toneStart = sampleRate / 10;
+        var toneLength = sampleRate / 10;
+        for (var i = 0; i < toneLength; i++)
+        {
+            samples[toneStart + i] = (float)(Math.Sin(i * Math.PI * 2d * 440d / sampleRate) * 0.2d);
+        }
+
+        samples[toneStart + 100] = 1f;
+        using (var writer = new WaveFileWriter(path, WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1)))
+        {
+            writer.WriteSamples(samples, 0, samples.Length);
+        }
+
+        Assert(AudioFileAnalyzer.TryAnalyze(path, out var analysis, out var status), status);
+        Assert(analysis.SampleRate == sampleRate, "audio analyzer should preserve the file sample rate");
+        Assert(analysis.Channels == 1, "audio analyzer should preserve the file channel count");
+        Assert(analysis.BitsPerSample == 32, "float WAV analysis should report 32-bit samples");
+        Assert(analysis.SampleCount == samples.Length, "audio analyzer should account for every mono sample");
+        Assert(analysis.PeakLevel >= 0.999f, "audio analyzer should report clipped peaks");
+        Assert(analysis.ClippedSamples == 1, "audio analyzer should count clipped samples");
+        Assert(analysis.RmsLevel > 0.05d, "audio analyzer should report a useful RMS level");
+        Assert(analysis.LeadingSilence >= TimeSpan.FromMilliseconds(95), "audio analyzer should measure leading silence");
+        Assert(analysis.TrailingSilence >= TimeSpan.FromMilliseconds(45), "audio analyzer should measure trailing silence");
+        Assert(analysis.WaveformPeaks.Count is > 10 and <= 80, "audio analyzer should expose bounded waveform buckets");
+        Assert(analysis.BrowserSummary.Contains("peak", StringComparison.OrdinalIgnoreCase), "recording browser summary should include peak information");
+        Assert(analysis.DetailSummary.Contains("silence", StringComparison.OrdinalIgnoreCase), "recording detail summary should include silence information");
+
+        var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+        Assert(windowCode.Contains("CreateAudioRecordingFileItem", StringComparison.Ordinal), "recording browser should create analyzed file rows");
+        Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis work");
+        Assert(windowCode.Contains("AudioFileAnalyzer.TryAnalyze", StringComparison.Ordinal), "recording browser should use the NAudio analyzer helper");
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+}
+
+static void WasapiExpertOutputSettingsArePersistedAndRouted()
+{
+    var lowLatency = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
+    Assert(lowLatency.Profile == WasapiOutputLatencyProfile.LowLatency, "WASAPI persisted profile should restore low-latency mode");
+    Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should use the low-latency buffer target");
+    Assert(lowLatency.DisplayText.Contains("shared", StringComparison.Ordinal), "default WASAPI profile text should explain shared mode");
+
+    var custom = WasapiOutputSettings.FromPersisted("Custom", exclusiveMode: true, customLatencyMilliseconds: 999);
+    Assert(custom.Profile == WasapiOutputLatencyProfile.Custom, "WASAPI persisted profile should restore custom mode");
+    Assert(custom.ExclusiveMode, "WASAPI persisted profile should restore exclusive mode");
+    Assert(custom.CustomLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should be clamped for stability");
+    Assert(custom.EffectiveLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should drive the effective buffer target");
+    Assert(custom.DisplayText.Contains("exclusive", StringComparison.Ordinal), "custom WASAPI profile text should explain exclusive mode");
+
+    using var service = new MicrophoneSpectrumService();
+    service.ConfigureWasapiOutput(custom);
+    Assert(service.WasapiOutputModeStatus.Contains("Custom exclusive", StringComparison.Ordinal), "audio service should surface the active WASAPI profile");
+
+    var settingsType = typeof(EqualizerWindow).Assembly.GetType("JerichoDown.AppSettingsState")
+        ?? throw new InvalidOperationException("app settings state type should be available");
+    var settings = Activator.CreateInstance(settingsType)!;
+    SetProperty(settings, "WasapiOutputProfile", WasapiOutputLatencyProfile.Custom.ToString());
+    SetProperty(settings, "WasapiOutputExclusiveMode", true);
+    SetProperty(settings, "WasapiOutputCustomLatencyMilliseconds", 190);
+    var json = JsonSerializer.Serialize(settings, settingsType);
+    var restored = JsonSerializer.Deserialize(json, settingsType)!;
+    Assert((string)GetProperty(restored, "WasapiOutputProfile")! == WasapiOutputLatencyProfile.Custom.ToString(), "WASAPI profile should survive app-state roundtrip");
+    Assert((bool)GetProperty(restored, "WasapiOutputExclusiveMode")!, "WASAPI exclusive mode should survive app-state roundtrip");
+    Assert((int)GetProperty(restored, "WasapiOutputCustomLatencyMilliseconds")! == 190, "WASAPI custom latency should survive app-state roundtrip");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    Assert(serviceSource.Contains("ConfigureWasapiOutput", StringComparison.Ordinal), "audio service should expose WASAPI output configuration");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.EffectiveLatencyMilliseconds", StringComparison.Ordinal), "WASAPI output should use the active latency profile");
+    Assert(serviceSource.Contains("AudioClientShareMode.Exclusive", StringComparison.Ordinal), "WASAPI output should support expert exclusive mode");
+
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowCode.Contains("WasapiOutputProfile = _wasapiOutputSettings.Profile.ToString()", StringComparison.Ordinal), "WASAPI profile should be persisted by the window state capture");
+    Assert(windowCode.Contains("_spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings)", StringComparison.Ordinal), "WASAPI settings should be applied before output routing starts");
+    Assert(windowCode.Contains("WASAPI: {_spectrumService.WasapiOutputModeStatus}", StringComparison.Ordinal), "route status should show active WASAPI mode");
+
+    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    Assert(windowXaml.Contains("Advanced WASAPI", StringComparison.Ordinal), "advanced WASAPI controls should be present but tucked away");
+    Assert(windowXaml.Contains("WasapiOutputProfileComboBox", StringComparison.Ordinal), "WASAPI profile dropdown should be wired");
+    Assert(windowXaml.Contains("WasapiExclusiveModeCheckBox", StringComparison.Ordinal), "WASAPI exclusive-mode checkbox should be wired");
+    Assert(windowXaml.Contains("WasapiCustomLatencySlider", StringComparison.Ordinal), "WASAPI custom latency slider should be wired");
+
+    static object? GetProperty(object target, string propertyName)
+    {
+        return target.GetType().GetProperty(propertyName)!.GetValue(target);
+    }
+
+    static void SetProperty(object target, string propertyName, object? value)
+    {
+        target.GetType().GetProperty(propertyName)!.SetValue(target, value);
+    }
 }
 
 static void ProcessedOutputResamplesAsioFallbackFormats()

@@ -241,6 +241,12 @@ internal sealed class AppSettingsState
 
     public bool ProcessedOutputEnabled { get; set; }
 
+    public string? WasapiOutputProfile { get; set; }
+
+    public bool WasapiOutputExclusiveMode { get; set; }
+
+    public int? WasapiOutputCustomLatencyMilliseconds { get; set; }
+
     public string? OutputFolder { get; set; }
 
     public string? AudioRecordingFolder { get; set; }

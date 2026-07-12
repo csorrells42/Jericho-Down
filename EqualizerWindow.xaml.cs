@@ -54,6 +54,7 @@ public partial class EqualizerWindow : Window
     private const double DenoiseMaximumStrength = 5d;
     private const int MaximumKaraokeBrowserFolders = 100000;
     private const int MaximumKaraokeBrowserTracks = 20000;
+    private const int MaximumAnalyzedRecordingRows = 24;
     private const long MaximumKaraokeEmbeddedLyricsProbeBytes = 256L * 1024L * 1024L;
     private const int MaximumKaraokeMp4AtomDepth = 24;
     private const int MaximumKaraokeMp4AtomCount = 100000;
@@ -245,6 +246,7 @@ public partial class EqualizerWindow : Window
     private bool _isSnappingVideoDenoiseSlider;
     private AudioInputDevice? _selectedDevice;
     private AudioOutputDevice? _selectedOutputDevice;
+    private WasapiOutputSettings _wasapiOutputSettings = WasapiOutputSettings.Default;
     private AudioDeviceNotificationWatcher? _audioDeviceNotificationWatcher;
     private AudioDeviceFormat? _selectedDeviceFormat;
     private bool _isRestartingAudioStream;
@@ -254,6 +256,7 @@ public partial class EqualizerWindow : Window
     private bool _safeStartCameraRecoveryActive;
     private bool _safeStartDx12Disabled;
     private bool _isUpdatingOutputRoutingUi;
+    private bool _isUpdatingWasapiOutputUi;
     private bool _isUpdatingMicChannelUi;
     private bool _isUpdatingMixerUi;
     private bool _isUpdatingCoreAudioSessionUi;
@@ -665,6 +668,12 @@ public partial class EqualizerWindow : Window
             SetSelectedOutputDevice(selectedOutput);
         }
 
+        _wasapiOutputSettings = WasapiOutputSettings.FromPersisted(
+            _appSettings.WasapiOutputProfile,
+            _appSettings.WasapiOutputExclusiveMode,
+            _appSettings.WasapiOutputCustomLatencyMilliseconds);
+        ApplyWasapiOutputSettingsToUi();
+        _spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings);
         if (ProcessedOutputCheckBox is not null)
         {
             SetProcessedOutputToggleState(_appSettings.ProcessedOutputEnabled);
@@ -1447,6 +1456,9 @@ public partial class EqualizerWindow : Window
             OutputDeviceName = _selectedOutputDevice?.Name,
             OutputEndpointId = _selectedOutputDevice?.EndpointId,
             ProcessedOutputEnabled = ProcessedOutputCheckBox?.IsChecked == true,
+            WasapiOutputProfile = _wasapiOutputSettings.Profile.ToString(),
+            WasapiOutputExclusiveMode = _wasapiOutputSettings.ExclusiveMode,
+            WasapiOutputCustomLatencyMilliseconds = _wasapiOutputSettings.CustomLatencyMilliseconds,
             OutputFolder = _outputFolder,
             AudioRecordingFolder = _audioRecordingFolder,
             AudioRecordingSource = _audioRecordingSource.ToString(),
@@ -3593,6 +3605,7 @@ public partial class EqualizerWindow : Window
         _lastAudioRecordingPath = GetSelectedAudioRecordingPath();
         PersistAppState();
         UpdateStandaloneAudioRecordingTransportControls();
+        UpdateSelectedAudioRecordingAnalysisStatus();
     }
 
     private void RecordingFileDoubleClicked(object sender, MouseButtonEventArgs e)
@@ -6960,6 +6973,122 @@ public partial class EqualizerWindow : Window
         return ProcessedOutputCheckBox?.IsChecked == true || KaraokeMonitorOutputCheckBox?.IsChecked == true;
     }
 
+    private void ApplyWasapiOutputSettingsToUi()
+    {
+        _isUpdatingWasapiOutputUi = true;
+        try
+        {
+            if (WasapiOutputProfileComboBox is not null)
+            {
+                WasapiOutputProfileComboBox.SelectedIndex = GetWasapiOutputProfileIndex(_wasapiOutputSettings.Profile);
+            }
+
+            if (WasapiExclusiveModeCheckBox is not null)
+            {
+                WasapiExclusiveModeCheckBox.IsChecked = _wasapiOutputSettings.ExclusiveMode;
+            }
+
+            if (WasapiCustomLatencySlider is not null)
+            {
+                WasapiCustomLatencySlider.Value = _wasapiOutputSettings.CustomLatencyMilliseconds;
+                WasapiCustomLatencySlider.IsEnabled = _wasapiOutputSettings.Profile == WasapiOutputLatencyProfile.Custom;
+            }
+        }
+        finally
+        {
+            _isUpdatingWasapiOutputUi = false;
+        }
+
+        UpdateWasapiOutputModeText();
+    }
+
+    private void WasapiOutputProfileChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ApplyWasapiOutputSettingsFromUi();
+    }
+
+    private void WasapiOutputOptionChanged(object sender, RoutedEventArgs e)
+    {
+        ApplyWasapiOutputSettingsFromUi();
+    }
+
+    private void WasapiOutputLatencyChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (WasapiCustomLatencyValueText is not null)
+        {
+            WasapiCustomLatencyValueText.Text = $"{WasapiOutputSettings.ClampCustomLatency((int)Math.Round(e.NewValue))} ms";
+        }
+
+        ApplyWasapiOutputSettingsFromUi();
+    }
+
+    private void ApplyWasapiOutputSettingsFromUi()
+    {
+        if (_isUpdatingWasapiOutputUi)
+        {
+            return;
+        }
+
+        _wasapiOutputSettings = new WasapiOutputSettings(
+            GetWasapiOutputProfileFromIndex(WasapiOutputProfileComboBox?.SelectedIndex ?? 0),
+            WasapiExclusiveModeCheckBox?.IsChecked == true,
+            WasapiOutputSettings.ClampCustomLatency((int)Math.Round(WasapiCustomLatencySlider?.Value ?? WasapiOutputSettings.StabilityLatencyMilliseconds)));
+        ApplyWasapiOutputSettingsToUi();
+        try
+        {
+            _spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings);
+            if (IsProcessedOutputRequested())
+            {
+                UpdateOutputRouting();
+            }
+        }
+        catch (Exception ex)
+        {
+            SetProcessedOutputToggleState(false);
+            if (OutputStatusText is not null)
+            {
+                OutputStatusText.Text = $"WASAPI mode unavailable: {ex.Message}";
+            }
+        }
+
+        PersistAppState();
+        UpdateAudioFormatRouteText();
+    }
+
+    private void UpdateWasapiOutputModeText()
+    {
+        if (WasapiOutputModeText is not null)
+        {
+            WasapiOutputModeText.Text = $"WASAPI: {_wasapiOutputSettings.DisplayText}";
+        }
+
+        if (WasapiCustomLatencyValueText is not null)
+        {
+            WasapiCustomLatencyValueText.Text = $"{_wasapiOutputSettings.CustomLatencyMilliseconds} ms";
+        }
+    }
+
+    private static int GetWasapiOutputProfileIndex(WasapiOutputLatencyProfile profile)
+    {
+        return profile switch
+        {
+            WasapiOutputLatencyProfile.Balanced => 1,
+            WasapiOutputLatencyProfile.LowLatency => 2,
+            WasapiOutputLatencyProfile.Custom => 3,
+            _ => 0
+        };
+    }
+
+    private static WasapiOutputLatencyProfile GetWasapiOutputProfileFromIndex(int index)
+    {
+        return index switch
+        {
+            1 => WasapiOutputLatencyProfile.Balanced,
+            2 => WasapiOutputLatencyProfile.LowLatency,
+            3 => WasapiOutputLatencyProfile.Custom,
+            _ => WasapiOutputLatencyProfile.Stability
+        };
+    }
     private void ConfigureLiveMixFromChannels()
     {
         var channels = CreateLiveMixChannelSettings(coerceInputModes: true);
@@ -7063,6 +7192,7 @@ public partial class EqualizerWindow : Window
                 StartSelectedDevice();
             }
 
+            _spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings);
             _spectrumService.ConfigureProcessedOutput(enabled, _selectedOutputDevice);
             var outputFormatStatus = BuildOutputFormatStatus();
             var loopbackFeedbackWarning = enabled ? BuildLoopbackFeedbackWarning() : null;
@@ -7136,14 +7266,17 @@ public partial class EqualizerWindow : Window
         var outputFormat = _selectedOutputDevice is null
             ? null
             : MicrophoneSpectrumService.TryGetOutputDeviceFormat(_selectedOutputDevice);
+        var wasapiText = _selectedOutputDevice?.IsAsio == true
+            ? " ASIO output bypasses WASAPI profiles."
+            : $" WASAPI: {_spectrumService.WasapiOutputModeStatus}.";
         if (inputFormat is null || outputFormat is null)
         {
-            return $"{_spectrumService.ProcessedOutputFormatStatus} Virtual audio cables are supported; choose the matching cable output as the mic in your DAW or podcast app.";
+            return $"{_spectrumService.ProcessedOutputFormatStatus} Virtual audio cables are supported; choose the matching cable output as the mic in your DAW or podcast app.{wasapiText}";
         }
 
         return inputFormat.Value.SampleRate == outputFormat.Value.SampleRate
-            ? $"{_spectrumService.ProcessedOutputFormatStatus} Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling."
-            : $"{_spectrumService.ProcessedOutputFormatStatus} High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.";
+            ? $"{_spectrumService.ProcessedOutputFormatStatus} Direct-rate path: mic {inputFormat.Value}, output {outputFormat.Value}. No output resampling.{wasapiText}"
+            : $"{_spectrumService.ProcessedOutputFormatStatus} High-quality output resampling: mic {inputFormat.Value}, output {outputFormat.Value}. Match Windows sample rates for the cleanest possible path.{wasapiText}";
     }
 
     private void UpdateOutputAudioSessionText()
@@ -7284,6 +7417,10 @@ public partial class EqualizerWindow : Window
         var routed = IsProcessedOutputRequested() && _spectrumService.IsProcessedOutputEnabled;
         var constrained = routed && _spectrumService.IsProcessedOutputFormatConstrained;
         var text = $"Receiving: {receiving} | Trying output: {targetOutput}";
+        if (_selectedOutputDevice?.IsAsio != true)
+        {
+            text += $" | WASAPI: {_spectrumService.WasapiOutputModeStatus}";
+        }
 
         if (routed)
         {
@@ -12018,6 +12155,7 @@ public partial class EqualizerWindow : Window
         _lastKaraokeRecordingPath = GetSelectedKaraokeRecordingPath();
         PersistAppState();
         UpdateKaraokeTransportControls();
+        UpdateSelectedKaraokeRecordingAnalysisStatus();
     }
 
     private void KaraokeRecordingFileDoubleClicked(object sender, MouseButtonEventArgs e)
@@ -14372,6 +14510,44 @@ public partial class EqualizerWindow : Window
         }, DispatcherPriority.Background);
     }
 
+    private static AudioRecordingFileItem CreateAudioRecordingFileItem(FileInfo file, bool analyze)
+    {
+        AudioFileAnalysis? analysis = null;
+        var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}";
+        if (analyze && AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _))
+        {
+            analysis = fileAnalysis;
+            details = $"{details}    {fileAnalysis.BrowserSummary}";
+        }
+
+        return new AudioRecordingFileItem(file.FullName, file.Name, details, analysis);
+    }
+
+    private void UpdateSelectedAudioRecordingAnalysisStatus()
+    {
+        if (_isStandaloneAudioRecording || AudioRecordingStatusText is null)
+        {
+            return;
+        }
+
+        if (RecordingFilesListBox?.SelectedItem is AudioRecordingFileItem { Analysis: not null } item)
+        {
+            AudioRecordingStatusText.Text = $"{item.Name}: {item.Analysis.DetailSummary}.";
+        }
+    }
+
+    private void UpdateSelectedKaraokeRecordingAnalysisStatus()
+    {
+        if (_isKaraokeVocalRecording || _karaokeRecordingPlaybackOutput is not null || KaraokeVocalStatusText is null)
+        {
+            return;
+        }
+
+        if (KaraokeRecordingFilesListBox?.SelectedItem is AudioRecordingFileItem { Analysis: not null } item)
+        {
+            KaraokeVocalStatusText.Text = $"{item.Name}: {item.Analysis.DetailSummary}.";
+        }
+    }
     private void RefreshAudioRecordingFiles(string? preferredPath = null)
     {
         if (RecordingFilesListBox is null)
@@ -14385,10 +14561,7 @@ public partial class EqualizerWindow : Window
                 .Where(IsSupportedAudioRecordingFile)
                 .Select(path => new FileInfo(path))
                 .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Select(file => new AudioRecordingFileItem(
-                    file.FullName,
-                    file.Name,
-                    $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}"))
+                .Select((file, index) => CreateAudioRecordingFileItem(file, index < MaximumAnalyzedRecordingRows))
                 .ToList()
             : [];
 
@@ -14492,10 +14665,7 @@ public partial class EqualizerWindow : Window
                 .Where(IsSupportedAudioRecordingFile)
                 .Select(path => new FileInfo(path))
                 .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Select(file => new AudioRecordingFileItem(
-                    file.FullName,
-                    file.Name,
-                    $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}"))
+                .Select((file, index) => CreateAudioRecordingFileItem(file, index < MaximumAnalyzedRecordingRows))
                 .ToList()
             : [];
 
@@ -15340,6 +15510,8 @@ public partial class EqualizerWindow : Window
             ControlTargets = snapshot.ControlTargets;
             SessionCount = snapshot.SessionCount;
             PeakDisplayText = FormatPeak(snapshot.PeakLevel);
+            PeakLevelPercent = Math.Clamp(snapshot.PeakLevel * 100d, 0d, 100d);
+            ProcessDisplayText = CoreAudioSessionCatalog.FormatProcessIdentity(snapshot);
             _isMuted = snapshot.IsMuted;
             _volumePercent = Math.Clamp(snapshot.Volume * 100d, 0d, 100d);
         }
@@ -15356,11 +15528,15 @@ public partial class EqualizerWindow : Window
 
         public string PeakDisplayText { get; }
 
+        public double PeakLevelPercent { get; }
+
+        public string ProcessDisplayText { get; }
+
         public IReadOnlyList<CoreAudioSessionControlTarget> ControlTargets { get; }
 
         public int SessionCount { get; }
 
-        public string Details => $"{SessionCountText}{State} | {(IsMuted ? "muted" : VolumeDisplayText)} | peak {PeakDisplayText}";
+        public string Details => $"{ProcessDisplayText} | {SessionCountText}{State} | {(IsMuted ? "muted" : VolumeDisplayText)} | peak {PeakDisplayText}";
 
         private string SessionCountText => SessionCount > 1
             ? $"{SessionCount} sessions | "
@@ -15831,7 +16007,7 @@ public partial class EqualizerWindow : Window
 
     private sealed record RecordingTarget(string SessionFolder, int SetNumber);
 
-    private sealed record AudioRecordingFileItem(string Path, string Name, string Details);
+    private sealed record AudioRecordingFileItem(string Path, string Name, string Details, AudioFileAnalysis? Analysis);
 
     private sealed record KaraokeTrackItem(string Path, string Name, string Artist, TimeSpan Duration, string DurationText);
 

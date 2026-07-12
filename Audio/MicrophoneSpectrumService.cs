@@ -18,7 +18,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
     private const int SpectrumAnalysisIntervalMilliseconds = 24;
     private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(SpectrumAnalysisIntervalMilliseconds).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
-    private const int WasapiProcessedOutputLatencyMilliseconds = 120;
+    private const int WasapiProcessedOutputLatencyMilliseconds = WasapiOutputSettings.StabilityLatencyMilliseconds;
     private const int WaveOutProcessedOutputLatencyMilliseconds = 160;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
@@ -56,6 +56,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private IWavePlayer? _processedOutput;
     private BufferedWaveProvider? _processedOutputProvider;
     private IWaveProvider? _processedOutputPlaybackProvider;
+    private WasapiOutputSettings _wasapiOutputSettings = WasapiOutputSettings.Default;
     private readonly object _processedRecordingLock = new();
     private WaveFileWriter? _processedRecordingWriter;
     private string? _processedRecordingPath;
@@ -437,6 +438,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return IsProcessedOutputEnabledVolatile() && provider is not null && !IsTargetProcessedOutputFormat(provider.WaveFormat);
         }
     }
+
+    public string WasapiOutputModeStatus => _wasapiOutputSettings.DisplayText;
 
     public string ProcessedOutputFormatStatus
     {
@@ -1268,6 +1271,34 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
     }
 
+    public void ConfigureWasapiOutput(WasapiOutputSettings settings)
+    {
+        var normalized = settings with
+        {
+            CustomLatencyMilliseconds = WasapiOutputSettings.ClampCustomLatency(settings.CustomLatencyMilliseconds)
+        };
+        if (normalized == _wasapiOutputSettings)
+        {
+            return;
+        }
+
+        _wasapiOutputSettings = normalized;
+        if (!IsProcessedOutputEnabledVolatile() || _processedOutput is null || IsProcessedOutputAsio())
+        {
+            return;
+        }
+
+        try
+        {
+            RestartProcessedOutput();
+        }
+        catch
+        {
+            SetProcessedOutputEnabled(false);
+            StopProcessedOutput();
+            throw;
+        }
+    }
     public void Dispose()
     {
         _isDisposing = true;
@@ -2629,8 +2660,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private string DescribeProcessedOutputBackend(ProcessedOutputRouteBackend backend)
     {
         var wasapiName = CanUseWasapiProcessedOutput()
-            ? "stable WASAPI endpoint"
-            : "stable default WASAPI";
+            ? $"{_wasapiOutputSettings.DisplayText} WASAPI endpoint"
+            : $"{_wasapiOutputSettings.DisplayText} default WASAPI";
         return backend switch
         {
             ProcessedOutputRouteBackend.AsioFloat => "ASIO",
@@ -2699,7 +2730,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 ? enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)
                 : enumerator.GetDevice(_processedOutputEndpointId);
             playbackProvider = CreateWasapiOutputProvider(provider, endpoint);
-            player = new WasapiOut(endpoint, AudioClientShareMode.Shared, UseWasapiEventDrivenOutput, WasapiProcessedOutputLatencyMilliseconds);
+            var shareMode = _wasapiOutputSettings.ExclusiveMode
+                ? AudioClientShareMode.Exclusive
+                : AudioClientShareMode.Shared;
+            var latencyMilliseconds = _wasapiOutputSettings.EffectiveLatencyMilliseconds;
+            player = new WasapiOut(endpoint, shareMode, _wasapiOutputSettings.UseEventDrivenOutput, latencyMilliseconds);
             player.Init(playbackProvider);
             player.Play();
             return true;

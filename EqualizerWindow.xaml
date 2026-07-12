@@ -2921,6 +2921,35 @@
                     <TextBlock x:Name="FeedbackRiskText" Text="Feedback: clear" Foreground="#8DA2B7" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock x:Name="OutputStatusText" Text="Output off." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,8,0,0" />
                     <TextBlock x:Name="AudioFormatRouteText" Text="Receiving: not open | Trying output: not ready" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <Expander Header="Advanced WASAPI" Foreground="#F8FAFC" Margin="0,8,0,0" IsExpanded="False">
+                      <StackPanel Margin="0,6,0,0">
+                        <TextBlock x:Name="WasapiOutputModeText" Text="WASAPI: Stability shared, 120 ms" Foreground="#8DA2B7" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6" />
+                        <Grid Margin="0,0,0,6">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="76" />
+                            <ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="Profile" Foreground="#B8C7D9" FontSize="11" VerticalAlignment="Center" />
+                          <ComboBox x:Name="WasapiOutputProfileComboBox" Grid.Column="1" SelectionChanged="WasapiOutputProfileChanged">
+                            <ComboBoxItem Content="Stability" />
+                            <ComboBoxItem Content="Balanced" />
+                            <ComboBoxItem Content="Low latency" />
+                            <ComboBoxItem Content="Custom" />
+                          </ComboBox>
+                        </Grid>
+                        <CheckBox x:Name="WasapiExclusiveModeCheckBox" Content="Exclusive mode" Foreground="#F8FAFC" Checked="WasapiOutputOptionChanged" Unchecked="WasapiOutputOptionChanged" Margin="0,0,0,6" />
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="76" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="46" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Text="Buffer" Foreground="#B8C7D9" FontSize="11" VerticalAlignment="Center" />
+                          <Slider x:Name="WasapiCustomLatencySlider" Grid.Column="1" Minimum="30" Maximum="240" TickFrequency="10" IsSnapToTickEnabled="True" Value="120" ValueChanged="WasapiOutputLatencyChanged" />
+                          <TextBlock x:Name="WasapiCustomLatencyValueText" Grid.Column="2" Text="120 ms" Foreground="#F8FAFC" FontSize="11" TextAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                      </StackPanel>
+                    </Expander>
                   </StackPanel>
                 </Border>
                 <Border Style="{StaticResource DspBubble}">
@@ -3017,6 +3046,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                   </Grid.RowDefinitions>
                                   <Grid>
                                     <Grid.ColumnDefinitions>
@@ -3035,6 +3065,7 @@
                                     <Slider Minimum="0" Maximum="100" Value="{Binding VolumePercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TickFrequency="10" ValueChanged="CoreAudioSessionVolumeChanged" />
                                     <TextBlock Grid.Column="1" Text="{Binding VolumeDisplayText}" Foreground="#F8FAFC" FontSize="11" TextAlignment="Right" VerticalAlignment="Center" />
                                   </Grid>
+                                  <ProgressBar Grid.Row="3" Minimum="0" Maximum="100" Value="{Binding PeakLevelPercent}" Height="4" Margin="0,6,0,0" Background="#10202A" Foreground="#42D77D" BorderBrush="#223544" BorderThickness="1" />
                                 </Grid>
                               </Border>
                             </DataTemplate>

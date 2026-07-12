@@ -215,7 +215,28 @@ public static class CoreAudioSessionCatalog
         var sessionCountText = session.SessionCount > 1
             ? $", {session.SessionCount} sessions"
             : string.Empty;
-        return $"{session.DisplayTitle} ({session.State}, {volumeText}, peak {FormatPeakDb(session.PeakLevel)}{sessionCountText})";
+        var identityText = FormatProcessIdentity(session);
+        return $"{session.DisplayTitle} [{identityText}] ({session.State}, {volumeText}, peak {FormatPeakDb(session.PeakLevel)}{sessionCountText})";
+    }
+
+    public static string FormatProcessIdentity(CoreAudioSessionSnapshot session)
+    {
+        if (session.IsSystemSoundsSession)
+        {
+            return "Windows system audio";
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.ProcessName) && session.ProcessId > 0)
+        {
+            return $"{session.ProcessName} PID {session.ProcessId}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.ProcessName))
+        {
+            return session.ProcessName;
+        }
+
+        return session.ProcessId > 0 ? $"PID {session.ProcessId}" : "Unknown process";
     }
 
     private static bool IsMatchingSession(
@@ -299,14 +320,14 @@ public static class CoreAudioSessionCatalog
             return "system-sounds";
         }
 
-        if (!string.IsNullOrWhiteSpace(session.DisplayName))
-        {
-            return $"display:{NormalizeGroupKey(session.DisplayName)}";
-        }
-
         if (!string.IsNullOrWhiteSpace(session.ProcessName))
         {
             return $"process:{NormalizeGroupKey(session.ProcessName)}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.DisplayName))
+        {
+            return $"display:{NormalizeGroupKey(session.DisplayName)}";
         }
 
         return session.ProcessId > 0
