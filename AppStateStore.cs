@@ -205,6 +205,8 @@ internal sealed class AppSettingsState
 
     public List<MicChannelSettingsState> MicChannels { get; set; } = [];
 
+    public List<MidiControlMappingSettingsState> MidiControlMappings { get; set; } = [];
+
     public string? MicrophoneName { get; set; }
 
     public string? MicrophoneEndpointId { get; set; }
@@ -327,6 +329,17 @@ internal sealed class MicChannelSettingsState
     public Dictionary<string, double> NumberSettings { get; set; } = [];
 
     public Dictionary<string, bool> BooleanSettings { get; set; } = [];
+}
+
+internal sealed class MidiControlMappingSettingsState
+{
+    public string? ActionName { get; set; }
+
+    public string? MessageType { get; set; }
+
+    public int? Channel { get; set; }
+
+    public int? Data1 { get; set; }
 }
 
 internal sealed class EqualizerBandSettingsState

@@ -1498,9 +1498,11 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     var appAssembly = typeof(EqualizerWindow).Assembly;
     var settingsType = appAssembly.GetType("JerichoDown.AppSettingsState");
     var micStateType = appAssembly.GetType("JerichoDown.MicChannelSettingsState");
+    var midiMappingStateType = appAssembly.GetType("JerichoDown.MidiControlMappingSettingsState");
     var bandStateType = appAssembly.GetType("JerichoDown.EqualizerBandSettingsState");
     Assert(settingsType is not null, "app settings state type should be available");
     Assert(micStateType is not null, "mic channel settings state type should be available");
+    Assert(midiMappingStateType is not null, "MIDI control mapping settings state type should be available");
     Assert(bandStateType is not null, "equalizer band settings state type should be available");
 
     var settings = Activator.CreateInstance(settingsType!)!;
@@ -1550,6 +1552,13 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     booleanSettings[nameof(VoiceProcessorSettings.HumRemovalEnabled)] = true;
     ((IList)Get(settings, "MicChannels")!).Add(mic);
 
+    var midiMapping = Activator.CreateInstance(midiMappingStateType!)!;
+    Set(midiMapping, "ActionName", MidiControlMappingActions.ToggleSelectedInputMute);
+    Set(midiMapping, "MessageType", "Control Change");
+    Set(midiMapping, "Channel", 2);
+    Set(midiMapping, "Data1", 64);
+    ((IList)Get(settings, "MidiControlMappings")!).Add(midiMapping);
+
     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
     var json = JsonSerializer.Serialize(settings, settingsType!, options);
@@ -1568,6 +1577,11 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((bool)Get(restored!, "ProcessedOutputEnabled")!, "processed output toggle should survive app-state roundtrip");
     Assert((string)Get(restored!, "AudioRecordingFolder")! == @"C:\Jericho\Recordings", "recording folder should survive app-state roundtrip");
     Assert((string)Get(restored!, "AudioRecordingSource")! == ProcessedRecordingSource.SelectedMicRawBackup.ToString(), "recording source should survive app-state roundtrip");
+    var restoredMidiMapping = ((IList)Get(restored!, "MidiControlMappings")!)[0]!;
+    Assert((string)Get(restoredMidiMapping, "ActionName")! == MidiControlMappingActions.ToggleSelectedInputMute, "MIDI mapping action should survive app-state roundtrip");
+    Assert((string)Get(restoredMidiMapping, "MessageType")! == "Control Change", "MIDI mapping message type should survive app-state roundtrip");
+    Assert((int)Get(restoredMidiMapping, "Channel")! == 2, "MIDI mapping channel should survive app-state roundtrip");
+    Assert((int)Get(restoredMidiMapping, "Data1")! == 64, "MIDI mapping data byte should survive app-state roundtrip");
 
     var restoredMic = ((IList)Get(restored!, "MicChannels")!)[0]!;
     Assert((int)Get(restoredMic, "ChannelNumber")! == 3, "mic channel number should survive app-state roundtrip");

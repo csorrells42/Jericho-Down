@@ -705,6 +705,7 @@ public partial class EqualizerWindow : Window
         MidiControlMappingsListBox.ItemsSource = _midiControlMappings;
         MidiControlMappingActionComboBox.ItemsSource = MidiControlMappingActions.DefaultActions;
         MidiControlMappingActionComboBox.SelectedIndex = 0;
+        RestoreMidiControlMappings();
         MidiSequenceTracksItemsControl.ItemsSource = _midiSequenceTracks;
         MidiSoundFontPresetComboBox.ItemsSource = _midiSoundFontPresets;
         MidiSoundFontInstrumentsListBox.ItemsSource = _midiSoundFontInstruments;
@@ -1350,6 +1351,7 @@ public partial class EqualizerWindow : Window
             LeftControlRailCollapsed = _isLeftControlRailCollapsed,
             SelectedMicChannelNumber = activeMicChannel?.ChannelNumber ?? 1,
             MicChannels = CaptureMicChannelStates(),
+            MidiControlMappings = CaptureMidiControlMappingStates(),
             MicrophoneName = activeMicChannel?.SelectedDevice?.Name,
             MicrophoneEndpointId = activeMicChannel?.SelectedDevice?.EndpointId,
             InputChannelMode = activeMicChannel?.InputChannelMode.ToString(),
@@ -1772,6 +1774,26 @@ public partial class EqualizerWindow : Window
         if (StatusText is not null)
         {
             StatusText.Text = status;
+        }
+    }
+
+    private void RestoreMidiControlMappings()
+    {
+        _midiControlMappings.Clear();
+        foreach (var state in _appSettings.MidiControlMappings)
+        {
+            if (string.IsNullOrWhiteSpace(state.ActionName)
+                || string.IsNullOrWhiteSpace(state.MessageType)
+                || !MidiControlMappingActions.DefaultActions.Contains(state.ActionName, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            _midiControlMappings.Add(new MidiControlMappingRule(
+                state.ActionName,
+                state.MessageType,
+                state.Channel,
+                state.Data1));
         }
     }
 
@@ -2215,6 +2237,7 @@ public partial class EqualizerWindow : Window
         }
 
         _midiControlMappings.Add(rule);
+        ScheduleAppStatePersist();
         SetMidiStatus($"MIDI control mapped: {rule.DisplayName}.");
     }
 
@@ -2227,12 +2250,14 @@ public partial class EqualizerWindow : Window
         }
 
         _midiControlMappings.Remove(rule);
+        ScheduleAppStatePersist();
         SetMidiStatus($"MIDI control mapping removed: {rule.ActionName}.");
     }
 
     private void ClearMidiControlMappingsClicked(object sender, RoutedEventArgs e)
     {
         _midiControlMappings.Clear();
+        ScheduleAppStatePersist();
         SetMidiStatus("MIDI control mappings cleared.");
     }
 
@@ -6333,6 +6358,19 @@ public partial class EqualizerWindow : Window
                     channel.IsMuted,
                     channel.SelectedDevice!.EndpointId,
                     channel.SelectedDevice.Backend);
+            })
+            .ToList();
+    }
+
+    private List<MidiControlMappingSettingsState> CaptureMidiControlMappingStates()
+    {
+        return _midiControlMappings
+            .Select(mapping => new MidiControlMappingSettingsState
+            {
+                ActionName = mapping.ActionName,
+                MessageType = mapping.MessageType,
+                Channel = mapping.Channel,
+                Data1 = mapping.Data1
             })
             .ToList();
     }
