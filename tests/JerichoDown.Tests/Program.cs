@@ -62,6 +62,7 @@ var tests = new (string Name, Action Test)[]
     ("Input channel mode falls back for mono devices", InputChannelModeFallsBackForMonoDevices),
     ("Audio device refresh suppresses mic selection churn", AudioDeviceRefreshSuppressesMicSelectionChurn),
     ("System audio loopback is selectable but not default mic fallback", SystemAudioLoopbackIsSelectableButNotDefaultMicFallback),
+    ("App audio loopback routes through the mixer capture path", AppAudioLoopbackRoutesThroughMixerCapturePath),
     ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
     ("Stereo input DSP applies independently per channel", StereoInputDspAppliesIndependentlyPerChannel),
     ("System audio loopback stereo provider preserves channels", SystemAudioLoopbackStereoProviderPreservesChannels),
@@ -1232,6 +1233,27 @@ static void SystemAudioLoopbackIsSelectableButNotDefaultMicFallback()
 
     Assert(restoredLoopback?.IsSystemAudioLoopback == true, "saved loopback channels should restore exactly");
     Assert(missingPhysical?.DeviceNumber == physical.DeviceNumber, "missing saved mics should fall back to a physical input instead of loopback");
+}
+
+static void AppAudioLoopbackRoutesThroughMixerCapturePath()
+{
+    var appInput = AudioInputDevice.CreateProcessLoopback(4242, "MusicApp");
+    Assert(appInput.IsProcessLoopback, "app audio loopback devices should identify themselves");
+    Assert(appInput.Backend == AudioInputBackend.ProcessLoopback, "app audio loopback should use a distinct input backend");
+    Assert(appInput.MaximumInputChannels == 2, "app audio loopback should expose stereo channel options");
+    Assert(appInput.Name.Contains("MusicApp", StringComparison.Ordinal), "app audio loopback should include the app name in mixer input dropdowns");
+    Assert(AudioInputDevice.TryGetProcessLoopbackTargetProcessId(appInput.DeviceNumber, appInput.EndpointId, out var processId), "app audio loopback should round-trip its target process ID");
+    Assert(processId == 4242, "app audio loopback should preserve the selected target process ID");
+
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    Assert(captureSource.Contains(@"VAD\Process_Loopback", StringComparison.Ordinal), "process loopback capture should activate the Windows virtual process-loopback device");
+    Assert(captureSource.Contains("ActivateAudioInterfaceAsync", StringComparison.Ordinal), "process loopback capture should use the Windows async audio interface activation API");
+    Assert(captureSource.Contains("IncludeTargetProcessTree", StringComparison.Ordinal), "process loopback capture should include the selected app process tree");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    Assert(serviceSource.Contains("CoreAudioSessionCatalog.GetProcessLoopbackInputDevices()", StringComparison.Ordinal), "audio input discovery should expose active app audio sessions as mixer inputs");
+    Assert(serviceSource.Contains("StartProcessLoopbackCapture", StringComparison.Ordinal), "mixer capture startup should route app audio devices through process loopback");
+    Assert(serviceSource.Contains("WASAPI process loopback", StringComparison.Ordinal), "stream status should name process loopback clearly");
 }
 
 static void SystemAudioLoopbackMixerStripIsLeftOfMics()

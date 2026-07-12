@@ -751,6 +751,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         AddAsioInputDevices(devices);
         devices.Add(AudioInputDevice.CreateSystemAudioLoopback());
+        devices.AddRange(CoreAudioSessionCatalog.GetProcessLoopbackInputDevices());
         return devices;
     }
 
@@ -1454,6 +1455,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         if (backend == AudioInputBackend.Asio && TryGetAsioDriverName(endpointId, out var driverName))
         {
             return $"ASIO input {driverName}";
+        }
+
+        var isProcessLoopback = AudioInputDevice.TryGetProcessLoopbackTargetProcessId(deviceNumber, endpointId, out var processId);
+        if (backend == AudioInputBackend.ProcessLoopback || isProcessLoopback)
+        {
+            return $"App audio PID {processId}";
         }
 
         return IsSystemAudioLoopbackDeviceNumber(deviceNumber)
@@ -2269,6 +2276,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return StartAsioInputCapture(endpointId, dataAvailable, recordingStopped);
         }
 
+        if (backend == AudioInputBackend.ProcessLoopback
+            || AudioInputDevice.TryGetProcessLoopbackTargetProcessId(deviceNumber, endpointId, out _))
+        {
+            return StartProcessLoopbackCapture(deviceNumber, endpointId, dataAvailable, recordingStopped);
+        }
+
         if (IsSystemAudioLoopbackDeviceNumber(deviceNumber))
         {
             return StartSystemAudioLoopbackCapture(dataAvailable, recordingStopped);
@@ -2310,6 +2323,33 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         throw startException ?? new InvalidOperationException("Could not start microphone capture.");
     }
+
+    private IWaveIn StartProcessLoopbackCapture(
+        int deviceNumber,
+        string? endpointId,
+        EventHandler<WaveInEventArgs> dataAvailable,
+        EventHandler<StoppedEventArgs> recordingStopped)
+    {
+        if (!AudioInputDevice.TryGetProcessLoopbackTargetProcessId(deviceNumber, endpointId, out var processId))
+        {
+            throw new InvalidOperationException("Could not identify the selected app audio process.");
+        }
+
+        var capture = new ProcessLoopbackCapture(processId);
+        AttachCaptureEvents(capture, dataAvailable, recordingStopped);
+        try
+        {
+            capture.StartRecording();
+            return capture;
+        }
+        catch
+        {
+            DetachCaptureEvents(capture, dataAvailable, recordingStopped);
+            capture.Dispose();
+            throw;
+        }
+    }
+
     private static bool IsSystemAudioLoopbackDeviceNumber(int deviceNumber)
     {
         return deviceNumber == AudioInputDevice.SystemAudioLoopbackDeviceNumber;
@@ -3027,6 +3067,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         return capture switch
         {
+            ProcessLoopbackCapture => "WASAPI process loopback",
             WasapiLoopbackCapture => "WASAPI loopback",
             WasapiCapture => "WASAPI",
             WaveInEvent => "WaveIn",

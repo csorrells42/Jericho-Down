@@ -35,6 +35,20 @@ public sealed record CoreAudioSessionControlTarget(
 
 public static class CoreAudioSessionCatalog
 {
+    public static IReadOnlyList<AudioInputDevice> GetProcessLoopbackInputDevices(AudioOutputDevice? device = null)
+    {
+        var currentProcessId = Environment.ProcessId;
+        return GetRenderSessions(device)
+            .Where(session => !session.IsSystemSoundsSession
+                && session.ProcessId > 0
+                && session.ProcessId != currentProcessId)
+            .GroupBy(session => session.ProcessId)
+            .Select(group => group.First())
+            .OrderBy(session => session.DisplayTitle, StringComparer.OrdinalIgnoreCase)
+            .Select(session => AudioInputDevice.CreateProcessLoopback(session.ProcessId, session.DisplayTitle))
+            .ToArray();
+    }
+
     public static IReadOnlyList<CoreAudioSessionSnapshot> GetRenderSessions(AudioOutputDevice? device)
     {
         if (device?.IsAsio == true)
