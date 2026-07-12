@@ -604,6 +604,7 @@ public static class TextureNativeCameraRecorder
 public sealed class TextureNativeCameraStream : IDisposable
 {
     private static readonly TimeSpan StreamStartTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan StreamStopTimeout = TimeSpan.FromSeconds(3);
 
     private readonly object _stateLock = new();
     private readonly object _processedDenoiseLock = new();
@@ -857,6 +858,7 @@ public sealed class TextureNativeCameraStream : IDisposable
 
         Task? captureTask;
         _cancellation.Cancel();
+        TryFlushSourceReader();
         lock (_stateLock)
         {
             captureTask = _captureTask;
@@ -864,7 +866,7 @@ public sealed class TextureNativeCameraStream : IDisposable
 
         try
         {
-            captureTask?.Wait(TimeSpan.FromSeconds(3));
+            captureTask?.Wait(StreamStopTimeout);
         }
         catch
         {
@@ -963,6 +965,17 @@ public sealed class TextureNativeCameraStream : IDisposable
             _startException ??= ex;
             _streamReady.Set();
             ReportStatus(ex.Message);
+        }
+    }
+
+    private void TryFlushSourceReader()
+    {
+        try
+        {
+            _reader?.Flush(MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+        }
+        catch
+        {
         }
     }
 
@@ -1322,6 +1335,7 @@ public sealed class TextureNativeCameraStream : IDisposable
 
 public sealed class TextureNativeCameraRecordingSession : IDisposable
 {
+    private static readonly TimeSpan RecordingStopTimeout = TimeSpan.FromSeconds(3);
     private readonly object _stateLock = new();
     private readonly object _processedDenoiseLock = new();
     private readonly MediaFoundationCameraDeviceFactory.MediaFoundationScope _mediaFoundationScope;
@@ -1439,7 +1453,15 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
         _cancellation.Cancel();
         try
         {
-            _recordingTask.Wait(TimeSpan.FromSeconds(3));
+            _reader.Flush(MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            _recordingTask.Wait(RecordingStopTimeout);
         }
         catch
         {

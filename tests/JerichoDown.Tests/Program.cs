@@ -1652,7 +1652,25 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
         "    private void WindowClosing",
         "    private static void DisposeGraphHost");
     Assert(closingMethod.Contains("_isClosing = true;", StringComparison.Ordinal), "window close should enter closing mode before tearing down audio");
-    Assert(closingMethod.Contains("_spectrumService.Dispose();", StringComparison.Ordinal), "window close should dispose the audio service that owns loopback capture");
+    Assert(closingMethod.Contains("_spectrumService.Dispose()", StringComparison.Ordinal), "window close should dispose the audio service that owns loopback capture");
+    Assert(closingMethod.Contains("_cameraServiceStopOperationVersion", StringComparison.Ordinal), "window close should invalidate pending async camera stop callbacks");
+    Assert(closingMethod.Contains("StopPreviewServices();", StringComparison.Ordinal), "window close should synchronously stop CPU preview services");
+    Assert(closingMethod.Contains("TryShutdownStep", StringComparison.Ordinal), "window close should keep cleaning up if one subsystem throws");
+
+    var shutdownTimerMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void StopShutdownTimers",
+        "    private static void StopDispatcherTimer");
+    Assert(shutdownTimerMethod.Contains("StopDispatcherTimer(_sessionPlaybackPositionTimer, SessionPlaybackPositionTimerTick)", StringComparison.Ordinal), "window close should detach the session playback timer");
+    Assert(shutdownTimerMethod.Contains("StopDispatcherTimer(_karaokePlaybackPositionTimer, KaraokePlaybackPositionTimerTick)", StringComparison.Ordinal), "window close should detach the karaoke playback timer");
+
+    var mediaFoundationPreviewSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationCameraPreviewService.cs")));
+    Assert(mediaFoundationPreviewSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "Media Foundation preview stop should flush ReadSample before waiting for capture shutdown");
+    Assert(mediaFoundationPreviewSource.Contains("CaptureStopTimeout", StringComparison.Ordinal), "Media Foundation preview stop should use a named bounded shutdown wait");
+
+    var textureNativeSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "TextureNativeCameraRecorder.cs")));
+    Assert(textureNativeSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "texture-native preview stop should flush ReadSample before waiting for capture shutdown");
+    Assert(textureNativeSource.Contains("StreamStopTimeout", StringComparison.Ordinal), "texture-native preview stop should use a named bounded shutdown wait");
 }
 
 static void SystemAudioLoopbackMixerStripIsLeftOfMics()

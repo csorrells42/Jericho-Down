@@ -4,6 +4,7 @@ namespace JerichoDown.Video;
 
 public sealed class MediaFoundationCameraPreviewService : IDisposable
 {
+    private static readonly TimeSpan CaptureStopTimeout = TimeSpan.FromSeconds(3);
     private readonly object _recordingLock = new();
     private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _mediaFoundationScope;
     private IMFSourceReader? _reader;
@@ -283,10 +284,11 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         StopRecording();
         var captureTask = _captureTask;
         _cancellation?.Cancel();
+        TryFlushSourceReader();
 
         try
         {
-            captureTask?.Wait(TimeSpan.FromSeconds(3));
+            captureTask?.Wait(CaptureStopTimeout);
         }
         catch
         {
@@ -636,6 +638,17 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         _direct3D12 = null;
         _mediaFoundationScope?.Dispose();
         _mediaFoundationScope = null;
+    }
+
+    private void TryFlushSourceReader()
+    {
+        try
+        {
+            _reader?.Flush(MediaFoundationInterop.MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+        }
+        catch
+        {
+        }
     }
 
     private void ResetPreviewState()

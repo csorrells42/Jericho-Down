@@ -3235,61 +3235,98 @@ public partial class EqualizerWindow : Window
 
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
-        SaveAppStateNow();
         _isClosing = true;
         _audioStreamOperationVersion++;
         System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
-        CompositionTarget.Rendering -= CompositionTargetRendering;
-        _audioDeviceFormatTimer.Stop();
-        _audioDeviceFormatTimer.Tick -= AudioDeviceFormatTimerTick;
-        _audioDeviceRefreshTimer.Stop();
-        _audioDeviceRefreshTimer.Tick -= AudioDeviceRefreshTimerTick;
-        _appStatePersistTimer.Stop();
-        _appStatePersistTimer.Tick -= AppStatePersistTimerTick;
-        _outputAudioSessionTimer.Stop();
-        _outputAudioSessionTimer.Tick -= OutputAudioSessionTimerTick;
-        DisposeAudioDeviceNotificationWatcher();
-        _spectrumService.SpectrumAvailable -= SpectrumAvailable;
-        _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
-        _midiInputMonitor.MessageReceived -= MidiInputMonitorMessageReceived;
-        _midiInputMonitor.StatusChanged -= MidiInputMonitorStatusChanged;
-        StopMidiSequencePlayback("MIDI file test stopped.", resetOutput: true, updateStatus: false);
-        StopSoundFontSamplePreview();
-        _midiInputMonitor.Dispose();
-        _midiOutputPort.Dispose();
-        DisposeAudioRecordingFolderWatcher();
-        DisposeKaraokeRecordingFolderWatcher();
-        DisposeSessionFolderWatcher();
-        StopAudioPlayback();
-        StopKaraokeRecordingPlayback();
-        StopKaraokePlayback(clearTrack: false);
-        if (_isKaraokeVocalRecording)
+        System.Threading.Interlocked.Increment(ref _cameraServiceStopOperationVersion);
+
+        TryShutdownStep(SaveAppStateNow);
+        TryShutdownStep(() => CompositionTarget.Rendering -= CompositionTargetRendering);
+        TryShutdownStep(StopShutdownTimers);
+        TryShutdownStep(DisposeAudioDeviceNotificationWatcher);
+        TryShutdownStep(() =>
         {
-            _spectrumService.StopProcessedAudioRecording();
-            _isKaraokeVocalRecording = false;
+            _spectrumService.SpectrumAvailable -= SpectrumAvailable;
+            _spectrumService.StreamStatusChanged -= SpectrumServiceStreamStatusChanged;
+            _midiInputMonitor.MessageReceived -= MidiInputMonitorMessageReceived;
+            _midiInputMonitor.StatusChanged -= MidiInputMonitorStatusChanged;
+            _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
+            _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
+            _directShowPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
+            _directShowPreviewService.StatusChanged -= CameraPreviewStatusChanged;
+        });
+        TryShutdownStep(() => StopMidiSequencePlayback("MIDI file test stopped.", resetOutput: true, updateStatus: false));
+        TryShutdownStep(StopSoundFontSamplePreview);
+        TryShutdownStep(() => _midiInputMonitor.Dispose());
+        TryShutdownStep(() => _midiOutputPort.Dispose());
+        TryShutdownStep(DisposeAudioRecordingFolderWatcher);
+        TryShutdownStep(DisposeKaraokeRecordingFolderWatcher);
+        TryShutdownStep(DisposeSessionFolderWatcher);
+        TryShutdownStep(StopAudioPlayback);
+        TryShutdownStep(StopKaraokeRecordingPlayback);
+        TryShutdownStep(() => StopKaraokePlayback(clearTrack: false));
+        TryShutdownStep(() =>
+        {
+            if (_isKaraokeVocalRecording)
+            {
+                _spectrumService.StopProcessedAudioRecording();
+                _isKaraokeVocalRecording = false;
+            }
+        });
+        TryShutdownStep(StopSessionPlayback);
+        TryShutdownStep(() =>
+        {
+            StopTextureNativeCameraStream();
+            StopPreviewServices();
+            _isCameraServiceStopPending = false;
+            _isDirectShowPreviewActive = false;
+        });
+        TryShutdownStep(() => _directShowPreviewService.Dispose());
+        TryShutdownStep(() => Dx12Camera.CloseActive(collectGarbage: true));
+        TryShutdownStep(() => _cameraModeLoadCancellation?.Cancel());
+        TryShutdownStep(() => _cameraModeLoadCancellation?.Dispose());
+        _cameraModeLoadCancellation = null;
+        TryShutdownStep(() => DisposeGraphHost(ref _waveform3DGraphHost));
+        TryShutdownStep(() => DisposeGraphHost(ref _selectedMicSpectrumGraphHost));
+        TryShutdownStep(() => DisposeGraphHost(ref _podcastSpectrumWaterfallGraphHost));
+        TryShutdownStep(() => DisposeGraphHost(ref _karaokeSpectrumWaterfallGraphHost));
+        TryShutdownStep(() => DisposeGraphHost(ref _mixingMicSpectrumGraphHost));
+        TryShutdownStep(() => DisposeGraphHost(ref _mixingOutputWaveform3DGraphHost));
+        TryShutdownStep(() =>
+        {
+            _textureNativeRecordingSession?.Dispose();
+            _textureNativeRecordingSession = null;
+        });
+        TryShutdownStep(() => _cameraPreviewService.Dispose());
+        TryShutdownStep(() => _spectrumService.Dispose());
+        TryShutdownStep(() => Dispatcher.BeginInvokeShutdown(DispatcherPriority.Background));
+    }
+
+    private void StopShutdownTimers()
+    {
+        StopDispatcherTimer(_audioDeviceFormatTimer, AudioDeviceFormatTimerTick);
+        StopDispatcherTimer(_audioDeviceRefreshTimer, AudioDeviceRefreshTimerTick);
+        StopDispatcherTimer(_appStatePersistTimer, AppStatePersistTimerTick);
+        StopDispatcherTimer(_outputAudioSessionTimer, OutputAudioSessionTimerTick);
+        StopDispatcherTimer(_sessionPlaybackPositionTimer, SessionPlaybackPositionTimerTick);
+        StopDispatcherTimer(_karaokePlaybackPositionTimer, KaraokePlaybackPositionTimerTick);
+    }
+
+    private static void StopDispatcherTimer(DispatcherTimer timer, EventHandler handler)
+    {
+        timer.Stop();
+        timer.Tick -= handler;
+    }
+
+    private static void TryShutdownStep(Action action)
+    {
+        try
+        {
+            action();
         }
-
-        StopSessionPlayback();
-        _cameraPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
-        _cameraPreviewService.StatusChanged -= CameraPreviewStatusChanged;
-        _directShowPreviewService.FrameAvailable -= CameraPreviewFrameAvailable;
-        _directShowPreviewService.StatusChanged -= CameraPreviewStatusChanged;
-        _directShowPreviewService.Dispose();
-        StopTextureNativeCameraStream();
-        Dx12Camera.CloseActive(collectGarbage: true);
-        _cameraModeLoadCancellation?.Cancel();
-        _cameraModeLoadCancellation?.Dispose();
-        DisposeGraphHost(ref _waveform3DGraphHost);
-        DisposeGraphHost(ref _selectedMicSpectrumGraphHost);
-        DisposeGraphHost(ref _podcastSpectrumWaterfallGraphHost);
-        DisposeGraphHost(ref _karaokeSpectrumWaterfallGraphHost);
-        DisposeGraphHost(ref _mixingMicSpectrumGraphHost);
-        DisposeGraphHost(ref _mixingOutputWaveform3DGraphHost);
-
-        _textureNativeRecordingSession?.Dispose();
-        _textureNativeRecordingSession = null;
-        _cameraPreviewService.Dispose();
-        _spectrumService.Dispose();
+        catch
+        {
+        }
     }
 
     private static void DisposeGraphHost(ref Direct3D12AudioGraphHost? graphHost)
