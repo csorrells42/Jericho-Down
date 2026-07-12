@@ -398,6 +398,7 @@ public partial class EqualizerWindow : Window
     private MidiSequencePlaybackPlan? _midiSequencePlaybackPlan;
     private CancellationTokenSource? _midiSequencePlaybackCancellation;
     private bool _isMidiSequencePlaying;
+    private bool _isRestoringMidiState;
     private SoundFontSummary? _loadedMidiSoundFont;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
@@ -711,6 +712,7 @@ public partial class EqualizerWindow : Window
         MidiSoundFontInstrumentsListBox.ItemsSource = _midiSoundFontInstruments;
         MidiSoundFontSamplesListBox.ItemsSource = _midiSoundFontSamples;
         CoreAudioSessionsItemsControl.ItemsSource = _coreAudioSessionItems;
+        RestoreMidiWorkflowState();
         RefreshMidiDevicesFromSystem(updateStatus: false);
 
         RestorePersistedPresetOrDefault();
@@ -1352,6 +1354,11 @@ public partial class EqualizerWindow : Window
             SelectedMicChannelNumber = activeMicChannel?.ChannelNumber ?? 1,
             MicChannels = CaptureMicChannelStates(),
             MidiControlMappings = CaptureMidiControlMappingStates(),
+            MidiInputDeviceName = (MidiInputDeviceComboBox?.SelectedItem as MidiInputDevice)?.ProductName,
+            MidiInputDeviceProductId = (MidiInputDeviceComboBox?.SelectedItem as MidiInputDevice)?.ProductId,
+            MidiOutputDeviceName = (MidiOutputDeviceComboBox?.SelectedItem as MidiOutputDevice)?.ProductName,
+            MidiOutputDeviceProductId = (MidiOutputDeviceComboBox?.SelectedItem as MidiOutputDevice)?.ProductId,
+            MidiSequenceSpeedPercent = MidiSequenceTempoSlider?.Value,
             MicrophoneName = activeMicChannel?.SelectedDevice?.Name,
             MicrophoneEndpointId = activeMicChannel?.SelectedDevice?.EndpointId,
             InputChannelMode = activeMicChannel?.InputChannelMode.ToString(),
@@ -1692,34 +1699,42 @@ public partial class EqualizerWindow : Window
 
     private void RefreshMidiDevicesFromSystem(bool updateStatus = true)
     {
+        _isRestoringMidiState = true;
         var selectedInputNumber = (MidiInputDeviceComboBox.SelectedItem as MidiInputDevice)?.DeviceNumber
             ?? _midiInputMonitor.DeviceNumber;
         var selectedOutputNumber = (MidiOutputDeviceComboBox.SelectedItem as MidiOutputDevice)?.DeviceNumber
             ?? _midiOutputPort.DeviceNumber;
-
-        var inputDevices = MidiDeviceCatalog.GetInputDevices();
-        if (_midiInputMonitor.IsRunning
-            && _midiInputMonitor.DeviceNumber is int runningInput
-            && inputDevices.All(device => device.DeviceNumber != runningInput))
+        IReadOnlyList<MidiInputDevice> inputDevices = [];
+        IReadOnlyList<MidiOutputDevice> outputDevices = [];
+        try
         {
-            _midiInputMonitor.Stop();
+            inputDevices = MidiDeviceCatalog.GetInputDevices();
+            if (_midiInputMonitor.IsRunning
+                && _midiInputMonitor.DeviceNumber is int runningInput
+                && inputDevices.All(device => device.DeviceNumber != runningInput))
+            {
+                _midiInputMonitor.Stop();
+            }
+
+            MidiInputDeviceComboBox.ItemsSource = inputDevices;
+            MidiInputDeviceComboBox.SelectedItem = SelectMidiInputDevice(inputDevices, selectedInputNumber);
+
+            outputDevices = MidiDeviceCatalog.GetOutputDevices();
+            if (_midiOutputPort.IsOpen
+                && _midiOutputPort.DeviceNumber is int openOutput
+                && outputDevices.All(device => device.DeviceNumber != openOutput))
+            {
+                StopMidiSequencePlayback("MIDI sequence stopped because output disconnected.", resetOutput: false, updateStatus: false);
+                _midiOutputPort.Close();
+            }
+
+            MidiOutputDeviceComboBox.ItemsSource = outputDevices;
+            MidiOutputDeviceComboBox.SelectedItem = SelectMidiOutputDevice(outputDevices, selectedOutputNumber);
         }
-
-        MidiInputDeviceComboBox.ItemsSource = inputDevices;
-        MidiInputDeviceComboBox.SelectedItem = inputDevices.FirstOrDefault(device => device.DeviceNumber == selectedInputNumber)
-            ?? inputDevices.FirstOrDefault();
-
-        var outputDevices = MidiDeviceCatalog.GetOutputDevices();
-        if (_midiOutputPort.IsOpen
-            && _midiOutputPort.DeviceNumber is int openOutput
-            && outputDevices.All(device => device.DeviceNumber != openOutput))
+        finally
         {
-            _midiOutputPort.Close();
+            _isRestoringMidiState = false;
         }
-
-        MidiOutputDeviceComboBox.ItemsSource = outputDevices;
-        MidiOutputDeviceComboBox.SelectedItem = outputDevices.FirstOrDefault(device => device.DeviceNumber == selectedOutputNumber)
-            ?? outputDevices.FirstOrDefault();
 
         UpdateMidiControlState();
         if (updateStatus)
@@ -1746,6 +1761,58 @@ public partial class EqualizerWindow : Window
         }
 
         Dispatcher.BeginInvoke(new Action(() => SetMidiStatus(status)), DispatcherPriority.Background);
+    }
+
+    private void RestoreMidiWorkflowState()
+    {
+        _isRestoringMidiState = true;
+        try
+        {
+            if (MidiSequenceTempoSlider is not null)
+            {
+                MidiSequenceTempoSlider.Value = Math.Clamp(_appSettings.MidiSequenceSpeedPercent ?? 100d, 50d, 200d);
+            }
+
+            if (MidiSequenceTempoValueText is not null)
+            {
+                MidiSequenceTempoValueText.Text = $"{Math.Round(MidiSequenceTempoSlider?.Value ?? 100d):0}%";
+            }
+        }
+        finally
+        {
+            _isRestoringMidiState = false;
+        }
+    }
+
+    private MidiInputDevice? SelectMidiInputDevice(IReadOnlyList<MidiInputDevice> devices, int? selectedDeviceNumber)
+    {
+        return devices.FirstOrDefault(device =>
+                !string.IsNullOrWhiteSpace(_appSettings.MidiInputDeviceName)
+                && string.Equals(device.ProductName, _appSettings.MidiInputDeviceName, StringComparison.OrdinalIgnoreCase)
+                && (!_appSettings.MidiInputDeviceProductId.HasValue || device.ProductId == _appSettings.MidiInputDeviceProductId.Value))
+            ?? devices.FirstOrDefault(device => device.DeviceNumber == selectedDeviceNumber)
+            ?? devices.FirstOrDefault();
+    }
+
+    private MidiOutputDevice? SelectMidiOutputDevice(IReadOnlyList<MidiOutputDevice> devices, int? selectedDeviceNumber)
+    {
+        return devices.FirstOrDefault(device =>
+                !string.IsNullOrWhiteSpace(_appSettings.MidiOutputDeviceName)
+                && string.Equals(device.ProductName, _appSettings.MidiOutputDeviceName, StringComparison.OrdinalIgnoreCase)
+                && (!_appSettings.MidiOutputDeviceProductId.HasValue || device.ProductId == _appSettings.MidiOutputDeviceProductId.Value))
+            ?? devices.FirstOrDefault(device => device.DeviceNumber == selectedDeviceNumber)
+            ?? devices.FirstOrDefault();
+    }
+
+    private void MidiDeviceSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRestoringMidiState || _isClosing)
+        {
+            return;
+        }
+
+        UpdateMidiControlState();
+        ScheduleAppStatePersist();
     }
 
     private void AddMidiMessage(MidiMessageSnapshot message)
@@ -1799,6 +1866,8 @@ public partial class EqualizerWindow : Window
 
     private void UpdateMidiControlState()
     {
+        var midiOutputReady = _midiOutputPort.IsOpen;
+        var soundFontPresetReady = midiOutputReady && MidiSoundFontPresetComboBox?.SelectedItem is SoundFontPresetSummary;
         if (MidiInputStartButton is not null)
         {
             MidiInputStartButton.IsEnabled = MidiInputDeviceComboBox.SelectedItem is MidiInputDevice && !_midiInputMonitor.IsRunning;
@@ -1816,12 +1885,12 @@ public partial class EqualizerWindow : Window
 
         if (MidiOutputCloseButton is not null)
         {
-            MidiOutputCloseButton.IsEnabled = _midiOutputPort.IsOpen;
+            MidiOutputCloseButton.IsEnabled = midiOutputReady;
         }
 
         if (MidiPanicButton is not null)
         {
-            MidiPanicButton.IsEnabled = _midiOutputPort.IsOpen;
+            MidiPanicButton.IsEnabled = midiOutputReady;
         }
 
         if (MidiFileExportButton is not null)
@@ -1831,12 +1900,39 @@ public partial class EqualizerWindow : Window
 
         if (MidiSequencePlayButton is not null)
         {
-            MidiSequencePlayButton.IsEnabled = _midiSequencePlaybackPlan is not null && _midiOutputPort.IsOpen && !_isMidiSequencePlaying;
+            MidiSequencePlayButton.IsEnabled = _midiSequencePlaybackPlan is not null && midiOutputReady && !_isMidiSequencePlaying;
         }
 
         if (MidiSequenceStopButton is not null)
         {
             MidiSequenceStopButton.IsEnabled = _isMidiSequencePlaying;
+        }
+
+        foreach (var button in new[]
+                 {
+                     MidiNoteOnButton,
+                     MidiNoteOffButton,
+                     MidiControlChangeButton,
+                     MidiPatchChangeButton,
+                     MidiPitchWheelButton,
+                     MidiRawSendButton,
+                     MidiSysexSendButton
+                 })
+        {
+            if (button is not null)
+            {
+                button.IsEnabled = midiOutputReady;
+            }
+        }
+
+        if (MidiSoundFontApplyButton is not null)
+        {
+            MidiSoundFontApplyButton.IsEnabled = soundFontPresetReady;
+        }
+
+        if (MidiSoundFontPreviewButton is not null)
+        {
+            MidiSoundFontPreviewButton.IsEnabled = soundFontPresetReady;
         }
     }
 
@@ -2195,6 +2291,11 @@ public partial class EqualizerWindow : Window
         {
             MidiSequenceStatusText.Text = $"{_midiSequencePlaybackPlan.DisplayText} | speed {Math.Round(e.NewValue):0}%";
         }
+
+        if (!_isRestoringMidiState)
+        {
+            ScheduleAppStatePersist();
+        }
     }
 
     private double MidiSequenceSpeedRatio()
@@ -2302,6 +2403,7 @@ public partial class EqualizerWindow : Window
             }
 
             MidiSoundFontStatusText.Text = summary.DisplayText;
+            UpdateMidiControlState();
             SetMidiStatus($"SoundFont loaded: {summary.FileName}.");
         }
         catch (Exception ex)
@@ -2311,6 +2413,7 @@ public partial class EqualizerWindow : Window
             _midiSoundFontInstruments.Clear();
             _midiSoundFontSamples.Clear();
             MidiSoundFontStatusText.Text = $"SoundFont failed: {ex.Message}";
+            UpdateMidiControlState();
             SetMidiStatus($"SoundFont failed: {ex.Message}");
         }
     }
@@ -2322,6 +2425,7 @@ public partial class EqualizerWindow : Window
         _midiSoundFontInstruments.Clear();
         _midiSoundFontSamples.Clear();
         MidiSoundFontStatusText.Text = "No SoundFont loaded.";
+        UpdateMidiControlState();
         SetMidiStatus("SoundFont cleared.");
     }
 
@@ -2333,6 +2437,7 @@ public partial class EqualizerWindow : Window
         }
 
         MidiPatchSlider.Value = Math.Clamp(preset.Patch, MidiPatchSlider.Minimum, MidiPatchSlider.Maximum);
+        UpdateMidiControlState();
         SetMidiStatus($"SoundFont preset selected: {preset.DisplayName}.");
     }
 

@@ -708,6 +708,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
     Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
     Assert(xaml.Contains("MidiOutputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose output device selection");
+    Assert(xaml.Contains("SelectionChanged=\"MidiDeviceSelectionChanged\"", StringComparison.Ordinal), "MIDI device selections should persist through a shared handler");
     Assert(xaml.Contains("SendMidiSysexClicked", StringComparison.Ordinal), "MIDI tab should expose sysex output");
     Assert(xaml.Contains("MidiControlMappingActionComboBox", StringComparison.Ordinal), "MIDI tab should expose control mapping actions");
     Assert(xaml.Contains("MidiSequenceTracksItemsControl", StringComparison.Ordinal), "MIDI tab should expose sequence tracks");
@@ -718,7 +719,29 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(xaml.Contains("LoadSoundFontClicked", StringComparison.Ordinal), "MIDI tab should load SoundFont files");
     Assert(xaml.Contains("Apply Bank + Patch", StringComparison.Ordinal), "MIDI tab should apply SoundFont bank and patch selections");
     Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should preview selected instrument notes");
+    foreach (var outputControl in new[]
+             {
+                 "MidiNoteOnButton",
+                 "MidiNoteOffButton",
+                 "MidiControlChangeButton",
+                 "MidiPatchChangeButton",
+                 "MidiPitchWheelButton",
+                 "MidiRawSendButton",
+                 "MidiSysexSendButton",
+                 "MidiSoundFontApplyButton",
+                 "MidiSoundFontPreviewButton"
+             })
+    {
+        Assert(xaml.Contains(outputControl, StringComparison.Ordinal), $"MIDI workflow should name {outputControl} for release-state enablement");
+    }
+
     Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowSource.Contains("RestoreMidiWorkflowState", StringComparison.Ordinal), "MIDI workflow should restore persisted state");
+    Assert(windowSource.Contains("SelectMidiInputDevice", StringComparison.Ordinal), "MIDI input selection should restore by saved device identity");
+    Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
+    Assert(windowSource.Contains("MidiSequenceSpeedPercent", StringComparison.Ordinal), "MIDI sequence speed should be captured in app state");
     var expectedSectionOrder = new[]
     {
         "1 MIDI Devices",
@@ -1518,6 +1541,11 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Set(settings, "ProcessedOutputEnabled", true);
     Set(settings, "AudioRecordingFolder", @"C:\Jericho\Recordings");
     Set(settings, "AudioRecordingSource", ProcessedRecordingSource.SelectedMicRawBackup.ToString());
+    Set(settings, "MidiInputDeviceName", "Launchkey Mini");
+    Set(settings, "MidiInputDeviceProductId", 101);
+    Set(settings, "MidiOutputDeviceName", "Microsoft GS Wavetable Synth");
+    Set(settings, "MidiOutputDeviceProductId", 202);
+    Set(settings, "MidiSequenceSpeedPercent", 125d);
 
     var mic = Activator.CreateInstance(micStateType!)!;
     Set(mic, "ChannelNumber", 3);
@@ -1577,6 +1605,11 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((bool)Get(restored!, "ProcessedOutputEnabled")!, "processed output toggle should survive app-state roundtrip");
     Assert((string)Get(restored!, "AudioRecordingFolder")! == @"C:\Jericho\Recordings", "recording folder should survive app-state roundtrip");
     Assert((string)Get(restored!, "AudioRecordingSource")! == ProcessedRecordingSource.SelectedMicRawBackup.ToString(), "recording source should survive app-state roundtrip");
+    Assert((string)Get(restored!, "MidiInputDeviceName")! == "Launchkey Mini", "MIDI input device name should survive app-state roundtrip");
+    Assert((int)Get(restored!, "MidiInputDeviceProductId")! == 101, "MIDI input product id should survive app-state roundtrip");
+    Assert((string)Get(restored!, "MidiOutputDeviceName")! == "Microsoft GS Wavetable Synth", "MIDI output device name should survive app-state roundtrip");
+    Assert((int)Get(restored!, "MidiOutputDeviceProductId")! == 202, "MIDI output product id should survive app-state roundtrip");
+    Assert((double)Get(restored!, "MidiSequenceSpeedPercent")! == 125d, "MIDI sequence speed should survive app-state roundtrip");
     var restoredMidiMapping = ((IList)Get(restored!, "MidiControlMappings")!)[0]!;
     Assert((string)Get(restoredMidiMapping, "ActionName")! == MidiControlMappingActions.ToggleSelectedInputMute, "MIDI mapping action should survive app-state roundtrip");
     Assert((string)Get(restoredMidiMapping, "MessageType")! == "Control Change", "MIDI mapping message type should survive app-state roundtrip");

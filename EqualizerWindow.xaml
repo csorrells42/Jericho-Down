@@ -3140,14 +3140,14 @@
                   <StackPanel>
                     <TextBlock Text="1 MIDI Devices" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                     <TextBlock Text="Input" Foreground="#B8C7D9" />
-                    <ComboBox x:Name="MidiInputDeviceComboBox" Margin="0,3,0,10" />
+                    <ComboBox x:Name="MidiInputDeviceComboBox" Margin="0,3,0,10" SelectionChanged="MidiDeviceSelectionChanged" />
                     <UniformGrid Columns="3" Margin="0,0,0,12">
                       <Button x:Name="MidiInputStartButton" Style="{StaticResource ConsolePushButton}" Content="Start" Padding="10,5" Margin="0,0,4,0" Click="StartMidiInputClicked" />
                       <Button x:Name="MidiInputStopButton" Style="{StaticResource ConsolePushButton}" Content="Stop" Padding="10,5" Margin="4,0" Click="StopMidiInputClicked" />
                       <Button Style="{StaticResource ConsolePushButton}" Content="Clear" Padding="10,5" Margin="4,0,0,0" Click="ClearMidiMessagesClicked" />
                     </UniformGrid>
                     <TextBlock Text="Output" Foreground="#B8C7D9" />
-                    <ComboBox x:Name="MidiOutputDeviceComboBox" Margin="0,3,0,10" />
+                    <ComboBox x:Name="MidiOutputDeviceComboBox" Margin="0,3,0,10" SelectionChanged="MidiDeviceSelectionChanged" />
                     <UniformGrid Columns="3">
                       <Button x:Name="MidiOutputOpenButton" Style="{StaticResource ConsolePushButton}" Content="Open" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiOutputClicked" />
                       <Button x:Name="MidiOutputCloseButton" Style="{StaticResource ConsolePushButton}" Content="Close" Padding="10,5" Margin="4,0" Click="CloseMidiOutputClicked" />
@@ -3277,8 +3277,8 @@
                     <TextBlock Text="5 SoundFont / Instrument" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                     <UniformGrid Columns="3" Margin="0,0,0,10">
                       <Button Style="{StaticResource ConsolePushButton}" Content="Load SF2" Padding="10,5" Margin="0,0,4,0" Click="LoadSoundFontClicked" />
-                      <Button Style="{StaticResource ConsolePushButton}" Content="Apply Bank + Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
-                      <Button Style="{StaticResource ConsolePushButton}" Content="Preview Note" Padding="10,5" Margin="4,0,0,0" Click="PreviewSoundFontNoteClicked" />
+                      <Button x:Name="MidiSoundFontApplyButton" Style="{StaticResource ConsolePushButton}" Content="Apply Bank + Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
+                      <Button x:Name="MidiSoundFontPreviewButton" Style="{StaticResource ConsolePushButton}" Content="Preview Note" Padding="10,5" Margin="4,0,0,0" Click="PreviewSoundFontNoteClicked" />
                     </UniformGrid>
                     <TextBlock x:Name="MidiSoundFontStatusText" Text="No SoundFont loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
                     <TextBlock Text="Preset" Foreground="#B8C7D9" />
@@ -3341,8 +3341,8 @@
                     </Grid>
                     <Slider x:Name="MidiVelocitySlider" Minimum="0" Maximum="127" Value="100" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
                     <UniformGrid Columns="2" Margin="0,0,0,12">
-                      <Button Style="{StaticResource ConsolePushButton}" Content="Note On" Padding="10,5" Margin="0,0,4,0" Click="SendMidiNoteOnClicked" />
-                      <Button Style="{StaticResource ConsolePushButton}" Content="Note Off" Padding="10,5" Margin="4,0,0,0" Click="SendMidiNoteOffClicked" />
+                      <Button x:Name="MidiNoteOnButton" Style="{StaticResource ConsolePushButton}" Content="Note On" Padding="10,5" Margin="0,0,4,0" Click="SendMidiNoteOnClicked" />
+                      <Button x:Name="MidiNoteOffButton" Style="{StaticResource ConsolePushButton}" Content="Note Off" Padding="10,5" Margin="4,0,0,0" Click="SendMidiNoteOffClicked" />
                     </UniformGrid>
                     <Grid>
                       <TextBlock Text="Controller" Foreground="#B8C7D9" />
@@ -3354,19 +3354,19 @@
                       <TextBlock Text="{Binding ElementName=MidiControllerValueSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                     </Grid>
                     <Slider x:Name="MidiControllerValueSlider" Minimum="0" Maximum="127" Value="64" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Control Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiControlChangeClicked" />
+                    <Button x:Name="MidiControlChangeButton" Style="{StaticResource ConsolePushButton}" Content="Send Control Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiControlChangeClicked" />
                     <Grid>
                       <TextBlock Text="Patch" Foreground="#B8C7D9" />
                       <TextBlock Text="{Binding ElementName=MidiPatchSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                     </Grid>
                     <Slider x:Name="MidiPatchSlider" Minimum="0" Maximum="127" Value="0" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Patch Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPatchChangeClicked" />
+                    <Button x:Name="MidiPatchChangeButton" Style="{StaticResource ConsolePushButton}" Content="Send Patch Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPatchChangeClicked" />
                     <Grid>
                       <TextBlock Text="Pitch wheel" Foreground="#B8C7D9" />
                       <TextBlock Text="{Binding ElementName=MidiPitchWheelSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                     </Grid>
                     <Slider x:Name="MidiPitchWheelSlider" Minimum="0" Maximum="16383" Value="8192" TickFrequency="1024" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Pitch Wheel" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPitchWheelClicked" />
+                    <Button x:Name="MidiPitchWheelButton" Style="{StaticResource ConsolePushButton}" Content="Send Pitch Wheel" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPitchWheelClicked" />
                     <TextBlock Text="Raw short message" Foreground="#B8C7D9" />
                     <Grid Margin="0,3,0,8">
                       <Grid.ColumnDefinitions>
@@ -3374,7 +3374,7 @@
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
                       <TextBox x:Name="MidiRawMessageTextBox" Text="90 3C 7F" Margin="0,0,8,0" />
-                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Raw" Padding="10,5" Click="SendMidiRawClicked" />
+                      <Button x:Name="MidiRawSendButton" Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Raw" Padding="10,5" Click="SendMidiRawClicked" />
                     </Grid>
                     <TextBlock Text="System exclusive" Foreground="#B8C7D9" />
                     <Grid Margin="0,3,0,0">
@@ -3383,7 +3383,7 @@
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
                       <TextBox x:Name="MidiSysexTextBox" Text="F0 F7" Margin="0,0,8,0" />
-                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Sysex" Padding="10,5" Click="SendMidiSysexClicked" />
+                      <Button x:Name="MidiSysexSendButton" Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Sysex" Padding="10,5" Click="SendMidiSysexClicked" />
                     </Grid>
                   </StackPanel>
                 </Border>

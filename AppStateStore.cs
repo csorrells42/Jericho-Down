@@ -207,6 +207,16 @@ internal sealed class AppSettingsState
 
     public List<MidiControlMappingSettingsState> MidiControlMappings { get; set; } = [];
 
+    public string? MidiInputDeviceName { get; set; }
+
+    public int? MidiInputDeviceProductId { get; set; }
+
+    public string? MidiOutputDeviceName { get; set; }
+
+    public int? MidiOutputDeviceProductId { get; set; }
+
+    public double? MidiSequenceSpeedPercent { get; set; }
+
     public string? MicrophoneName { get; set; }
 
     public string? MicrophoneEndpointId { get; set; }
