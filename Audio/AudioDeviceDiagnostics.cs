@@ -53,6 +53,12 @@ public static class AudioDeviceDiagnostics
             return;
         }
 
+        if (selectedInput.IsStereoTestTone)
+        {
+            report.AppendLine("- Source: NAudio SignalGenerator stereo test tone");
+            return;
+        }
+
         if (selectedInput.IsSystemAudioLoopback)
         {
             AppendDefaultEndpointSummary(report, DataFlow.Render, "Windows loopback source");

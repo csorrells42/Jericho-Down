@@ -67,6 +67,7 @@ var tests = new (string Name, Action Test)[]
     ("System audio loopback mixer strip is left of mics", SystemAudioLoopbackMixerStripIsLeftOfMics),
     ("Stereo input DSP applies independently per channel", StereoInputDspAppliesIndependentlyPerChannel),
     ("System audio loopback stereo provider preserves channels", SystemAudioLoopbackStereoProviderPreservesChannels),
+    ("NAudio stereo test tone routes through mixer inputs", NAudioStereoTestToneRoutesThroughMixerInputs),
     ("Blank mixer channels restore without fallback input", BlankMixerChannelsRestoreWithoutFallbackInput),
     ("App settings roundtrip preserves mic mixer routing state", AppSettingsRoundtripPreservesMicMixerRoutingState),
     ("Primary capture selector follows active mic source", PrimaryCaptureSelectorFollowsActiveMicSource),
@@ -1360,6 +1361,30 @@ static void SystemAudioLoopbackStereoProviderPreservesChannels()
 
     Assert(Math.Abs(output[0] - 0.6f) < 0.0001f, "left balance should leave the left side intact");
     Assert(Math.Abs(output[1] - 0.3f) < 0.0001f, "left balance should reduce the right side without summing to mono");
+}
+
+static void NAudioStereoTestToneRoutesThroughMixerInputs()
+{
+    var testTone = AudioInputDevice.CreateStereoTestTone();
+    Assert(testTone.IsStereoTestTone, "stereo test tone should identify itself as a virtual signal input");
+    Assert(testTone.Backend == AudioInputBackend.SignalGenerator, "stereo test tone should use the signal-generator backend");
+    Assert(testTone.MaximumInputChannels == 2, "stereo test tone should expose left/right channel routing");
+
+    var format = MicrophoneSpectrumService.TryGetInputDeviceFormat(testTone);
+    Assert(format == new AudioDeviceFormat(48_000, 2, 32), "stereo test tone should report a stable 48 kHz stereo float format");
+
+    float[] samples = [1f, 1f, 1f, 1f, 1f, 1f, 1f, 1f];
+    SignalGeneratorCapture.ApplyAlternatingStereoGate(samples, channelCount: 2, sampleRate: 2, startingFrame: 0);
+    AssertSequenceEqual([1f, 0f, 1f, 0f, 0f, 1f, 0f, 1f], samples, "stereo test tone should alternate between left and right channels");
+
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SignalGeneratorCapture.cs")));
+    Assert(captureSource.Contains("SignalGenerator", StringComparison.Ordinal), "stereo test tone should use NAudio SignalGenerator");
+    Assert(captureSource.Contains("SignalGeneratorType.Sin", StringComparison.Ordinal), "stereo test tone should use a sine reference tone");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    Assert(serviceSource.Contains("CreateStereoTestTone", StringComparison.Ordinal), "input device discovery should expose the stereo test tone");
+    Assert(serviceSource.Contains("StartSignalGeneratorCapture", StringComparison.Ordinal), "capture startup should route the stereo test tone through the mixer");
+    Assert(serviceSource.Contains("NAudio signal generator", StringComparison.Ordinal), "stream status should name the NAudio signal generator clearly");
 }
 
 static void BlankMixerChannelsRestoreWithoutFallbackInput()

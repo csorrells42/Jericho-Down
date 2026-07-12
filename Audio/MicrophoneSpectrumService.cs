@@ -751,6 +751,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         AddAsioInputDevices(devices);
         devices.Add(AudioInputDevice.CreateSystemAudioLoopback());
+        devices.Add(AudioInputDevice.CreateStereoTestTone());
         devices.AddRange(CoreAudioSessionCatalog.GetProcessLoopbackInputDevices());
         return devices;
     }
@@ -803,6 +804,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
         if (device.IsSystemAudioLoopback)
         {
             return TryGetSystemAudioLoopbackFormat();
+        }
+
+        if (device.IsStereoTestTone)
+        {
+            return new AudioDeviceFormat(48000, 2, 32);
         }
 
         if (device.IsAsio)
@@ -1455,6 +1461,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
         if (backend == AudioInputBackend.Asio && TryGetAsioDriverName(endpointId, out var driverName))
         {
             return $"ASIO input {driverName}";
+        }
+
+        if (backend == AudioInputBackend.SignalGenerator
+            || deviceNumber == AudioInputDevice.StereoTestToneDeviceNumber)
+        {
+            return "NAudio stereo test tone";
         }
 
         var isProcessLoopback = AudioInputDevice.TryGetProcessLoopbackTargetProcessId(deviceNumber, endpointId, out var processId);
@@ -2276,6 +2288,12 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return StartAsioInputCapture(endpointId, dataAvailable, recordingStopped);
         }
 
+        if (backend == AudioInputBackend.SignalGenerator
+            || deviceNumber == AudioInputDevice.StereoTestToneDeviceNumber)
+        {
+            return StartSignalGeneratorCapture(dataAvailable, recordingStopped);
+        }
+
         if (backend == AudioInputBackend.ProcessLoopback
             || AudioInputDevice.TryGetProcessLoopbackTargetProcessId(deviceNumber, endpointId, out _))
         {
@@ -2322,6 +2340,25 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         throw startException ?? new InvalidOperationException("Could not start microphone capture.");
+    }
+
+    private IWaveIn StartSignalGeneratorCapture(
+        EventHandler<WaveInEventArgs> dataAvailable,
+        EventHandler<StoppedEventArgs> recordingStopped)
+    {
+        var capture = new SignalGeneratorCapture();
+        AttachCaptureEvents(capture, dataAvailable, recordingStopped);
+        try
+        {
+            capture.StartRecording();
+            return capture;
+        }
+        catch
+        {
+            DetachCaptureEvents(capture, dataAvailable, recordingStopped);
+            capture.Dispose();
+            throw;
+        }
     }
 
     private IWaveIn StartProcessLoopbackCapture(
@@ -3068,6 +3105,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return capture switch
         {
             ProcessLoopbackCapture => "WASAPI process loopback",
+            SignalGeneratorCapture => "NAudio signal generator",
             WasapiLoopbackCapture => "WASAPI loopback",
             WasapiCapture => "WASAPI",
             WaveInEvent => "WaveIn",

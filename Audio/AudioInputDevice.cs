@@ -4,8 +4,10 @@ public sealed class AudioInputDevice
 {
     public const int SystemAudioLoopbackDeviceNumber = -1000;
     public const int AsioInputDeviceNumber = -2000;
+    public const int StereoTestToneDeviceNumber = -3000;
     public const int ProcessLoopbackDeviceNumberOffset = -1000000;
     public const string SystemAudioLoopbackDeviceName = "Computer audio (loopback)";
+    public const string StereoTestToneDeviceName = "Test tone: stereo channel check";
     public const string ProcessLoopbackEndpointPrefix = "process-loopback:";
 
     public AudioInputDevice(
@@ -34,6 +36,9 @@ public sealed class AudioInputDevice
 
     public bool IsSystemAudioLoopback => DeviceNumber == SystemAudioLoopbackDeviceNumber;
 
+    public bool IsStereoTestTone => DeviceNumber == StereoTestToneDeviceNumber
+        || Backend == AudioInputBackend.SignalGenerator;
+
     public bool IsProcessLoopback => Backend == AudioInputBackend.ProcessLoopback
         || TryGetProcessLoopbackTargetProcessId(DeviceNumber, EndpointId, out _);
 
@@ -42,6 +47,16 @@ public sealed class AudioInputDevice
     public static AudioInputDevice CreateSystemAudioLoopback()
     {
         return new AudioInputDevice(SystemAudioLoopbackDeviceNumber, SystemAudioLoopbackDeviceName, 2);
+    }
+
+    public static AudioInputDevice CreateStereoTestTone()
+    {
+        return new AudioInputDevice(
+            StereoTestToneDeviceNumber,
+            StereoTestToneDeviceName,
+            2,
+            "signal-generator:stereo-test-tone",
+            AudioInputBackend.SignalGenerator);
     }
 
     public static AudioInputDevice CreateProcessLoopback(int processId, string displayName)
@@ -93,5 +108,6 @@ public enum AudioInputBackend
 {
     Windows,
     Asio,
-    ProcessLoopback
+    ProcessLoopback,
+    SignalGenerator
 }
