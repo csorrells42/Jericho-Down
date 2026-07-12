@@ -39,6 +39,7 @@ var tests = new (string Name, Action Test)[]
     ("NAudio DMO effect chain processes safely", NAudioDmoEffectChainProcessesSafely),
     ("NAudio MIDI support exposes input output and file features", NAudioMidiSupportExposesInputOutputAndFileFeatures),
     ("NAudio MIDI message utilities clamp and parse safely", NAudioMidiMessageUtilitiesClampAndParseSafely),
+    ("MIDI control mappings match incoming channel messages", MidiControlMappingsMatchIncomingChannelMessages),
     ("Voice breath reducer tames airy breath noise", VoiceBreathReducerTamesAiryBreathNoise),
     ("Voice saturation adds warm harmonics safely", VoiceSaturationAddsWarmHarmonicsSafely),
     ("Voice telemetry snapshot is independent", VoiceTelemetrySnapshotIsIndependent),
@@ -689,13 +690,41 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiFileService.cs")));
     Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
     Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
+    Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose sequence track summaries");
+
+    var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SoundFontLibrary.cs")));
+    Assert(soundFontLibrary.Contains("new SoundFont", StringComparison.Ordinal), "SoundFont library should read NAudio SoundFont files");
+    Assert(soundFontLibrary.Contains("Presets", StringComparison.Ordinal), "SoundFont library should expose presets");
+    Assert(soundFontLibrary.Contains("Instruments", StringComparison.Ordinal), "SoundFont library should expose instruments");
+    Assert(soundFontLibrary.Contains("SampleHeaders", StringComparison.Ordinal), "SoundFont library should expose samples");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
     Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
     Assert(xaml.Contains("MidiOutputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose output device selection");
     Assert(xaml.Contains("SendMidiSysexClicked", StringComparison.Ordinal), "MIDI tab should expose sysex output");
+    Assert(xaml.Contains("MidiControlMappingActionComboBox", StringComparison.Ordinal), "MIDI tab should expose control mapping actions");
+    Assert(xaml.Contains("MidiSequenceTracksItemsControl", StringComparison.Ordinal), "MIDI tab should expose sequence tracks");
+    Assert(xaml.Contains("MidiSoundFontPresetComboBox", StringComparison.Ordinal), "MIDI tab should expose SoundFont presets");
+    Assert(xaml.Contains("LoadSoundFontClicked", StringComparison.Ordinal), "MIDI tab should load SoundFont files");
+    Assert(xaml.Contains("PreviewSoundFontNoteClicked", StringComparison.Ordinal), "MIDI tab should preview selected instrument notes");
     Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
+    var expectedSectionOrder = new[]
+    {
+        "1 MIDI Devices",
+        "2 Live Monitor",
+        "3 Control Mapping",
+        "4 MIDI File / Sequence",
+        "5 SoundFont / Instrument",
+        "6 Output / Routing"
+    };
+    var lastSectionIndex = xaml.IndexOf("Header=\"MIDI\"", StringComparison.Ordinal);
+    foreach (var section in expectedSectionOrder)
+    {
+        var sectionIndex = xaml.IndexOf(section, lastSectionIndex + 1, StringComparison.Ordinal);
+        Assert(sectionIndex > lastSectionIndex, $"MIDI tab should keep {section} after the previous section");
+        lastSectionIndex = sectionIndex;
+    }
 
     Assert(MidiDeviceCatalog.GetInputDevices() is not null, "MIDI input enumeration should be safe without attached hardware");
     Assert(MidiDeviceCatalog.GetOutputDevices() is not null, "MIDI output enumeration should be safe without attached hardware");
@@ -723,6 +752,21 @@ static void NAudioMidiMessageUtilitiesClampAndParseSafely()
     var sysexSnapshot = MidiMessageSnapshot.FromSysex(sysex, 999);
     Assert(sysexSnapshot.SysexBytes?.Length == 4, "MIDI sysex snapshots should preserve byte buffers");
     Assert(!MidiHexParser.TryParseShortMessage("90 3C 7F 00", out _), "MIDI short parser should reject messages over three bytes");
+}
+
+static void MidiControlMappingsMatchIncomingChannelMessages()
+{
+    var raw = MidiOutputPort.CreateControlChangeRawMessage(2, 64, 127);
+    var snapshot = MidiMessageSnapshot.FromRaw(raw, 123);
+    var rule = MidiControlMappingRule.FromMessage(snapshot, MidiControlMappingActions.ToggleSelectedInputMute);
+
+    Assert(rule.Matches(snapshot), "MIDI mapping should match the source channel message");
+    Assert(rule.DisplayName.Contains(MidiControlMappingActions.ToggleSelectedInputMute, StringComparison.Ordinal), "MIDI mapping display should include the action");
+    Assert(rule.Details.Contains("channel 2", StringComparison.Ordinal), "MIDI mapping details should include the channel");
+
+    var differentController = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 65, 127), 124);
+    Assert(!rule.Matches(differentController), "MIDI mapping should not match a different controller");
+    Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ToggleProcessedOutput), "MIDI mapping actions should include processed output routing");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()

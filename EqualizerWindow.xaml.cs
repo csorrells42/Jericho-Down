@@ -114,6 +114,11 @@ public partial class EqualizerWindow : Window
     private readonly MidiInputMonitor _midiInputMonitor = new();
     private readonly MidiOutputPort _midiOutputPort = new();
     private readonly ObservableCollection<MidiMessageSnapshot> _midiMessages = [];
+    private readonly ObservableCollection<MidiControlMappingRule> _midiControlMappings = [];
+    private readonly ObservableCollection<MidiTrackSummary> _midiSequenceTracks = [];
+    private readonly ObservableCollection<SoundFontPresetSummary> _midiSoundFontPresets = [];
+    private readonly ObservableCollection<SoundFontInstrumentSummary> _midiSoundFontInstruments = [];
+    private readonly ObservableCollection<SoundFontSampleSummary> _midiSoundFontSamples = [];
     private readonly ObservableCollection<CoreAudioSessionControlItem> _coreAudioSessionItems = [];
     private MicChannelStrip _activeMicChannel = null!;
     private readonly DispatcherTimer _audioDeviceFormatTimer = new();
@@ -390,6 +395,7 @@ public partial class EqualizerWindow : Window
     private string? _pendingCameraProfileModeLabel;
     private readonly ObservableCollection<SessionRecordingItem> _sessionRecordings = [];
     private string? _loadedMidiFilePath;
+    private SoundFontSummary? _loadedMidiSoundFont;
     private FileBrowserWatcher? _sessionFolderWatcher;
     private int _sessionFolderRefreshQueued;
     private string? _sessionPlaybackPath;
@@ -693,6 +699,13 @@ public partial class EqualizerWindow : Window
         UpdateStandaloneAudioRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
         MidiMessageListBox.ItemsSource = _midiMessages;
+        MidiControlMappingsListBox.ItemsSource = _midiControlMappings;
+        MidiControlMappingActionComboBox.ItemsSource = MidiControlMappingActions.DefaultActions;
+        MidiControlMappingActionComboBox.SelectedIndex = 0;
+        MidiSequenceTracksItemsControl.ItemsSource = _midiSequenceTracks;
+        MidiSoundFontPresetComboBox.ItemsSource = _midiSoundFontPresets;
+        MidiSoundFontInstrumentsListBox.ItemsSource = _midiSoundFontInstruments;
+        MidiSoundFontSamplesListBox.ItemsSource = _midiSoundFontSamples;
         CoreAudioSessionsItemsControl.ItemsSource = _coreAudioSessionItems;
         RefreshMidiDevicesFromSystem(updateStatus: false);
 
@@ -1742,6 +1755,8 @@ public partial class EqualizerWindow : Window
         {
             MidiMessageListBox.SelectedIndex = _midiMessages.Count > 0 ? 0 : -1;
         }
+
+        ApplyMidiControlMappings(message);
     }
 
     private void SetMidiStatus(string status)
@@ -1953,12 +1968,19 @@ public partial class EqualizerWindow : Window
         {
             var summary = MidiFileService.ReadSummary(dialog.FileName);
             _loadedMidiFilePath = dialog.FileName;
+            _midiSequenceTracks.Clear();
+            foreach (var track in summary.TrackSummaries)
+            {
+                _midiSequenceTracks.Add(track);
+            }
+
             MidiFileStatusText.Text = summary.DisplayText;
             SetMidiStatus($"MIDI file loaded: {summary.FileName}.");
         }
         catch (Exception ex)
         {
             _loadedMidiFilePath = null;
+            _midiSequenceTracks.Clear();
             MidiFileStatusText.Text = $"MIDI file failed: {ex.Message}";
             SetMidiStatus($"MIDI file failed: {ex.Message}");
         }
@@ -1996,6 +2018,263 @@ public partial class EqualizerWindow : Window
         catch (Exception ex)
         {
             SetMidiStatus($"MIDI export failed: {ex.Message}");
+        }
+    }
+
+    private void AddMidiControlMappingClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiMessageListBox.SelectedItem is not MidiMessageSnapshot message)
+        {
+            SetMidiStatus("Select a MIDI monitor message before mapping.");
+            return;
+        }
+
+        if (message.Channel is null && message.Data1 is null)
+        {
+            SetMidiStatus("Choose a channel message for control mapping.");
+            return;
+        }
+
+        var actionName = MidiControlMappingActionComboBox.SelectedItem as string
+            ?? MidiControlMappingActions.ToggleSelectedInputMute;
+        var rule = MidiControlMappingRule.FromMessage(message, actionName);
+        if (_midiControlMappings.Any(existing =>
+                string.Equals(existing.ActionName, rule.ActionName, StringComparison.Ordinal)
+                && string.Equals(existing.MessageType, rule.MessageType, StringComparison.Ordinal)
+                && existing.Channel == rule.Channel
+                && existing.Data1 == rule.Data1))
+        {
+            SetMidiStatus("That MIDI control mapping already exists.");
+            return;
+        }
+
+        _midiControlMappings.Add(rule);
+        SetMidiStatus($"MIDI control mapped: {rule.DisplayName}.");
+    }
+
+    private void RemoveMidiControlMappingClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiControlMappingsListBox.SelectedItem is not MidiControlMappingRule rule)
+        {
+            SetMidiStatus("Select a MIDI control mapping to remove.");
+            return;
+        }
+
+        _midiControlMappings.Remove(rule);
+        SetMidiStatus($"MIDI control mapping removed: {rule.ActionName}.");
+    }
+
+    private void ClearMidiControlMappingsClicked(object sender, RoutedEventArgs e)
+    {
+        _midiControlMappings.Clear();
+        SetMidiStatus("MIDI control mappings cleared.");
+    }
+
+    private void LoadSoundFontClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "SoundFont files|*.sf2|All files|*.*",
+            Title = "Open SoundFont"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var summary = SoundFontLibrary.LoadSummary(dialog.FileName);
+            _loadedMidiSoundFont = summary;
+            _midiSoundFontPresets.Clear();
+            _midiSoundFontInstruments.Clear();
+            _midiSoundFontSamples.Clear();
+            foreach (var preset in summary.Presets.Take(256))
+            {
+                _midiSoundFontPresets.Add(preset);
+            }
+
+            foreach (var instrument in summary.Instruments.Take(256))
+            {
+                _midiSoundFontInstruments.Add(instrument);
+            }
+
+            foreach (var sample in summary.Samples.Take(256))
+            {
+                _midiSoundFontSamples.Add(sample);
+            }
+
+            if (_midiSoundFontPresets.Count > 0)
+            {
+                MidiSoundFontPresetComboBox.SelectedIndex = 0;
+            }
+
+            MidiSoundFontStatusText.Text = summary.DisplayText;
+            SetMidiStatus($"SoundFont loaded: {summary.FileName}.");
+        }
+        catch (Exception ex)
+        {
+            _loadedMidiSoundFont = null;
+            _midiSoundFontPresets.Clear();
+            _midiSoundFontInstruments.Clear();
+            _midiSoundFontSamples.Clear();
+            MidiSoundFontStatusText.Text = $"SoundFont failed: {ex.Message}";
+            SetMidiStatus($"SoundFont failed: {ex.Message}");
+        }
+    }
+
+    private void ClearSoundFontClicked(object sender, RoutedEventArgs e)
+    {
+        _loadedMidiSoundFont = null;
+        _midiSoundFontPresets.Clear();
+        _midiSoundFontInstruments.Clear();
+        _midiSoundFontSamples.Clear();
+        MidiSoundFontStatusText.Text = "No SoundFont loaded.";
+        SetMidiStatus("SoundFont cleared.");
+    }
+
+    private void MidiSoundFontPresetSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (MidiSoundFontPresetComboBox.SelectedItem is not SoundFontPresetSummary preset)
+        {
+            return;
+        }
+
+        MidiPatchSlider.Value = Math.Clamp(preset.Patch, MidiPatchSlider.Minimum, MidiPatchSlider.Maximum);
+        SetMidiStatus($"SoundFont preset selected: {preset.DisplayName}.");
+    }
+
+    private void ApplySoundFontPresetToMidiOutputClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiSoundFontPresetComboBox.SelectedItem is not SoundFontPresetSummary preset)
+        {
+            SetMidiStatus("Load and select a SoundFont preset first.");
+            return;
+        }
+
+        SendMidiShortMessage(
+            () => _midiOutputPort.SendPatchChange(MidiChannel(), preset.Patch),
+            $"MIDI patch set from SoundFont preset: {preset.DisplayName}.");
+    }
+
+    private void PreviewSoundFontNoteClicked(object sender, RoutedEventArgs e)
+    {
+        if (MidiSoundFontPresetComboBox.SelectedItem is not SoundFontPresetSummary preset)
+        {
+            SetMidiStatus("Load and select a SoundFont preset first.");
+            return;
+        }
+
+        try
+        {
+            var patchRaw = _midiOutputPort.SendPatchChange(MidiChannel(), preset.Patch);
+            var noteRaw = _midiOutputPort.SendNoteOn(MidiChannel(), MidiNote(), MidiVelocity());
+            AddMidiMessage(MidiMessageSnapshot.FromRaw(patchRaw, Environment.TickCount, "Out"));
+            AddMidiMessage(MidiMessageSnapshot.FromRaw(noteRaw, Environment.TickCount, "Out"));
+            _ = StopMidiPreviewNoteAsync(MidiChannel(), MidiNote());
+            SetMidiStatus($"SoundFont preset preview sent: {preset.DisplayName}.");
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus(ex.Message);
+        }
+    }
+
+    private async Task StopMidiPreviewNoteAsync(int channel, int note)
+    {
+        await Task.Delay(450);
+        if (_isClosing)
+        {
+            return;
+        }
+
+        try
+        {
+            var raw = _midiOutputPort.SendNoteOff(channel, note, 0);
+            await Dispatcher.BeginInvoke(new Action(() =>
+                AddMidiMessage(MidiMessageSnapshot.FromRaw(raw, Environment.TickCount, "Out"))));
+        }
+        catch
+        {
+        }
+    }
+
+    private void ApplyMidiControlMappings(MidiMessageSnapshot message)
+    {
+        if (!string.Equals(message.Direction, "In", StringComparison.Ordinal)
+            || _midiControlMappings.Count == 0
+            || (message.Data2.HasValue && message.Data2.Value == 0))
+        {
+            return;
+        }
+
+        var rule = _midiControlMappings.FirstOrDefault(mapping => mapping.Matches(message));
+        if (rule is null)
+        {
+            return;
+        }
+
+        ExecuteMidiControlMapping(rule);
+    }
+
+    private void ExecuteMidiControlMapping(MidiControlMappingRule rule)
+    {
+        try
+        {
+            switch (rule.ActionName)
+            {
+                case MidiControlMappingActions.ToggleSelectedInputMute:
+                    if (_activeMicChannel is null)
+                    {
+                        SetMidiStatus("No selected mixer input to mute.");
+                        return;
+                    }
+
+                    _activeMicChannel.IsMuted = !_activeMicChannel.IsMuted;
+                    UpdateLiveMixControlsFromChannels();
+                    ScheduleAppStatePersist();
+                    SetMidiStatus($"{_activeMicChannel.DisplayName} mute {(_activeMicChannel.IsMuted ? "on" : "off")} from MIDI.");
+                    break;
+                case MidiControlMappingActions.ToggleSelectedInputSolo:
+                    if (_activeMicChannel is null)
+                    {
+                        SetMidiStatus("No selected mixer input to solo.");
+                        return;
+                    }
+
+                    _activeMicChannel.IsSoloed = !_activeMicChannel.IsSoloed;
+                    UpdateLiveMixControlsFromChannels();
+                    ScheduleAppStatePersist();
+                    SetMidiStatus($"{_activeMicChannel.DisplayName} solo {(_activeMicChannel.IsSoloed ? "on" : "off")} from MIDI.");
+                    break;
+                case MidiControlMappingActions.ToggleProcessedOutput:
+                    SetProcessedOutputToggleState(!IsProcessedOutputRequested());
+                    UpdateOutputRouting();
+                    ScheduleAppStatePersist();
+                    SetMidiStatus("Processed output toggled from MIDI.");
+                    break;
+                case MidiControlMappingActions.StartOrStopRecording:
+                    if (_isStandaloneAudioRecording)
+                    {
+                        StopAudioRecordingClicked(this, new RoutedEventArgs());
+                    }
+                    else
+                    {
+                        StartAudioRecordingClicked(this, new RoutedEventArgs());
+                    }
+
+                    SetMidiStatus("Recording transport toggled from MIDI.");
+                    break;
+                case MidiControlMappingActions.MidiPanic:
+                    _midiOutputPort.Reset();
+                    SetMidiStatus("MIDI panic sent from mapping.");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            SetMidiStatus($"MIDI mapping failed: {ex.Message}");
         }
     }
 

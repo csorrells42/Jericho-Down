@@ -3133,136 +3133,248 @@
               <TextBlock x:Name="MidiStatusText" Grid.Column="2" Text="MIDI ready." Foreground="#B8C7D9" VerticalAlignment="Center" TextAlignment="Right" Margin="16,0,0,0" />
             </Grid>
           </Border>
-          <Grid Grid.Row="1" Margin="18">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="1.1*" />
-              <ColumnDefinition Width="1.25*" />
-              <ColumnDefinition Width="0.9*" />
-            </Grid.ColumnDefinitions>
-            <Border Style="{StaticResource DspBubble}" Padding="14" Margin="0,0,10,0">
-              <Grid>
-                <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <TextBlock Text="MIDI Input" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <ComboBox x:Name="MidiInputDeviceComboBox" Grid.Row="1" Margin="0,0,0,8" />
-                <UniformGrid Grid.Row="2" Columns="3" Margin="0,0,0,10">
-                  <Button x:Name="MidiInputStartButton" Style="{StaticResource ConsolePushButton}" Content="Start" Padding="10,5" Margin="0,0,4,0" Click="StartMidiInputClicked" />
-                  <Button x:Name="MidiInputStopButton" Style="{StaticResource ConsolePushButton}" Content="Stop" Padding="10,5" Margin="4,0" Click="StopMidiInputClicked" />
-                  <Button Style="{StaticResource ConsolePushButton}" Content="Clear" Padding="10,5" Margin="4,0,0,0" Click="ClearMidiMessagesClicked" />
-                </UniformGrid>
-                <Border Grid.Row="3" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True">
-                  <ListBox x:Name="MidiMessageListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemContainerStyle>
-                      <Style TargetType="ListBoxItem">
-                        <Setter Property="Padding" Value="0" />
-                        <Setter Property="Margin" Value="0" />
-                        <Setter Property="Foreground" Value="#F8FAFC" />
-                      </Style>
-                    </ListBox.ItemContainerStyle>
-                    <ListBox.ItemTemplate>
-                      <DataTemplate>
-                        <Grid Margin="8,6">
-                          <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                          </Grid.RowDefinitions>
-                          <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                          <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
-                        </Grid>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
+          <ScrollViewer Grid.Row="1" Margin="18" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+              <UniformGrid Columns="2" Margin="0,0,0,14">
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="0,0,7,0">
+                  <StackPanel>
+                    <TextBlock Text="1 MIDI Devices" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <TextBlock Text="Input" Foreground="#B8C7D9" />
+                    <ComboBox x:Name="MidiInputDeviceComboBox" Margin="0,3,0,10" />
+                    <UniformGrid Columns="3" Margin="0,0,0,12">
+                      <Button x:Name="MidiInputStartButton" Style="{StaticResource ConsolePushButton}" Content="Start" Padding="10,5" Margin="0,0,4,0" Click="StartMidiInputClicked" />
+                      <Button x:Name="MidiInputStopButton" Style="{StaticResource ConsolePushButton}" Content="Stop" Padding="10,5" Margin="4,0" Click="StopMidiInputClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Clear" Padding="10,5" Margin="4,0,0,0" Click="ClearMidiMessagesClicked" />
+                    </UniformGrid>
+                    <TextBlock Text="Output" Foreground="#B8C7D9" />
+                    <ComboBox x:Name="MidiOutputDeviceComboBox" Margin="0,3,0,10" />
+                    <UniformGrid Columns="3">
+                      <Button x:Name="MidiOutputOpenButton" Style="{StaticResource ConsolePushButton}" Content="Open" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiOutputClicked" />
+                      <Button x:Name="MidiOutputCloseButton" Style="{StaticResource ConsolePushButton}" Content="Close" Padding="10,5" Margin="4,0" Click="CloseMidiOutputClicked" />
+                      <Button x:Name="MidiPanicButton" Style="{StaticResource ConsolePushButton}" Content="Panic" Padding="10,5" Margin="4,0,0,0" Click="MidiPanicClicked" />
+                    </UniformGrid>
+                  </StackPanel>
                 </Border>
-              </Grid>
-            </Border>
-            <Border Grid.Column="1" Style="{StaticResource DspBubble}" Padding="14" Margin="10,0">
-              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel>
-                  <TextBlock Text="MIDI Output" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                  <ComboBox x:Name="MidiOutputDeviceComboBox" Margin="0,0,0,8" />
-                  <UniformGrid Columns="3" Margin="0,0,0,12">
-                    <Button x:Name="MidiOutputOpenButton" Style="{StaticResource ConsolePushButton}" Content="Open" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiOutputClicked" />
-                    <Button x:Name="MidiOutputCloseButton" Style="{StaticResource ConsolePushButton}" Content="Close" Padding="10,5" Margin="4,0" Click="CloseMidiOutputClicked" />
-                    <Button x:Name="MidiPanicButton" Style="{StaticResource ConsolePushButton}" Content="Panic" Padding="10,5" Margin="4,0,0,0" Click="MidiPanicClicked" />
-                  </UniformGrid>
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="7,0,0,0">
                   <Grid>
-                    <TextBlock Text="Channel" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiChannelSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto" />
+                      <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="2 Live Monitor" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <Border Grid.Row="1" BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" MinHeight="190">
+                      <ListBox x:Name="MidiMessageListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                          <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="Foreground" Value="#F8FAFC" />
+                          </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                          <DataTemplate>
+                            <Grid Margin="8,6">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+                    </Border>
                   </Grid>
-                  <Slider x:Name="MidiChannelSlider" Minimum="1" Maximum="16" Value="1" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight" Margin="0,0,0,10" />
-                  <Grid>
-                    <TextBlock Text="Note" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiNoteSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiNoteSlider" Minimum="0" Maximum="127" Value="60" TickFrequency="12" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <Grid>
-                    <TextBlock Text="Velocity" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiVelocitySlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiVelocitySlider" Minimum="0" Maximum="127" Value="100" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <UniformGrid Columns="2" Margin="0,0,0,12">
-                    <Button Style="{StaticResource ConsolePushButton}" Content="Note On" Padding="10,5" Margin="0,0,4,0" Click="SendMidiNoteOnClicked" />
-                    <Button Style="{StaticResource ConsolePushButton}" Content="Note Off" Padding="10,5" Margin="4,0,0,0" Click="SendMidiNoteOffClicked" />
-                  </UniformGrid>
-                  <Grid>
-                    <TextBlock Text="Controller" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiControllerSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiControllerSlider" Minimum="0" Maximum="127" Value="1" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <Grid>
-                    <TextBlock Text="Value" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiControllerValueSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiControllerValueSlider" Minimum="0" Maximum="127" Value="64" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <Button Style="{StaticResource ConsolePushButton}" Content="Send Control Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiControlChangeClicked" />
-                  <Grid>
-                    <TextBlock Text="Patch" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiPatchSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiPatchSlider" Minimum="0" Maximum="127" Value="0" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <Button Style="{StaticResource ConsolePushButton}" Content="Send Patch Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPatchChangeClicked" />
-                  <Grid>
-                    <TextBlock Text="Pitch wheel" Foreground="#B8C7D9" />
-                    <TextBlock Text="{Binding ElementName=MidiPitchWheelSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
-                  </Grid>
-                  <Slider x:Name="MidiPitchWheelSlider" Minimum="0" Maximum="16383" Value="8192" TickFrequency="1024" TickPlacement="BottomRight" Margin="0,0,0,8" />
-                  <Button Style="{StaticResource ConsolePushButton}" Content="Send Pitch Wheel" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPitchWheelClicked" />
-                  <TextBlock Text="Raw short message" Foreground="#B8C7D9" />
-                  <Grid Margin="0,3,0,8">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="MidiRawMessageTextBox" Text="90 3C 7F" Margin="0,0,8,0" />
-                    <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Raw" Padding="10,5" Click="SendMidiRawClicked" />
-                  </Grid>
-                  <TextBlock Text="System exclusive" Foreground="#B8C7D9" />
-                  <Grid Margin="0,3,0,0">
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="*" />
-                      <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="MidiSysexTextBox" Text="F0 F7" Margin="0,0,8,0" />
-                    <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Sysex" Padding="10,5" Click="SendMidiSysexClicked" />
-                  </Grid>
-                </StackPanel>
-              </ScrollViewer>
-            </Border>
-            <Border Grid.Column="2" Style="{StaticResource DspBubble}" Padding="14" Margin="10,0,0,0">
-              <StackPanel>
-                <TextBlock Text="MIDI File" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <UniformGrid Columns="2" Margin="0,0,0,10">
-                  <Button Style="{StaticResource ConsolePushButton}" Content="Open File" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiFileClicked" />
-                  <Button x:Name="MidiFileExportButton" Style="{StaticResource ConsolePushButton}" Content="Export Copy" Padding="10,5" Margin="4,0,0,0" Click="ExportMidiFileCopyClicked" IsEnabled="False" />
-                </UniformGrid>
-                <TextBlock x:Name="MidiFileStatusText" Text="No MIDI file loaded." Foreground="#B8C7D9" TextWrapping="Wrap" />
-              </StackPanel>
-            </Border>
-          </Grid>
+                </Border>
+              </UniformGrid>
+              <UniformGrid Columns="2" Margin="0,0,0,14">
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="0,0,7,0">
+                  <StackPanel>
+                    <TextBlock Text="3 Control Mapping" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <Grid Margin="0,0,0,10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <ComboBox x:Name="MidiControlMappingActionComboBox" Margin="0,0,8,0" />
+                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Map Selected Message" Padding="10,5" Click="AddMidiControlMappingClicked" />
+                    </Grid>
+                    <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" MinHeight="130">
+                      <ListBox x:Name="MidiControlMappingsListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemContainerStyle>
+                          <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0" />
+                            <Setter Property="Foreground" Value="#F8FAFC" />
+                          </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                          <DataTemplate>
+                            <Grid Margin="8,6">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                            </Grid>
+                          </DataTemplate>
+                        </ListBox.ItemTemplate>
+                      </ListBox>
+                    </Border>
+                    <UniformGrid Columns="2" Margin="0,10,0,0">
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Remove" Padding="10,5" Margin="0,0,4,0" Click="RemoveMidiControlMappingClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Clear Mappings" Padding="10,5" Margin="4,0,0,0" Click="ClearMidiControlMappingsClicked" />
+                    </UniformGrid>
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="7,0,0,0">
+                  <StackPanel>
+                    <TextBlock Text="4 MIDI File / Sequence" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <UniformGrid Columns="2" Margin="0,0,0,10">
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Open File" Padding="10,5" Margin="0,0,4,0" Click="OpenMidiFileClicked" />
+                      <Button x:Name="MidiFileExportButton" Style="{StaticResource ConsolePushButton}" Content="Export Copy" Padding="10,5" Margin="4,0,0,0" Click="ExportMidiFileCopyClicked" IsEnabled="False" />
+                    </UniformGrid>
+                    <TextBlock x:Name="MidiFileStatusText" Text="No MIDI file loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" MinHeight="150">
+                      <ItemsControl x:Name="MidiSequenceTracksItemsControl">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Grid Margin="8,6">
+                              <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                              </Grid.RowDefinitions>
+                              <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                              <TextBlock Grid.Row="1" Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </Grid>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </Border>
+                  </StackPanel>
+                </Border>
+              </UniformGrid>
+              <UniformGrid Columns="2">
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="0,0,7,0">
+                  <StackPanel>
+                    <TextBlock Text="5 SoundFont / Instrument" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <UniformGrid Columns="3" Margin="0,0,0,10">
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Load SF2" Padding="10,5" Margin="0,0,4,0" Click="LoadSoundFontClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Apply Patch" Padding="10,5" Margin="4,0" Click="ApplySoundFontPresetToMidiOutputClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Preview Note" Padding="10,5" Margin="4,0,0,0" Click="PreviewSoundFontNoteClicked" />
+                    </UniformGrid>
+                    <TextBlock x:Name="MidiSoundFontStatusText" Text="No SoundFont loaded." Foreground="#B8C7D9" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <TextBlock Text="Preset" Foreground="#B8C7D9" />
+                    <ComboBox x:Name="MidiSoundFontPresetComboBox" Margin="0,3,0,10" SelectionChanged="MidiSoundFontPresetSelectionChanged" />
+                    <Grid>
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <StackPanel Margin="0,0,6,0">
+                        <TextBlock Text="Instruments" Foreground="#B8C7D9" Margin="0,0,0,4" />
+                        <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" Height="145">
+                          <ListBox x:Name="MidiSoundFontInstrumentsListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                              <DataTemplate>
+                                <StackPanel Margin="8,5">
+                                  <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                  <TextBlock Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                              </DataTemplate>
+                            </ListBox.ItemTemplate>
+                          </ListBox>
+                        </Border>
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                        <TextBlock Text="Samples" Foreground="#B8C7D9" Margin="0,0,0,4" />
+                        <Border BorderBrush="#334B5C" BorderThickness="1" CornerRadius="5" Background="#081017" ClipToBounds="True" Height="145">
+                          <ListBox x:Name="MidiSoundFontSamplesListBox" Background="Transparent" BorderThickness="0" Foreground="#F8FAFC" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                              <DataTemplate>
+                                <StackPanel Margin="8,5">
+                                  <TextBlock Text="{Binding DisplayName}" Foreground="#F8FAFC" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                  <TextBlock Text="{Binding Details}" Foreground="#B8C7D9" FontSize="11" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                              </DataTemplate>
+                            </ListBox.ItemTemplate>
+                          </ListBox>
+                        </Border>
+                      </StackPanel>
+                    </Grid>
+                    <Button Style="{StaticResource ConsolePushButton}" Content="Clear SoundFont" Padding="10,5" Margin="0,10,0,0" Click="ClearSoundFontClicked" />
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource DspBubble}" Padding="14" Margin="7,0,0,0">
+                  <StackPanel>
+                    <TextBlock Text="6 Output / Routing" Foreground="#F8FAFC" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <Grid>
+                      <TextBlock Text="Channel" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiChannelSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiChannelSlider" Minimum="1" Maximum="16" Value="1" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight" Margin="0,0,0,10" />
+                    <Grid>
+                      <TextBlock Text="Note" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiNoteSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiNoteSlider" Minimum="0" Maximum="127" Value="60" TickFrequency="12" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <Grid>
+                      <TextBlock Text="Velocity" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiVelocitySlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiVelocitySlider" Minimum="0" Maximum="127" Value="100" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <UniformGrid Columns="2" Margin="0,0,0,12">
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Note On" Padding="10,5" Margin="0,0,4,0" Click="SendMidiNoteOnClicked" />
+                      <Button Style="{StaticResource ConsolePushButton}" Content="Note Off" Padding="10,5" Margin="4,0,0,0" Click="SendMidiNoteOffClicked" />
+                    </UniformGrid>
+                    <Grid>
+                      <TextBlock Text="Controller" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiControllerSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiControllerSlider" Minimum="0" Maximum="127" Value="1" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <Grid>
+                      <TextBlock Text="Value" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiControllerValueSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiControllerValueSlider" Minimum="0" Maximum="127" Value="64" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Control Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiControlChangeClicked" />
+                    <Grid>
+                      <TextBlock Text="Patch" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiPatchSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiPatchSlider" Minimum="0" Maximum="127" Value="0" TickFrequency="16" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Patch Change" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPatchChangeClicked" />
+                    <Grid>
+                      <TextBlock Text="Pitch wheel" Foreground="#B8C7D9" />
+                      <TextBlock Text="{Binding ElementName=MidiPitchWheelSlider, Path=Value, StringFormat={}{0:0}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Slider x:Name="MidiPitchWheelSlider" Minimum="0" Maximum="16383" Value="8192" TickFrequency="1024" TickPlacement="BottomRight" Margin="0,0,0,8" />
+                    <Button Style="{StaticResource ConsolePushButton}" Content="Send Pitch Wheel" Padding="10,5" Margin="0,0,0,12" Click="SendMidiPitchWheelClicked" />
+                    <TextBlock Text="Raw short message" Foreground="#B8C7D9" />
+                    <Grid Margin="0,3,0,8">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBox x:Name="MidiRawMessageTextBox" Text="90 3C 7F" Margin="0,0,8,0" />
+                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Raw" Padding="10,5" Click="SendMidiRawClicked" />
+                    </Grid>
+                    <TextBlock Text="System exclusive" Foreground="#B8C7D9" />
+                    <Grid Margin="0,3,0,0">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBox x:Name="MidiSysexTextBox" Text="F0 F7" Margin="0,0,8,0" />
+                      <Button Grid.Column="1" Style="{StaticResource ConsolePushButton}" Content="Send Sysex" Padding="10,5" Click="SendMidiSysexClicked" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+              </UniformGrid>
+            </StackPanel>
+          </ScrollViewer>
         </Grid>
       </TabItem>
     </TabControl>
