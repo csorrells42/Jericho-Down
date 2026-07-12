@@ -2525,13 +2525,12 @@ public partial class EqualizerWindow : Window
     private void ApplyMidiControlMappings(MidiMessageSnapshot message)
     {
         if (!string.Equals(message.Direction, "In", StringComparison.Ordinal)
-            || _midiControlMappings.Count == 0
-            || (message.Data2.HasValue && message.Data2.Value == 0))
+            || _midiControlMappings.Count == 0)
         {
             return;
         }
 
-        var rule = _midiControlMappings.FirstOrDefault(mapping => mapping.Matches(message));
+        var rule = _midiControlMappings.FirstOrDefault(mapping => mapping.ShouldTrigger(message));
         if (rule is null)
         {
             return;

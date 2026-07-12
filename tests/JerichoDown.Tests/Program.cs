@@ -802,11 +802,19 @@ static void MidiControlMappingsMatchIncomingChannelMessages()
     var rule = MidiControlMappingRule.FromMessage(snapshot, MidiControlMappingActions.ToggleSelectedInputMute);
 
     Assert(rule.Matches(snapshot), "MIDI mapping should match the source channel message");
+    Assert(rule.ShouldTrigger(snapshot), "MIDI mapping should trigger on active control messages");
     Assert(rule.DisplayName.Contains(MidiControlMappingActions.ToggleSelectedInputMute, StringComparison.Ordinal), "MIDI mapping display should include the action");
     Assert(rule.Details.Contains("channel 2", StringComparison.Ordinal), "MIDI mapping details should include the channel");
 
     var differentController = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 65, 127), 124);
     Assert(!rule.Matches(differentController), "MIDI mapping should not match a different controller");
+    var releasedController = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateControlChangeRawMessage(2, 64, 0), 125);
+    Assert(!rule.ShouldTrigger(releasedController), "MIDI mapping should ignore control release messages");
+    var noteOffRule = MidiControlMappingRule.FromMessage(MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateNoteOffRawMessage(1, 60, 0), 126), MidiControlMappingActions.ToggleSelectedInputMute);
+    Assert(!noteOffRule.ShouldTrigger(MidiMessageSnapshot.FromRaw(MidiOutputPort.CreateNoteOffRawMessage(1, 60, 0), 127)), "MIDI mapping should ignore note off messages");
+    var patchSnapshot = MidiMessageSnapshot.FromRaw(MidiOutputPort.CreatePatchChangeRawMessage(3, 12), 128);
+    var patchRule = MidiControlMappingRule.FromMessage(patchSnapshot, MidiControlMappingActions.ToggleProcessedOutput);
+    Assert(patchRule.ShouldTrigger(patchSnapshot), "MIDI mapping should allow patch change messages even though their second data byte is zero");
     Assert(MidiControlMappingActions.DefaultActions.Contains(MidiControlMappingActions.ToggleProcessedOutput), "MIDI mapping actions should include processed output routing");
 }
 

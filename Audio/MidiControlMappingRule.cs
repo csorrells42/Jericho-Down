@@ -23,6 +23,28 @@ public sealed record MidiControlMappingRule(
             && (!Data1.HasValue || message.Data1 == Data1);
     }
 
+    public bool ShouldTrigger(MidiMessageSnapshot message)
+    {
+        if (!Matches(message))
+        {
+            return false;
+        }
+
+        if (string.Equals(message.MessageType, "Note Off", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if ((string.Equals(message.MessageType, "Note On", StringComparison.Ordinal)
+                || string.Equals(message.MessageType, "Control Change", StringComparison.Ordinal))
+            && message.Data2.GetValueOrDefault() == 0)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     public static MidiControlMappingRule FromMessage(MidiMessageSnapshot message, string actionName)
     {
         return new MidiControlMappingRule(
