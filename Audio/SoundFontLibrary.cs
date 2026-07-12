@@ -6,6 +6,9 @@ namespace JerichoDown.Audio;
 
 public static class SoundFontLibrary
 {
+    private const int MaxPreviewDurationSeconds = 5;
+    private const int MaxPreviewBytes = 10 * 1024 * 1024;
+
     public static SoundFontSummary LoadSummary(string filePath)
     {
         var soundFont = new SoundFont(filePath);
@@ -67,29 +70,42 @@ public static class SoundFontLibrary
             throw new InvalidOperationException("SoundFont sample has no playable sample rate.");
         }
 
-        var sampleBytes = CopySamplePcm16(soundFont.SampleData, sampleHeader.Start, sampleHeader.End);
+        var maxPreviewSamples = Math.Max(
+            1,
+            Math.Min((int)Math.Min((long)sampleRate * MaxPreviewDurationSeconds, int.MaxValue), MaxPreviewBytes / 2));
+        var sampleBytes = CopySamplePcm16(soundFont.SampleData, sampleHeader.Start, sampleHeader.End, maxPreviewSamples);
         return new RawSourceWaveStream(
             new MemoryStream(sampleBytes, writable: false),
             new WaveFormat(sampleRate, bits: 16, channels: 1));
     }
 
-    public static byte[] CopySamplePcm16(byte[] sampleData, uint startSample, uint endSample)
+    public static byte[] CopySamplePcm16(byte[] sampleData, uint startSample, uint endSample, int? maxSampleCount = null)
     {
         if (endSample <= startSample)
         {
             throw new InvalidOperationException("SoundFont sample has no playable data.");
         }
 
-        var startByte = checked((long)startSample * 2L);
-        var endByte = checked((long)endSample * 2L);
-        if (startByte < 0 || endByte > sampleData.LongLength || endByte <= startByte)
+        if (maxSampleCount is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxSampleCount), "Preview sample count must be positive.");
+        }
+
+        var requestedSampleCount = (long)endSample - startSample;
+        var sampleCount = maxSampleCount.HasValue
+            ? Math.Min(requestedSampleCount, maxSampleCount.Value)
+            : requestedSampleCount;
+        var startByte = (long)startSample * 2L;
+        var lengthBytes = sampleCount * 2L;
+        var endByte = startByte + lengthBytes;
+        if (lengthBytes <= 0 || endByte > sampleData.LongLength || endByte <= startByte)
         {
             throw new InvalidOperationException("SoundFont sample data is outside the loaded sample buffer.");
         }
 
-        var length = checked((int)(endByte - startByte));
+        var length = (int)lengthBytes;
         var preview = new byte[length];
-        Buffer.BlockCopy(sampleData, checked((int)startByte), preview, 0, length);
+        Buffer.BlockCopy(sampleData, (int)startByte, preview, 0, length);
         return preview;
     }
 }

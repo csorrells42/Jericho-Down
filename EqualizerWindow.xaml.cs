@@ -2344,7 +2344,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (message.Channel is null && message.Data1 is null)
+        if (message.Channel is null)
         {
             SetMidiStatus("Choose a channel message for control mapping.");
             return;

@@ -751,6 +751,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(windowSource.Contains("StopMidiSequencePlayback(\"MIDI sequence stopped by panic.", StringComparison.Ordinal), "MIDI panic should stop active sequence playback before resetting output");
     Assert(windowSource.Contains("StopSoundFontSamplePreview", StringComparison.Ordinal), "SoundFont sample preview should be disposed during MIDI cleanup");
     Assert(windowSource.Contains("Select an incoming MIDI message before mapping.", StringComparison.Ordinal), "MIDI mapping workflow should reject outbound monitor messages");
+    Assert(windowSource.Contains("if (message.Channel is null)", StringComparison.Ordinal), "MIDI mapping workflow should reject channel-less system messages");
     Assert(windowSource.Contains("GetTriggeredMappings", StringComparison.Ordinal), "MIDI mapping workflow should use edge-gated trigger state");
     var expectedSectionOrder = new[]
     {
@@ -905,12 +906,17 @@ static void SoundFontSamplePreviewCopiesPcmSlicesSafely()
     AssertSequenceEqual(new byte[] { 0x01, 0x11, 0x02, 0x12, 0x03, 0x13 }, preview, "SoundFont preview should copy the requested PCM16 sample range");
     preview[0] = 0xFF;
     Assert(source[2] == 0x01, "SoundFont preview should copy data instead of aliasing the source buffer");
+    var cappedPreview = SoundFontLibrary.CopySamplePcm16(source, startSample: 0, endSample: 5, maxSampleCount: 2);
+    AssertSequenceEqual(new byte[] { 0x00, 0x10, 0x01, 0x11 }, cappedPreview, "SoundFont preview should cap long samples to the requested preview length");
     AssertThrows<InvalidOperationException>(
         () => SoundFontLibrary.CopySamplePcm16(source, startSample: 3, endSample: 3),
         "empty SoundFont samples should be rejected");
     AssertThrows<InvalidOperationException>(
         () => SoundFontLibrary.CopySamplePcm16(source, startSample: 4, endSample: 8),
         "out-of-range SoundFont samples should be rejected");
+    AssertThrows<ArgumentOutOfRangeException>(
+        () => SoundFontLibrary.CopySamplePcm16(source, startSample: 0, endSample: 5, maxSampleCount: 0),
+        "invalid SoundFont preview caps should be rejected");
 }
 
 static void VoiceBreathReducerTamesAiryBreathNoise()
