@@ -11,6 +11,7 @@
     <Product>Jericho Down</Product>
     <AssemblyTitle>Jericho Down</AssemblyTitle>
     <Description>Standalone podcast recording, camera preview, microphone DSP, and voice analysis tool.</Description>
+    <ApplicationIcon>Assets\jericho-down-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +34,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <Resource Include="Assets\jericho-down-icon.ico" />
   </ItemGroup>
 
   <Target Name="CreatePortableSettingsFolder" AfterTargets="Publish">
