@@ -24,6 +24,10 @@ var tests = new (string Name, Action Test)[]
     ("File browser watcher refreshes relevant paths", FileBrowserWatcherRefreshesRelevantPaths),
     ("File browser watcher refreshes relevant renames", FileBrowserWatcherRefreshesRelevantRenames),
     ("File browser watcher ignores changed events", FileBrowserWatcherIgnoresChangedEvents),
+    ("App storage uses LocalAppData and rotates diagnostics", AppStorageUsesLocalAppDataAndRotatesDiagnostics),
+    ("App generated files use atomic writes", AppGeneratedFilesUseAtomicWrites),
+    ("Recording deletes are path bounded", RecordingDeletesArePathBounded),
+    ("Karaoke AI tools use structured process arguments", KaraokeAiToolsUseStructuredProcessArguments),
     ("Camera catalog groups physical fallback paths", CameraCatalogGroupsPhysicalFallbackPaths),
     ("Camera catalog keeps software cameras separate", CameraCatalogKeepsSoftwareCamerasSeparate),
     ("Voice processor preserves sample count and finite output", VoiceProcessorProducesFiniteSamples),
@@ -284,6 +288,80 @@ static void FileBrowserWatcherIgnoresChangedEvents()
         {
         }
     }
+}
+
+static void AppStorageUsesLocalAppDataAndRotatesDiagnostics()
+{
+    var storageSource = File.ReadAllText(FindRepoFile("AppStoragePaths.cs"));
+    Assert(storageSource.Contains("Environment.SpecialFolder.LocalApplicationData", StringComparison.Ordinal), "app storage should use the per-user LocalAppData folder");
+    Assert(storageSource.Contains("AppDataFolderName = \"JerichoDown\"", StringComparison.Ordinal), "app storage should be rooted in a JerichoDown folder");
+    Assert(storageSource.Contains("LegacySettingsFolder", StringComparison.Ordinal), "app storage should retain a legacy settings migration path");
+    Assert(storageSource.Contains("CopyLegacyDirectory", StringComparison.Ordinal), "legacy settings should be migrated into LocalAppData without user data loss");
+    Assert(storageSource.Contains("run-state.json", StringComparison.Ordinal) && storageSource.Contains("diagnostics.log", StringComparison.Ordinal), "legacy volatile run state and logs should not be copied as persistent state");
+
+    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    Assert(stateSource.Contains("MaximumDiagnosticsLogBytes", StringComparison.Ordinal), "diagnostics logging should have a size cap");
+    Assert(stateSource.Contains("RetainedDiagnosticsLogCount", StringComparison.Ordinal), "diagnostics logging should retain a bounded number of rotated logs");
+    Assert(stateSource.Contains("RotateDiagnosticsLogIfNeeded", StringComparison.Ordinal), "diagnostics logging should rotate before appending forever");
+    Assert(stateSource.Contains("DiagnosticsLogLock", StringComparison.Ordinal), "diagnostics logging should serialize rotation and append operations");
+}
+
+static void AppGeneratedFilesUseAtomicWrites()
+{
+    var atomicSource = File.ReadAllText(FindRepoFile("AtomicFile.cs"));
+    Assert(atomicSource.Contains("File.Replace", StringComparison.Ordinal), "atomic writes should replace existing files through the filesystem replace primitive");
+    Assert(atomicSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "atomic writes should use unique temp files");
+
+    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    Assert(!stateSource.Contains("            File.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should not be written directly");
+    Assert(!stateSource.Contains("            File.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should not be written directly");
+    Assert(stateSource.Contains("AtomicFile.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should use atomic writes");
+    Assert(stateSource.Contains("AtomicFile.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should use atomic writes");
+
+    var cameraSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "CameraProfileStore.cs")));
+    Assert(cameraSource.Contains("AtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use atomic writes");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowSource.Contains("AtomicFile.WriteAllText(metadataPath", StringComparison.Ordinal), "podcast session metadata should use atomic writes");
+    Assert(windowSource.Contains("AtomicFile.WriteAllText(cachePath", StringComparison.Ordinal), "karaoke lyric cache should use atomic writes");
+    Assert(windowSource.Contains("AtomicFile.WriteAllText(GetUserPresetPath", StringComparison.Ordinal), "user presets should use atomic writes");
+}
+
+static void RecordingDeletesArePathBounded()
+{
+    var pathSafetySource = File.ReadAllText(FindRepoFile("PathSafety.cs"));
+    Assert(pathSafetySource.Contains("IsRegularFileUnderFolder", StringComparison.Ordinal), "path safety should validate files against configured roots");
+    Assert(pathSafetySource.Contains("IsDirectoryUnderFolder", StringComparison.Ordinal), "path safety should validate folders against configured roots");
+    Assert(pathSafetySource.Contains("FileAttributes.ReparsePoint", StringComparison.Ordinal), "path safety should reject reparse points before destructive operations");
+    Assert(pathSafetySource.Contains("ArgumentList.Add", StringComparison.Ordinal), "explorer launch should use structured argument passing");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var audioDelete = ExtractSourceBetween(windowSource, "    private void DeleteSelectedAudioRecording()", "    private void SessionFilesSelectionChanged");
+    Assert(audioDelete.Contains("PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder", StringComparison.Ordinal), "audio recording deletes should be bounded to the recording folder");
+    Assert(audioDelete.Contains("Delete blocked", StringComparison.Ordinal), "audio recording deletes should fail closed when path checks fail");
+
+    var sessionDelete = ExtractSourceBetween(windowSource, "    private void DeleteSelectedSessionRecording()", "    private void StartRecordingClicked");
+    Assert(sessionDelete.Contains("PathSafety.IsDirectoryUnderFolder(selected.SessionFolder, _outputFolder", StringComparison.Ordinal), "session folder deletes should be bounded to the output folder");
+    Assert(sessionDelete.Contains("PathSafety.IsRegularFileUnderFolder(selected.Path, selected.SessionFolder, \".mp4\")", StringComparison.Ordinal), "session deletes should verify the selected video is inside the selected session folder");
+
+    var karaokeDelete = ExtractSourceBetween(windowSource, "    private void DeleteSelectedKaraokeRecording()", "    private void StartKaraokeRecordingPlayback");
+    Assert(karaokeDelete.Contains("PathSafety.IsRegularFileUnderFolder(selectedPath, _karaokeRecordingFolder", StringComparison.Ordinal), "karaoke recording deletes should be bounded to the karaoke recording folder");
+
+    Assert(windowSource.Contains("PathSafety.RevealFileInExplorer", StringComparison.Ordinal), "open-location handlers should use the path-safe explorer helper");
+    Assert(windowSource.Contains("Open location blocked", StringComparison.Ordinal), "open-location handlers should fail closed when selected paths are outside configured roots");
+}
+
+static void KaraokeAiToolsUseStructuredProcessArguments()
+{
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowSource.Contains("CreateKaraokeAiWorkFolder", StringComparison.Ordinal), "AI lyric detection should create isolated work folders per run");
+    Assert(windowSource.Contains("detect_{DateTime.UtcNow", StringComparison.Ordinal) && windowSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "AI lyric detection work folders should be unique");
+    Assert(windowSource.Contains("PathSafety.IsDirectoryUnderFolder(workFolder, KaraokeAiWorkFolder, allowRoot: false)", StringComparison.Ordinal), "AI work-folder cleanup should stay under the app work root");
+    Assert(windowSource.Contains("IReadOnlyList<string> arguments", StringComparison.Ordinal), "external karaoke tools should pass structured argument lists");
+    Assert(windowSource.Contains("process.StartInfo.ArgumentList.Add(argument)", StringComparison.Ordinal), "external karaoke tools should use ProcessStartInfo.ArgumentList");
+    Assert(!windowSource.Contains("QuoteProcessArgument", StringComparison.Ordinal), "manual process argument quoting should not be used");
+    Assert(!windowSource.Contains("Arguments = arguments", StringComparison.Ordinal), "external karaoke tools should not build a single command-line argument string");
+    Assert(windowSource.Contains("Kill(entireProcessTree: true)", StringComparison.Ordinal), "timed-out external karaoke tools should clean up child processes");
 }
 
 static void CameraCatalogGroupsPhysicalFallbackPaths()
@@ -711,6 +789,7 @@ static void DspScreenSeparatesCustomAndNaudioFamilies()
     Assert(!naudioGroup.Contains("StaticResource DspBubble", StringComparison.Ordinal), "individual NAudio sections should be flat grouped panels inside the NAudio DSP bubble");
     Assert(Regex.Matches(naudioGroup, "StaticResource DspGroupedPanel").Count >= 3, "NAudio DSP sections should be nested inside the NAudio DSP bubble");
 }
+
 static void NAudioDmoEffectChainProcessesSafely()
 {
     var source = GenerateSine(48_000, 440, 0.22, 0.12);
@@ -1376,6 +1455,7 @@ static void AsioInputCaptureConvertsInterleavedFloats()
     Assert(byteCount == bytes.Length, "ASIO sample conversion should write one float-sized block per interleaved sample");
     Assert(roundTrip.SequenceEqual(samples), "ASIO capture conversion should preserve interleaved 32-bit float samples exactly");
 }
+
 static void CoreAudioSessionCatalogSkipsAsioOutputs()
 {
     var asioDevice = new AudioOutputDevice(
@@ -1997,6 +2077,7 @@ static void PrimaryCaptureSelectorMatchesAsioEndpoint()
 
     Assert(selected == 2, "ASIO primary capture selection should match endpoint IDs when device numbers are shared");
 }
+
 static void AudioRecordingFilenamesIdentifySelectedSource()
 {
     var method = typeof(EqualizerWindow).GetMethod(

@@ -16,7 +16,10 @@ internal static class AppStateStore
     private static readonly string AppFolder = AppStoragePaths.SettingsFolder;
     private static readonly string SettingsPath = Path.Combine(AppFolder, "app-state.json");
     private static readonly string RunMarkerPath = Path.Combine(AppFolder, "run-state.json");
+    private const long MaximumDiagnosticsLogBytes = 1024L * 1024L;
+    private const int RetainedDiagnosticsLogCount = 5;
     private static readonly string DiagnosticsPath = Path.Combine(AppFolder, "diagnostics.log");
+    private static readonly object DiagnosticsLogLock = new();
     private static readonly string SessionId = Guid.NewGuid().ToString("N");
     private static DateTimeOffset _currentRunStartedAt;
     private static bool _runStarted;
@@ -48,7 +51,7 @@ internal static class AppStateStore
         {
             Directory.CreateDirectory(AppFolder);
             settings.UpdatedAt = DateTimeOffset.Now;
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            AtomicFile.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
         }
         catch (Exception ex)
         {
@@ -120,14 +123,49 @@ internal static class AppStateStore
     {
         try
         {
-            Directory.CreateDirectory(AppFolder);
-            File.AppendAllText(
-                DiagnosticsPath,
-                $"[{DateTimeOffset.Now:O}] {source}{Environment.NewLine}{message}{Environment.NewLine}{Environment.NewLine}");
+            lock (DiagnosticsLogLock)
+            {
+                Directory.CreateDirectory(AppFolder);
+                RotateDiagnosticsLogIfNeeded();
+                File.AppendAllText(
+                    DiagnosticsPath,
+                    $"[{DateTimeOffset.Now:O}] {source}{Environment.NewLine}{message}{Environment.NewLine}{Environment.NewLine}");
+            }
         }
         catch
         {
         }
+    }
+
+    private static void RotateDiagnosticsLogIfNeeded()
+    {
+        var currentLog = new FileInfo(DiagnosticsPath);
+        if (!currentLog.Exists || currentLog.Length <= MaximumDiagnosticsLogBytes)
+        {
+            return;
+        }
+
+        var oldestLog = GetRotatedDiagnosticsPath(RetainedDiagnosticsLogCount);
+        if (File.Exists(oldestLog))
+        {
+            File.Delete(oldestLog);
+        }
+
+        for (var index = RetainedDiagnosticsLogCount - 1; index >= 1; index--)
+        {
+            var source = GetRotatedDiagnosticsPath(index);
+            if (File.Exists(source))
+            {
+                File.Move(source, GetRotatedDiagnosticsPath(index + 1));
+            }
+        }
+
+        File.Move(DiagnosticsPath, GetRotatedDiagnosticsPath(1));
+    }
+
+    private static string GetRotatedDiagnosticsPath(int index)
+    {
+        return $"{DiagnosticsPath}.{index}";
     }
 
     private static AppRunState? ReadRunState()
@@ -154,7 +192,7 @@ internal static class AppStateStore
         try
         {
             Directory.CreateDirectory(AppFolder);
-            File.WriteAllText(RunMarkerPath, JsonSerializer.Serialize(state, JsonOptions));
+            AtomicFile.WriteAllText(RunMarkerPath, JsonSerializer.Serialize(state, JsonOptions));
         }
         catch (Exception ex)
         {

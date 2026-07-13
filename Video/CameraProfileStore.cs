@@ -45,7 +45,7 @@ internal static class CameraProfileStore
     {
         Directory.CreateDirectory(profileFolder);
         var json = JsonSerializer.Serialize(profile, jsonOptions);
-        File.WriteAllText(GetPath(profileFolder, name), json);
+        JerichoDown.AtomicFile.WriteAllText(GetPath(profileFolder, name), json);
     }
 
     public static CameraProfile? Load(
