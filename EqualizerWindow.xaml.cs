@@ -65,6 +65,8 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan KaraokeLyricLineTransitionDuration = TimeSpan.FromMilliseconds(135);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan AudioStreamRestartBaseBackoff = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AudioStreamRestartMaximumBackoff = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AppStatePersistDebounceInterval = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
     private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
@@ -264,6 +266,9 @@ public partial class EqualizerWindow : Window
     private AudioDeviceFormat? _selectedDeviceFormat;
     private bool _isRestartingAudioStream;
     private bool _isCheckingAudioDeviceFormat;
+    private DateTime _nextAudioStreamRestartAttemptUtc = DateTime.MinValue;
+    private int _audioStreamRestartFailureCount;
+    private string? _lastAudioStreamRestartFailureMessage;
     private bool _isClosing;
     private bool _isRestoringAppState = true;
     private bool _safeStartCameraRecoveryActive;
@@ -7541,6 +7546,7 @@ public partial class EqualizerWindow : Window
                 selectedDevice,
                 primaryCaptureChannel?.ProcessorSettings ?? Settings,
                 _selectedInputChannelMode);
+            ResetAudioStreamRestartBackoff();
             StatusText.Text = "Listening";
             _selectedDeviceFormat ??= GetSelectedDeviceFormat();
             RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
@@ -7548,7 +7554,7 @@ public partial class EqualizerWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Mic unavailable: {ex.Message}";
+            RegisterAudioStreamRestartFailure(ex, "Mic unavailable");
             UpdateAudioFormatRouteText();
         }
     }
@@ -7560,6 +7566,7 @@ public partial class EqualizerWindow : Window
             StatusText.Text = message;
             if (message.Contains("recovered", StringComparison.OrdinalIgnoreCase))
             {
+                ResetAudioStreamRestartBackoff();
                 _selectedDeviceFormat = GetSelectedDeviceFormat();
                 RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             }
@@ -7572,6 +7579,12 @@ public partial class EqualizerWindow : Window
     {
         var selectedDevice = _selectedDevice;
         if (selectedDevice is null || _isRestartingAudioStream || _isCheckingAudioDeviceFormat || _isClosing)
+        {
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
+        if (IsAudioStreamRestartBackoffActive())
         {
             UpdateAudioFormatRouteText();
             return;
@@ -7650,6 +7663,53 @@ public partial class EqualizerWindow : Window
             : Task.Run(() => MicrophoneSpectrumService.TryGetInputDeviceFormat(device));
     }
 
+    private bool IsAudioStreamRestartBackoffActive()
+    {
+        return DateTime.UtcNow < _nextAudioStreamRestartAttemptUtc;
+    }
+
+    private void ResetAudioStreamRestartBackoff()
+    {
+        _audioStreamRestartFailureCount = 0;
+        _nextAudioStreamRestartAttemptUtc = DateTime.MinValue;
+        _lastAudioStreamRestartFailureMessage = null;
+    }
+
+    private void RegisterAudioStreamRestartFailure(Exception exception, string statusPrefix = "Audio stream refresh failed")
+    {
+        _audioStreamRestartFailureCount++;
+        var retryDelay = GetAudioStreamRestartBackoff();
+        _nextAudioStreamRestartAttemptUtc = DateTime.UtcNow.Add(retryDelay);
+        StatusText.Text = $"{statusPrefix}: {exception.Message}. Auto-retry in {FormatAudioStreamRestartDelay(retryDelay)}.";
+
+        var failureMessage = exception.ToString();
+        if (!string.Equals(_lastAudioStreamRestartFailureMessage, failureMessage, StringComparison.Ordinal)
+            || _audioStreamRestartFailureCount == 1
+            || _audioStreamRestartFailureCount % 5 == 0)
+        {
+            AppStateStore.LogDiagnostic(
+                "audio-stream-refresh-failed",
+                $"Attempt={_audioStreamRestartFailureCount}; NextRetryUtc={_nextAudioStreamRestartAttemptUtc:O}{Environment.NewLine}{failureMessage}");
+        }
+
+        _lastAudioStreamRestartFailureMessage = failureMessage;
+    }
+
+    private TimeSpan GetAudioStreamRestartBackoff()
+    {
+        var exponent = Math.Min(Math.Max(_audioStreamRestartFailureCount, 1) - 1, 4);
+        var retrySeconds = Math.Min(
+            AudioStreamRestartMaximumBackoff.TotalSeconds,
+            AudioStreamRestartBaseBackoff.TotalSeconds * Math.Pow(2d, exponent));
+        return TimeSpan.FromSeconds(retrySeconds);
+    }
+
+    private static string FormatAudioStreamRestartDelay(TimeSpan delay)
+    {
+        var seconds = Math.Max(1, (int)Math.Ceiling(delay.TotalSeconds));
+        return seconds == 1 ? "1 second" : $"{seconds} seconds";
+    }
+
     private async Task RestartSelectedAudioStreamAsync(string statusMessage, bool preferWaveInFallback = false)
     {
         var primaryCaptureChannel = ResolvePrimaryCaptureChannel();
@@ -7690,6 +7750,7 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
+            ResetAudioStreamRestartBackoff();
             StatusText.Text = statusMessage;
             _selectedDeviceFormat ??= await GetDeviceFormatAsync(selectedDevice);
             RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
@@ -7702,7 +7763,7 @@ public partial class EqualizerWindow : Window
                 return;
             }
 
-            StatusText.Text = $"Audio stream refresh failed: {ex.Message}";
+            RegisterAudioStreamRestartFailure(ex);
             UpdateAudioFormatRouteText();
         }
         finally

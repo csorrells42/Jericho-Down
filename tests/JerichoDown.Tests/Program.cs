@@ -59,6 +59,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
+    ("Audio stream restart failures back off", AudioStreamRestartFailuresBackOff),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
@@ -1267,6 +1268,42 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(windowSource.Contains("AudioDeviceDiagnostics.BuildReport", StringComparison.Ordinal), "diagnostics menu should build a device report");
     Assert(windowSource.Contains("ShowAudioDeviceDiagnosticsDialog", StringComparison.Ordinal), "diagnostics menu should open a popup window");
+}
+
+static void AudioStreamRestartFailuresBackOff()
+{
+    var baseBackoff = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "AudioStreamRestartBaseBackoff");
+    var maximumBackoff = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "AudioStreamRestartMaximumBackoff");
+    Assert(baseBackoff >= TimeSpan.FromSeconds(5), "audio restart retries should not hammer the driver immediately after a failure");
+    Assert(maximumBackoff >= baseBackoff && maximumBackoff <= TimeSpan.FromSeconds(60), "audio restart backoff should be bounded and user-visible");
+
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    Assert(windowSource.Contains("_nextAudioStreamRestartAttemptUtc", StringComparison.Ordinal), "window should track the next allowed automatic audio restart");
+    Assert(windowSource.Contains("_audioStreamRestartFailureCount", StringComparison.Ordinal), "window should track repeated audio restart failures");
+    Assert(windowSource.Contains("Auto-retry in", StringComparison.Ordinal), "failed audio restarts should tell the user when the app will retry");
+    Assert(windowSource.Contains("\"audio-stream-refresh-failed\"", StringComparison.Ordinal), "failed audio restarts should be logged for diagnostics");
+
+    var timerMethod = ExtractSourceBetween(
+        windowSource,
+        "    private async void AudioDeviceFormatTimerTick",
+        "    private AudioDeviceFormat? GetSelectedDeviceFormat");
+    var backoffIndex = timerMethod.IndexOf("IsAudioStreamRestartBackoffActive()", StringComparison.Ordinal);
+    var stoppedRestartIndex = timerMethod.IndexOf("RestartSelectedAudioStreamAsync(\"Audio stream stopped", StringComparison.Ordinal);
+    Assert(backoffIndex >= 0 && stoppedRestartIndex > backoffIndex, "format timer should honor restart backoff before reopening a stopped stream");
+
+    var startMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void StartSelectedDevice()",
+        "    private void SpectrumServiceStreamStatusChanged");
+    Assert(startMethod.Contains("ResetAudioStreamRestartBackoff();", StringComparison.Ordinal), "successful manual mic start should clear restart backoff");
+    Assert(startMethod.Contains("RegisterAudioStreamRestartFailure(ex, \"Mic unavailable\")", StringComparison.Ordinal), "manual mic start failures should enter the same bounded retry path");
+
+    var restartMethod = ExtractSourceBetween(
+        windowSource,
+        "    private async Task RestartSelectedAudioStreamAsync",
+        "    private void SpectrumAvailable");
+    Assert(restartMethod.Contains("ResetAudioStreamRestartBackoff();", StringComparison.Ordinal), "successful automatic restart should clear restart backoff");
+    Assert(restartMethod.Contains("RegisterAudioStreamRestartFailure(ex);", StringComparison.Ordinal), "failed automatic restart should register a bounded retry instead of looping every timer tick");
 }
 
 static void ProcessedMonitorUsesStabilityFirstBuffering()
