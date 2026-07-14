@@ -9151,8 +9151,9 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private bool StartKaraokeMediaFallbackPlayback(string path)
+    private bool StartKaraokeMediaFallbackPlayback(string path, TimeSpan? startPosition = null)
     {
+        var clampedPosition = ClampKaraokePlaybackPosition(startPosition ?? TimeSpan.Zero);
         var player = new MediaPlayer
         {
             Volume = 1d
@@ -9161,10 +9162,15 @@ public partial class EqualizerWindow : Window
         player.MediaEnded += KaraokeMediaFallbackEnded;
         player.MediaFailed += KaraokeMediaFallbackFailed;
         player.Open(new Uri(path, UriKind.Absolute));
+        if (clampedPosition > TimeSpan.Zero)
+        {
+            player.Position = clampedPosition;
+        }
+
         _karaokeTrackMediaPlayer = player;
         _isStoppingKaraokePlayback = false;
         _isKaraokeTrackPlaying = true;
-        StartKaraokePlaybackClock(TimeSpan.Zero);
+        StartKaraokePlaybackClock(clampedPosition);
         _karaokePlaybackPositionTimer.Start();
         player.Play();
         KaraokePlaybackStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)} via Windows media fallback. WAV/MP3 enables key, tempo, and vocal reduction.";
@@ -9206,12 +9212,26 @@ public partial class EqualizerWindow : Window
 
     private void HandleKaraokePlaybackCompleted(Exception? exception, bool wasStoppedByUser)
     {
-        var trackName = string.IsNullOrWhiteSpace(_karaokeTrackPath)
+        var trackPath = _karaokeTrackPath;
+        var trackName = string.IsNullOrWhiteSpace(trackPath)
             ? "track"
-            : System.IO.Path.GetFileName(_karaokeTrackPath);
+            : System.IO.Path.GetFileName(trackPath);
+        var stoppedSampleReaderPlayback = _karaokeTrackOutput is not null && _karaokeTrackMediaPlayer is null;
+        var stoppedPosition = ResolveKaraokePlaybackStartPosition(GetKaraokeMediaPosition().TotalSeconds, _karaokeTrackDuration);
         StopKaraokePlayback(clearTrack: false);
         if (exception is not null)
         {
+            if (!wasStoppedByUser
+                && stoppedSampleReaderPlayback
+                && ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(trackPath, exception)
+                && !string.IsNullOrWhiteSpace(trackPath)
+                && File.Exists(trackPath))
+            {
+                AppStateStore.LogDiagnostic("karaoke-sample-reader-playback-fallback", exception);
+                StartKaraokeMediaFallbackPlayback(trackPath, stoppedPosition);
+                return;
+            }
+
             KaraokePlaybackStatusText.Text = $"Playback failed: {exception.Message}";
         }
         else if (!wasStoppedByUser)

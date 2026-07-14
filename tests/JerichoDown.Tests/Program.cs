@@ -132,6 +132,7 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
     ("Karaoke sample reader failures use media fallback", KaraokeSampleReaderFailuresUseMediaFallback),
+    ("Karaoke playback-stopped codec failures use media fallback", KaraokePlaybackStoppedCodecFailuresUseMediaFallback),
     ("Karaoke play restarts after track end", KaraokePlayRestartsAfterTrackEnd),
     ("Karaoke add tracks loads idle selection", KaraokeAddTracksLoadsIdleSelection),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
@@ -3920,6 +3921,24 @@ static void KaraokeSampleReaderFailuresUseMediaFallback()
     Assert(
         !(bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\protected.m4p", codecError),
         "unsupported protected tracks should not be routed into fallback playback");
+}
+
+static void KaraokePlaybackStoppedCodecFailuresUseMediaFallback()
+{
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var fallbackMethod = ExtractSourceBetween(
+        windowSource,
+        "    private bool StartKaraokeMediaFallbackPlayback(string path, TimeSpan? startPosition = null)",
+        "    private void KaraokeMediaFallbackOpened");
+    var completedMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void HandleKaraokePlaybackCompleted(Exception? exception, bool wasStoppedByUser)",
+        "    private void KaraokePlaybackPositionTimerTick");
+
+    Assert(fallbackMethod.Contains("player.Position = clampedPosition", StringComparison.Ordinal), "media fallback should preserve the attempted playback position");
+    Assert(completedMethod.Contains("stoppedSampleReaderPlayback", StringComparison.Ordinal), "playback stopped should know whether the NAudio sample reader path failed");
+    Assert(completedMethod.Contains("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(trackPath, exception)", StringComparison.Ordinal), "sample-reader playback exceptions should route through codec fallback detection");
+    Assert(completedMethod.Contains("StartKaraokeMediaFallbackPlayback(trackPath, stoppedPosition)", StringComparison.Ordinal), "sample-reader playback exceptions should restart through Windows media fallback");
 }
 
 static void KaraokePlayRestartsAfterTrackEnd()
