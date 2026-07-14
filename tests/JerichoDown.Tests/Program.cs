@@ -36,7 +36,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
-    ("DSP verification report proves homebrew EQ claims", DspVerificationReportProvesHomebrewEqClaims),
+    ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
@@ -541,20 +541,47 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
 }
 
-static void DspVerificationReportProvesHomebrewEqClaims()
+static void DspVerificationReportProvesCustomDspClaims()
 {
     var report = DspVerificationReportGenerator.Run();
+    var failedChecks = report.Checks
+        .Where(check => !check.Passed)
+        .Select(check => $"{check.Effect}: {check.Claim} measured {check.Measurement}, required {check.Requirement} ({check.Details})");
 
-    Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks");
-    Assert(report.Checks.Count >= 12, "DSP verification report should include every customer-facing EQ proof check");
-    foreach (var effect in new[] { "Low-pass filter", "Hum removal", "Notch filter", "Parametric EQ", "Shelf EQ" })
+    Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks: " + string.Join("; ", failedChecks));
+    Assert(report.Checks.Count >= 40, "DSP verification report should include the practical customer-facing custom DSP proof checks");
+    foreach (var effect in new[]
+    {
+        "Graphic EQ",
+        "Input trim",
+        "Makeup gain",
+        "High-pass filter",
+        "Low-pass filter",
+        "Hum removal",
+        "Notch filter",
+        "Parametric EQ",
+        "Shelf EQ",
+        "De-popper",
+        "Noise gate",
+        "Expander",
+        "Noise suppression",
+        "Echo reducer",
+        "Compressor",
+        "Breath reducer",
+        "De-esser",
+        "Presence enhancer",
+        "Saturation",
+        "Limiter",
+        "Full custom DSP chain"
+    })
     {
         Assert(report.Checks.Any(check => check.Effect == effect), $"DSP verification report should include {effect}");
     }
 
     var markdown = DspVerificationReportGenerator.CreateMarkdownReport(report);
     Assert(markdown.Contains("Jericho Down DSP Verification", StringComparison.Ordinal), "verification report should have a clear title");
-    Assert(markdown.Contains("known sine-wave test signals", StringComparison.Ordinal), "verification report should explain the test method");
+    Assert(markdown.Contains("known tone, noise, transient, and composite test signals", StringComparison.Ordinal), "verification report should explain the test method");
+    Assert(markdown.Contains("NAudio-branded effects are intentionally outside", StringComparison.Ordinal), "verification report should explain why NAudio effects are out of scope");
     Assert(markdown.Contains("| Effect | Claim | Measurement | Requirement | Result | Details |", StringComparison.Ordinal), "verification report should include a customer-readable table");
 }
 
@@ -1213,6 +1240,10 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
     Assert(xaml.Contains("Header=\"Equalizer\"", StringComparison.Ordinal), "Help menu should expose the Equalizer guide");
     Assert(xaml.Contains("Click=\"EqualizerHelpMenuClicked\"", StringComparison.Ordinal), "Equalizer guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Mixer\"", StringComparison.Ordinal), "Help menu should expose the Mixer guide");
+    Assert(xaml.Contains("Click=\"MixerHelpMenuClicked\"", StringComparison.Ordinal), "Mixer guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Tabs and Features\"", StringComparison.Ordinal), "Help menu should expose the tab guide");
+    Assert(xaml.Contains("Click=\"TabsHelpMenuClicked\"", StringComparison.Ordinal), "tab guide should be wired to a handler");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
     Assert(xaml.Contains("Header=\"Verification\"", StringComparison.Ordinal), "About menu should expose DSP Verification");
     Assert(xaml.Contains("Click=\"VerificationMenuClicked\"", StringComparison.Ordinal), "DSP Verification should be wired to a handler");
@@ -1222,7 +1253,14 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
     Assert(!xaml.Contains("RecordRawBackupCheckBox", StringComparison.Ordinal), "Podcast recording UI should not expose a raw-backup checkbox unless it is wired to recording behavior");
-    Assert(File.ReadAllText(FindRepoFile("JerichoDown.csproj")).Contains("Docs\\jericho-down-equalizer-guide.pdf", StringComparison.Ordinal), "Equalizer guide PDF should be copied to output");
+    var project = File.ReadAllText(FindRepoFile("JerichoDown.csproj"));
+    Assert(project.Contains("Docs\\jericho-down-equalizer-guide.pdf", StringComparison.Ordinal), "Equalizer guide PDF should be copied to output");
+    Assert(project.Contains("Docs\\jericho-down-mixer-guide.pdf", StringComparison.Ordinal), "Mixer guide PDF should be copied to output");
+    Assert(project.Contains("Docs\\jericho-down-tabs-guide.pdf", StringComparison.Ordinal), "tab guide PDF should be copied to output");
+    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-equalizer-guide.pdf"))), "Equalizer guide PDF should exist");
+    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-mixer-guide.pdf"))), "Mixer guide PDF should exist");
+    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-tabs-guide.pdf"))), "tab guide PDF should exist");
+    Assert(File.ReadAllText(FindRepoFile(".gitattributes")).Contains("*.pdf binary", StringComparison.Ordinal), "PDF guides should be treated as binary files");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
     Assert(File.ReadAllText(FindRepoFile("VerificationView.xaml")).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
 }

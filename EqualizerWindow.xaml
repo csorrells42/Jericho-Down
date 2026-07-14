@@ -919,6 +919,8 @@
         </MenuItem>
         <MenuItem Header="_Help">
           <MenuItem Header="Equalizer" Click="EqualizerHelpMenuClicked" />
+          <MenuItem Header="Mixer" Click="MixerHelpMenuClicked" />
+          <MenuItem Header="Tabs and Features" Click="TabsHelpMenuClicked" />
           <MenuItem Header="About">
             <MenuItem Header="Jericho Down" Click="AboutMenuClicked" />
             <MenuItem Header="Verification" Click="VerificationMenuClicked" />

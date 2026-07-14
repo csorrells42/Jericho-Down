@@ -3243,13 +3243,28 @@ public partial class EqualizerWindow : Window
 
     private void EqualizerHelpMenuClicked(object sender, RoutedEventArgs e)
     {
-        var helpPath = ResolveEqualizerHelpPath();
+        OpenHelpPdf("Equalizer Help", "jericho-down-equalizer-guide.pdf");
+    }
+
+    private void MixerHelpMenuClicked(object sender, RoutedEventArgs e)
+    {
+        OpenHelpPdf("Mixer Help", "jericho-down-mixer-guide.pdf");
+    }
+
+    private void TabsHelpMenuClicked(object sender, RoutedEventArgs e)
+    {
+        OpenHelpPdf("Tabs and Features Help", "jericho-down-tabs-guide.pdf");
+    }
+
+    private void OpenHelpPdf(string title, string fileName)
+    {
+        var helpPath = ResolveHelpPdfPath(fileName);
         if (string.IsNullOrWhiteSpace(helpPath))
         {
             MessageBox.Show(
                 this,
-                "The Equalizer help PDF could not be found. Rebuild Jericho Down and try again.",
-                "Equalizer Help",
+                $"The {title} PDF could not be found. Rebuild Jericho Down and try again.",
+                title,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
@@ -3267,16 +3282,16 @@ public partial class EqualizerWindow : Window
         {
             MessageBox.Show(
                 this,
-                $"Unable to open the Equalizer help PDF.\n\n{ex.Message}",
-                "Equalizer Help",
+                $"Unable to open the {title} PDF.\n\n{ex.Message}",
+                title,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
     }
 
-    private static string? ResolveEqualizerHelpPath()
+    private static string? ResolveHelpPdfPath(string fileName)
     {
-        var outputPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Docs", "jericho-down-equalizer-guide.pdf");
+        var outputPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Docs", fileName);
         if (File.Exists(outputPath))
         {
             return outputPath;
@@ -3288,7 +3303,7 @@ public partial class EqualizerWindow : Window
             "..",
             "..",
             "Docs",
-            "jericho-down-equalizer-guide.pdf"));
+            fileName));
         return File.Exists(projectPath) ? projectPath : null;
     }
 
