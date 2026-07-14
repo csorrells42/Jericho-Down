@@ -918,7 +918,11 @@
           <MenuItem Header="ASIO Settings" Click="AsioSettingsMenuClicked" />
         </MenuItem>
         <MenuItem Header="_Help">
-          <MenuItem Header="About" Click="AboutMenuClicked" />
+          <MenuItem Header="Equalizer" Click="EqualizerHelpMenuClicked" />
+          <MenuItem Header="About">
+            <MenuItem Header="Jericho Down" Click="AboutMenuClicked" />
+            <MenuItem Header="Verification" Click="VerificationMenuClicked" />
+          </MenuItem>
         </MenuItem>
       </Menu>
     </Border>

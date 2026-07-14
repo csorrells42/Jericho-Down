@@ -36,6 +36,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
+    ("DSP verification report proves homebrew EQ claims", DspVerificationReportProvesHomebrewEqClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
@@ -538,6 +539,23 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(highShapedRms < highBypassRms * 0.70d, "high shelf cut should tame high air");
     Assert(midShapedRms > midBypassRms * 0.82d && midShapedRms < midBypassRms * 1.22d, "shelf EQ should keep mid voice mostly stable");
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
+}
+
+static void DspVerificationReportProvesHomebrewEqClaims()
+{
+    var report = DspVerificationReportGenerator.Run();
+
+    Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks");
+    Assert(report.Checks.Count >= 12, "DSP verification report should include every customer-facing EQ proof check");
+    foreach (var effect in new[] { "Low-pass filter", "Hum removal", "Notch filter", "Parametric EQ", "Shelf EQ" })
+    {
+        Assert(report.Checks.Any(check => check.Effect == effect), $"DSP verification report should include {effect}");
+    }
+
+    var markdown = DspVerificationReportGenerator.CreateMarkdownReport(report);
+    Assert(markdown.Contains("Jericho Down DSP Verification", StringComparison.Ordinal), "verification report should have a clear title");
+    Assert(markdown.Contains("known sine-wave test signals", StringComparison.Ordinal), "verification report should explain the test method");
+    Assert(markdown.Contains("| Effect | Claim | Measurement | Requirement | Result | Details |", StringComparison.Ordinal), "verification report should include a customer-readable table");
 }
 
 static void NAudioBiQuadRackExposesEveryEqShape()
@@ -1193,14 +1211,20 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Click=\"AudioDeviceDiagnosticsMenuClicked\"", StringComparison.Ordinal), "Audio Device Diagnostics should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
+    Assert(xaml.Contains("Header=\"Equalizer\"", StringComparison.Ordinal), "Help menu should expose the Equalizer guide");
+    Assert(xaml.Contains("Click=\"EqualizerHelpMenuClicked\"", StringComparison.Ordinal), "Equalizer guide should be wired to a handler");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
+    Assert(xaml.Contains("Header=\"Verification\"", StringComparison.Ordinal), "About menu should expose DSP Verification");
+    Assert(xaml.Contains("Click=\"VerificationMenuClicked\"", StringComparison.Ordinal), "DSP Verification should be wired to a handler");
     Assert(xaml.Contains("SystemColors.MenuHighlightBrushKey", StringComparison.Ordinal), "main menu should override bright system highlight colors");
     Assert(xaml.Contains("PART_Popup", StringComparison.Ordinal), "main menu should use a custom readable dark popup template");
     Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
     Assert(!xaml.Contains("RecordRawBackupCheckBox", StringComparison.Ordinal), "Podcast recording UI should not expose a raw-backup checkbox unless it is wired to recording behavior");
+    Assert(File.ReadAllText(FindRepoFile("JerichoDown.csproj")).Contains("Docs\\jericho-down-equalizer-guide.pdf", StringComparison.Ordinal), "Equalizer guide PDF should be copied to output");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+    Assert(File.ReadAllText(FindRepoFile("VerificationView.xaml")).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()

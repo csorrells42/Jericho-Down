@@ -3222,6 +3222,76 @@ public partial class EqualizerWindow : Window
         dialog.ShowDialog();
     }
 
+    private void VerificationMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Window
+        {
+            Title = "Jericho Down DSP Verification",
+            Owner = this,
+            Width = Math.Min(1240d, Math.Max(900d, ActualWidth * 0.74d)),
+            Height = Math.Min(820d, Math.Max(600d, ActualHeight * 0.78d)),
+            MinWidth = 860d,
+            MinHeight = 560d,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(Color.FromRgb(5, 7, 10)),
+            Content = new VerificationView(),
+            ShowInTaskbar = false
+        };
+
+        dialog.ShowDialog();
+    }
+
+    private void EqualizerHelpMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var helpPath = ResolveEqualizerHelpPath();
+        if (string.IsNullOrWhiteSpace(helpPath))
+        {
+            MessageBox.Show(
+                this,
+                "The Equalizer help PDF could not be found. Rebuild Jericho Down and try again.",
+                "Equalizer Help",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = helpPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"Unable to open the Equalizer help PDF.\n\n{ex.Message}",
+                "Equalizer Help",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private static string? ResolveEqualizerHelpPath()
+    {
+        var outputPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Docs", "jericho-down-equalizer-guide.pdf");
+        if (File.Exists(outputPath))
+        {
+            return outputPath;
+        }
+
+        var projectPath = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "Docs",
+            "jericho-down-equalizer-guide.pdf"));
+        return File.Exists(projectPath) ? projectPath : null;
+    }
+
     private string? ResolvePreferredAsioSettingsEndpointId()
     {
         var selectedEndpoint = ResolvePreferredAsioSettingsEndpointId(

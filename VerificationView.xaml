@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="JerichoDown.VerificationView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="#05070A">
+  <UserControl.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#F8FAFC" />
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Foreground" Value="#F8FAFC" />
+      <Setter Property="Background" Value="#1B2A37" />
+      <Setter Property="BorderBrush" Value="#4F718A" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#223849" />
+                <Setter Property="BorderBrush" Value="#35E8D8" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="#0F2730" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Panel" TargetType="Border">
+      <Setter Property="Background" Value="#A30B1118" />
+      <Setter Property="BorderBrush" Value="#334F5D6B" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Padding" Value="18" />
+    </Style>
+  </UserControl.Resources>
+  <Grid Background="#05070A">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+    <Border Grid.Row="0" Background="#C0111820" Padding="18,14">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="DSP Verification" Foreground="#F8FAFC" FontSize="24" FontWeight="Bold" />
+          <TextBlock Text="Synthetic-signal proof for Jericho Down EQ and DSP behavior." Foreground="#B8C7D9" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="22,0,0,0">
+          <Button Content="Run Again" Click="RunAgainClicked" Margin="0,0,8,0" />
+          <Button Content="Save Report" Click="SaveReportClicked" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Grid Grid.Row="1" Margin="22">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="260" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Panel}" Margin="0,0,16,16">
+        <StackPanel>
+          <TextBlock x:Name="ResultText" Text="RUNNING" Foreground="#35E8D8" FontSize="34" FontWeight="Bold" />
+          <TextBlock x:Name="SummaryText" Text="Preparing checks" Foreground="#D7E4F0" FontSize="14" FontWeight="SemiBold" Margin="0,8,0,0" />
+          <TextBlock x:Name="GeneratedText" Text="" Foreground="#8FB1C7" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" />
+        </StackPanel>
+      </Border>
+      <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Panel}" Margin="0,0,0,16">
+        <StackPanel>
+          <TextBlock Text="How This Proves It" Foreground="#35E8D8" FontSize="18" FontWeight="Bold" Margin="0,0,0,8" />
+          <TextBlock Text="Jericho Down feeds known sine-wave signals into the same voice processor used by the live app, then measures processed RMS against a bypassed version after the filters settle. A passing report means the labeled DSP behavior was measured in this exact build." Foreground="#D7E4F0" FontSize="14" TextWrapping="Wrap" LineHeight="22" />
+        </StackPanel>
+      </Border>
+      <Border Grid.Row="1" Grid.ColumnSpan="2" Background="#05090C" BorderBrush="#26323D" BorderThickness="1" CornerRadius="6" Padding="0">
+        <DataGrid x:Name="VerificationGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserResizeRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" IsReadOnly="True" Background="#05090C" Foreground="#F8FAFC" BorderThickness="0" RowBackground="#0B1118" AlternatingRowBackground="#101923" HorizontalGridLinesBrush="#26323D" VerticalGridLinesBrush="#26323D" ColumnHeaderHeight="34" RowHeaderWidth="0">
+          <DataGrid.Resources>
+            <Style TargetType="DataGridColumnHeader">
+              <Setter Property="Background" Value="#13202A" />
+              <Setter Property="Foreground" Value="#B8C7D9" />
+              <Setter Property="FontWeight" Value="SemiBold" />
+              <Setter Property="BorderBrush" Value="#26323D" />
+              <Setter Property="BorderThickness" Value="0,0,1,1" />
+              <Setter Property="Padding" Value="10,7" />
+            </Style>
+            <Style TargetType="DataGridCell">
+              <Setter Property="Background" Value="Transparent" />
+              <Setter Property="Foreground" Value="#D7E4F0" />
+              <Setter Property="BorderBrush" Value="#1C2A35" />
+              <Setter Property="BorderThickness" Value="0,0,1,0" />
+              <Setter Property="Padding" Value="10,6" />
+            </Style>
+          </DataGrid.Resources>
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Effect" Binding="{Binding Effect}" Width="150" />
+            <DataGridTextColumn Header="Claim" Binding="{Binding Claim}" Width="2.4*" />
+            <DataGridTextColumn Header="Measured" Binding="{Binding Measurement}" Width="190" />
+            <DataGridTextColumn Header="Required" Binding="{Binding Requirement}" Width="190" />
+            <DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="90" />
+            <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="2*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </Border>
+      <TextBlock Grid.Row="2" Grid.ColumnSpan="2" x:Name="StatusText" Text="" Foreground="#8FB1C7" FontSize="12" Margin="2,12,0,0" />
+    </Grid>
+  </Grid>
+</UserControl>
