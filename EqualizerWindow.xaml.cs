@@ -63,6 +63,7 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan KaraokeLyricDisplayLead = TimeSpan.FromMilliseconds(280);
     private static readonly TimeSpan KaraokeShortWordDisplayHold = TimeSpan.FromMilliseconds(155);
     private static readonly TimeSpan KaraokeLyricLineTransitionDuration = TimeSpan.FromMilliseconds(135);
+    private static readonly TimeSpan KaraokeReplayFromEndTolerance = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AudioStreamRestartBaseBackoff = TimeSpan.FromSeconds(5);
@@ -8602,17 +8603,6 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private bool EnsureKaraokeTrackLoadedFromQueue(KaraokeTrackItem track)
-    {
-        if (!string.IsNullOrWhiteSpace(_karaokeTrackPath)
-            && File.Exists(_karaokeTrackPath))
-        {
-            return false;
-        }
-
-        return SetKaraokeTrack(track.Path);
-    }
-
     private static string NormalizeKaraokeFolderPath(string folder)
     {
         return System.IO.Path.GetFullPath(folder)
@@ -8712,8 +8702,14 @@ public partial class EqualizerWindow : Window
                 : $"Queued {added.Count} backing tracks.";
             if (selectFirstAdded)
             {
-                SelectQueuedKaraokeTrackWithoutLoading(added[0]);
-                EnsureKaraokeTrackLoadedFromQueue(added[0]);
+                if (!_isKaraokeTrackPlaying && !_isKaraokeVocalRecording)
+                {
+                    SetKaraokeTrack(added[0].Path, updateQueueSelection: true);
+                }
+                else if (!string.IsNullOrWhiteSpace(_karaokeTrackPath))
+                {
+                    SetSelectedKaraokeQueueTrack(_karaokeTrackPath);
+                }
             }
         }
 
@@ -8936,6 +8932,11 @@ public partial class EqualizerWindow : Window
         {
             if (_karaokeTrackMediaPlayer is not null)
             {
+                if (ShouldRestartKaraokePlaybackFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
+                {
+                    SeekKaraokePlaybackTo(TimeSpan.Zero);
+                }
+
                 _isStoppingKaraokePlayback = false;
                 _karaokeTrackMediaPlayer.Play();
                 _isKaraokeTrackPlaying = true;
@@ -8967,12 +8968,17 @@ public partial class EqualizerWindow : Window
                 _karaokeTrackVocalReductionProvider = vocalReductionProvider;
                 _karaokeTrackOutput = output;
                 _karaokeTrackDuration = reader.TotalTime;
-                SeekKaraokePlaybackTo(TimeSpan.FromSeconds(Math.Clamp(KaraokeSeekSlider.Value, 0d, Math.Max(0d, _karaokeTrackDuration.TotalSeconds))));
+                SeekKaraokePlaybackTo(ResolveKaraokePlaybackStartPosition(KaraokeSeekSlider.Value, _karaokeTrackDuration));
             }
             else
             {
                 ApplyKaraokeTimePitchSettings();
                 _karaokeTrackVocalReductionProvider?.SetEnabled(_karaokeVocalReductionEnabled);
+            }
+
+            if (ShouldRestartKaraokePlaybackFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
+            {
+                SeekKaraokePlaybackTo(TimeSpan.Zero);
             }
 
             _isStoppingKaraokePlayback = false;
@@ -8993,6 +8999,27 @@ public partial class EqualizerWindow : Window
         {
             UpdateKaraokeTransportControls();
         }
+    }
+
+    private static TimeSpan ResolveKaraokePlaybackStartPosition(double requestedSeconds, TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        var clampedSeconds = Math.Clamp(requestedSeconds, 0d, duration.TotalSeconds);
+        var position = TimeSpan.FromSeconds(clampedSeconds);
+        return ShouldRestartKaraokePlaybackFromEnd(position, duration)
+            ? TimeSpan.Zero
+            : position;
+    }
+
+    private static bool ShouldRestartKaraokePlaybackFromEnd(TimeSpan position, TimeSpan duration)
+    {
+        return duration > TimeSpan.Zero
+            && position >= TimeSpan.Zero
+            && duration - position <= KaraokeReplayFromEndTolerance;
     }
 
     private void PauseKaraokePlayback()

@@ -131,6 +131,8 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
+    ("Karaoke play restarts after track end", KaraokePlayRestartsAfterTrackEnd),
+    ("Karaoke add tracks loads idle selection", KaraokeAddTracksLoadsIdleSelection),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
     ("Audio recording exporter supports compressed targets", AudioRecordingExporterSupportsCompressedTargets),
     ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
@@ -3901,6 +3903,31 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
     Assert(!(bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", m4pPath), "protected Apple Music M4P should not use the sample reader path");
     Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
+}
+
+static void KaraokePlayRestartsAfterTrackEnd()
+{
+    var duration = TimeSpan.FromSeconds(180);
+
+    var endedStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", duration.TotalSeconds, duration);
+    var nearEndStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", duration.TotalSeconds - 0.1d, duration);
+    var middleStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", 42d, duration);
+
+    Assert(endedStart == TimeSpan.Zero, "karaoke play should restart instead of resuming from the exact end");
+    Assert(nearEndStart == TimeSpan.Zero, "karaoke play should restart when the transport is effectively at the end");
+    Assert(Math.Abs((middleStart - TimeSpan.FromSeconds(42)).TotalMilliseconds) < 1d, "karaoke play should preserve normal mid-track resume positions");
+}
+
+static void KaraokeAddTracksLoadsIdleSelection()
+{
+    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var addTracksMethod = ExtractSourceBetween(
+        windowSource,
+        "    private int AddKaraokeTracksToQueue(IEnumerable<string> paths, bool selectFirstAdded)",
+        "    private void KaraokeQueueSelectionChanged");
+
+    Assert(addTracksMethod.Contains("SetKaraokeTrack(added[0].Path, updateQueueSelection: true)", StringComparison.Ordinal), "adding a selected karaoke track while idle should load the highlighted playback target");
+    Assert(!addTracksMethod.Contains("SelectQueuedKaraokeTrackWithoutLoading(added[0]);", StringComparison.Ordinal), "adding a karaoke track should not leave a highlighted item unloaded while idle");
 }
 
 static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
