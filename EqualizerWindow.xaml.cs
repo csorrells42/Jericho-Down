@@ -8953,7 +8953,17 @@ public partial class EqualizerWindow : Window
                     return StartKaraokeMediaFallbackPlayback(_karaokeTrackPath);
                 }
 
-                var reader = KaraokeTrackAudioReader.Open(_karaokeTrackPath);
+                KaraokeTrackAudioReader reader;
+                try
+                {
+                    reader = KaraokeTrackAudioReader.Open(_karaokeTrackPath);
+                }
+                catch (Exception ex) when (ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(_karaokeTrackPath, ex))
+                {
+                    AppStateStore.LogDiagnostic("karaoke-sample-reader-fallback", ex);
+                    return StartKaraokeMediaFallbackPlayback(_karaokeTrackPath);
+                }
+
                 var rateProvider = new KaraokeRateSampleProvider(reader, GetKaraokeTempoRatio());
                 var pitchProvider = new SmbPitchShiftingSampleProvider(rateProvider)
                 {
@@ -9020,6 +9030,24 @@ public partial class EqualizerWindow : Window
         return duration > TimeSpan.Zero
             && position >= TimeSpan.Zero
             && duration - position <= KaraokeReplayFromEndTolerance;
+    }
+
+    private static bool ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(string? path, Exception exception)
+    {
+        return !string.IsNullOrWhiteSpace(path)
+            && IsSupportedKaraokeTrackFile(path)
+            && IsKaraokeSampleReaderCodecFailure(exception);
+    }
+
+    private static bool IsKaraokeSampleReaderCodecFailure(Exception exception)
+    {
+        return exception is NotSupportedException
+            || exception is COMException
+            || (exception is InvalidCastException
+                && exception.Message.Contains("COM object", StringComparison.OrdinalIgnoreCase))
+            || exception.Message.Contains("IMFSourceReader", StringComparison.OrdinalIgnoreCase)
+            || exception.Message.Contains("MediaFoundation", StringComparison.OrdinalIgnoreCase)
+            || (exception.InnerException is not null && IsKaraokeSampleReaderCodecFailure(exception.InnerException));
     }
 
     private void PauseKaraokePlayback()

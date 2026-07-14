@@ -131,6 +131,7 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
+    ("Karaoke sample reader failures use media fallback", KaraokeSampleReaderFailuresUseMediaFallback),
     ("Karaoke play restarts after track end", KaraokePlayRestartsAfterTrackEnd),
     ("Karaoke add tracks loads idle selection", KaraokeAddTracksLoadsIdleSelection),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
@@ -3903,6 +3904,22 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
     Assert(!(bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", m4pPath), "protected Apple Music M4P should not use the sample reader path");
     Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
+}
+
+static void KaraokeSampleReaderFailuresUseMediaFallback()
+{
+    var codecError = new InvalidCastException("Unable to cast COM object of type 'System.__ComObject' to interface type 'NAudio.MediaFoundation.IMFSourceReader'.");
+    var outputError = new IOException("The selected output device is unavailable.");
+
+    Assert(
+        (bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\song.m4a", codecError),
+        "MediaFoundation COM reader failures should fall back to Windows media playback");
+    Assert(
+        !(bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\song.m4a", outputError),
+        "plain output-device failures should not be hidden behind media fallback");
+    Assert(
+        !(bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\protected.m4p", codecError),
+        "unsupported protected tracks should not be routed into fallback playback");
 }
 
 static void KaraokePlayRestartsAfterTrackEnd()
