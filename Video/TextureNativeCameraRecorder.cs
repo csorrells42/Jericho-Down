@@ -1,5 +1,6 @@
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx11Bridge;
+using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
 
 namespace JerichoDown.Video;

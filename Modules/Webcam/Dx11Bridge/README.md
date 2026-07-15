@@ -6,7 +6,7 @@ Current entry points:
 - `Direct3D11DeviceManager.cs`
 - `Direct3D11SharedTextureBridge.cs`
 
-Temporary dependencies:
-- `JerichoDown.Video.ITextureNativeDeviceManager` until the DX12 texture-native abstractions move into `Webcam/Dx12`.
+Module dependencies:
+- `Webcam/Dx12` for the texture-native device-manager abstraction.
 
 Keep this module narrow. It should only exist to move compatible texture handles between capture and rendering paths.

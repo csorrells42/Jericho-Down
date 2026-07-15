@@ -9,9 +9,11 @@ Responsibilities:
 - Report the active GPU preview path.
 - Keep expensive preview work off the camera capture thread.
 
+Current entry points:
+- `Direct3D12DeviceManager.cs`
+
 Current legacy files:
 - `Video/Direct3D12PreviewHost.cs`
-- `Video/Direct3D12DeviceManager.cs`
 - `Video/Dx12Camera.cs`
 - `Video/Dx12CameraOptions.cs`
 - Texture-native preview portions of `Video/TextureNativeCameraRecorder.cs`

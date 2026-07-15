@@ -18,7 +18,7 @@ Current entry points:
 - `MediaFoundationGuids.cs`
 - `MediaFoundationInterop.cs`
 
-Temporary dependencies:
-- `JerichoDown.Video.Direct3D12DeviceManager` for accelerated preview upload.
+Module dependencies:
+- `Webcam/Dx12` for accelerated preview upload.
 
 Session file playback belongs in `SessionPlayback`, even when it uses Media Foundation.

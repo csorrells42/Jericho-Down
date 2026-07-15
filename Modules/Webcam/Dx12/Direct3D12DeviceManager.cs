@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using JerichoDown.Modules.Webcam.MediaFoundation;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.Dx12;
 
 internal interface ITextureNativeDeviceManager : IDisposable
 {
