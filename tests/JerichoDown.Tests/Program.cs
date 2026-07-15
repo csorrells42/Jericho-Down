@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Visualization.Dx12;
@@ -880,32 +881,32 @@ static void NAudioDmoEffectChainProcessesSafely()
 
 static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
 {
-    var catalog = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiDeviceCatalog.cs")));
+    var catalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
     Assert(catalog.Contains("MidiIn.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio input devices");
     Assert(catalog.Contains("MidiOut.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio output devices");
 
-    var monitor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiInputMonitor.cs")));
+    var monitor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiInputMonitor.cs")));
     Assert(monitor.Contains("MessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive short messages");
     Assert(monitor.Contains("ErrorReceived", StringComparison.Ordinal), "MIDI input monitor should surface input errors");
     Assert(monitor.Contains("SysexMessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive sysex messages");
     Assert(monitor.Contains("CreateSysexBuffers", StringComparison.Ordinal), "MIDI input monitor should allocate sysex buffers");
 
-    var output = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiOutputPort.cs")));
+    var output = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiOutputPort.cs")));
     foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBankSelect", "SendAllNotesOff", "SendResetAllControllers", "SendBuffer", "Reset" })
     {
         Assert(output.Contains(api, StringComparison.Ordinal), $"MIDI output should expose NAudio {api}");
     }
 
-    var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiFileService.cs")));
+    var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiFileService.cs")));
     Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
     Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
     Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose file-test track summaries");
 
-    var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiSequenceService.cs")));
+    var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiSequenceService.cs")));
     Assert(sequenceService.Contains("GetAsShortMessage", StringComparison.Ordinal), "MIDI sequence service should emit playable short messages");
     Assert(sequenceService.Contains("TempoEvent", StringComparison.Ordinal), "MIDI sequence service should respect MIDI tempo events");
 
-    var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SoundFontLibrary.cs")));
+    var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "SoundFontLibrary.cs")));
     Assert(soundFontLibrary.Contains("new SoundFont", StringComparison.Ordinal), "SoundFont library should read NAudio SoundFont files");
     Assert(soundFontLibrary.Contains("Presets", StringComparison.Ordinal), "SoundFont library should expose presets");
     Assert(soundFontLibrary.Contains("Instruments", StringComparison.Ordinal), "SoundFont library should expose instruments");
@@ -1376,6 +1377,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
+    Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1400,6 +1402,38 @@ static void ModuleReadmesDefineOwnership()
     Assert(asioCallbackProbe.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO callback probe should live in the Audio ASIO module namespace");
     Assert(asioOutputPlayer.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO output player should live in the Audio ASIO module namespace");
     Assert(staThreadDispatcher.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO STA dispatcher should live in the Audio ASIO module namespace");
+
+    var midiReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "README.md")));
+    var midiDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
+    var midiFileService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiFileService.cs")));
+    var midiHexParser = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiHexParser.cs")));
+    var midiInputMonitor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiInputMonitor.cs")));
+    var midiMessageSnapshot = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiMessageSnapshot.cs")));
+    var midiOutputPort = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiOutputPort.cs")));
+    var midiSequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiSequenceService.cs")));
+    var midiControlMappingRule = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiControlMappingRule.cs")));
+    var midiControlMappingTriggerState = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiControlMappingTriggerState.cs")));
+    var soundFontLibrarySource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "SoundFontLibrary.cs")));
+    Assert(midiReadme.Contains("MidiDeviceCatalog.cs", StringComparison.Ordinal), "MIDI docs should name migrated device catalog ownership");
+    Assert(midiReadme.Contains("MidiFileService.cs", StringComparison.Ordinal), "MIDI docs should name migrated file service ownership");
+    Assert(midiReadme.Contains("MidiHexParser.cs", StringComparison.Ordinal), "MIDI docs should name migrated hex parser ownership");
+    Assert(midiReadme.Contains("MidiInputMonitor.cs", StringComparison.Ordinal), "MIDI docs should name migrated input monitor ownership");
+    Assert(midiReadme.Contains("MidiMessageSnapshot.cs", StringComparison.Ordinal), "MIDI docs should name migrated message snapshot ownership");
+    Assert(midiReadme.Contains("MidiOutputPort.cs", StringComparison.Ordinal), "MIDI docs should name migrated output port ownership");
+    Assert(midiReadme.Contains("MidiSequenceService.cs", StringComparison.Ordinal), "MIDI docs should name migrated sequence service ownership");
+    Assert(midiReadme.Contains("MidiControlMappingRule.cs", StringComparison.Ordinal), "MIDI docs should name migrated control mapping rule ownership");
+    Assert(midiReadme.Contains("MidiControlMappingTriggerState.cs", StringComparison.Ordinal), "MIDI docs should name migrated control mapping trigger ownership");
+    Assert(midiReadme.Contains("SoundFontLibrary.cs", StringComparison.Ordinal), "MIDI docs should name migrated SoundFont ownership");
+    Assert(midiDeviceCatalog.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI device catalog should live in the MIDI module namespace");
+    Assert(midiFileService.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI file service should live in the MIDI module namespace");
+    Assert(midiHexParser.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI hex parser should live in the MIDI module namespace");
+    Assert(midiInputMonitor.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI input monitor should live in the MIDI module namespace");
+    Assert(midiMessageSnapshot.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI message snapshot should live in the MIDI module namespace");
+    Assert(midiOutputPort.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI output port should live in the MIDI module namespace");
+    Assert(midiSequenceService.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI sequence service should live in the MIDI module namespace");
+    Assert(midiControlMappingRule.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI control mapping rule should live in the MIDI module namespace");
+    Assert(midiControlMappingTriggerState.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI control mapping trigger state should live in the MIDI module namespace");
+    Assert(soundFontLibrarySource.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "SoundFont library should live in the MIDI module namespace");
 
     var visualizationDx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "README.md")));
     var direct3D12AudioGraphHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));

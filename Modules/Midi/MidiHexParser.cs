@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Midi;
 
 public static class MidiHexParser
 {

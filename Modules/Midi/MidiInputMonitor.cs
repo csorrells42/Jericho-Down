@@ -1,6 +1,6 @@
 using NAudio.Midi;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Midi;
 
 public sealed class MidiInputMonitor : IDisposable
 {

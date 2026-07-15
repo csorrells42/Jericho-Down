@@ -1,4 +1,4 @@
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Midi;
 
 public sealed class MidiControlMappingTriggerState
 {

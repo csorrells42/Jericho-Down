@@ -2,7 +2,7 @@ using NAudio.SoundFont;
 using NAudio.Wave;
 using System.IO;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Midi;
 
 public static class SoundFontLibrary
 {

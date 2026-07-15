@@ -2,7 +2,7 @@ using NAudio.Midi;
 using System.IO;
 using System.Reflection;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Midi;
 
 public static class MidiSequenceService
 {
