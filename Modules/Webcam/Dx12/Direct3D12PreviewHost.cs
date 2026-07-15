@@ -3,6 +3,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
 using JerichoDown.Modules.Webcam;
+using JerichoDown.Video;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.D3DCompiler;
@@ -13,7 +14,7 @@ using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.Dx12;
 
 public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
 {

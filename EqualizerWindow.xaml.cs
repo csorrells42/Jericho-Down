@@ -29,6 +29,7 @@ using JerichoDown.Audio;
 using JerichoDown.Modules.SessionPlayback;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.DirectShow;
+using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 using JerichoDown.Visualization;

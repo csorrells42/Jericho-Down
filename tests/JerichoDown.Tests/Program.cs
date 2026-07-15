@@ -1372,7 +1372,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
-    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager` and `ITextureNativeDeviceManager`", StringComparison.Ordinal), "module index should record migrated DX12 device manager ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, and `Direct3D12PreviewHost`", StringComparison.Ordinal), "module index should record migrated DX12 device manager and preview host ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1421,9 +1421,14 @@ static void ModuleReadmesDefineOwnership()
 
     var dx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "README.md")));
     var direct3D12DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12DeviceManager.cs")));
+    var direct3D12PreviewHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
     Assert(dx12Readme.Contains("Direct3D12DeviceManager.cs", StringComparison.Ordinal), "DX12 docs should name migrated device manager ownership");
+    Assert(dx12Readme.Contains("Direct3D12PreviewHost.cs", StringComparison.Ordinal), "DX12 docs should name migrated preview host ownership");
+    Assert(dx12Readme.Contains("TextureNativeFrameInfo", StringComparison.Ordinal), "DX12 docs should name the temporary texture-native frame dependency");
     Assert(direct3D12DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 device manager should live in the DX12 module namespace");
     Assert(direct3D12DeviceManager.Contains("interface ITextureNativeDeviceManager", StringComparison.Ordinal), "D3D12 device manager should own the texture-native device-manager abstraction");
+    Assert(direct3D12PreviewHost.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 preview host should live in the DX12 module namespace");
+    Assert(direct3D12PreviewHost.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "D3D12 preview host should document its temporary texture-native frame dependency");
 
     var dx11BridgeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md")));
     var direct3D11DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11DeviceManager.cs")));
@@ -1489,7 +1494,7 @@ static void CameraDenoiseStaysOnDx12PreviewPaths()
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     var mediaFoundationPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
     var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
-    var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "Direct3D12PreviewHost.cs")));
+    var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
 
     Assert(windowCode.Contains("DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true", StringComparison.Ordinal), "CPU preview services should know when the DX12 preview renderer owns denoise");
     Assert(windowCode.Contains("denoiseHandledByPreviewRenderer: denoiseEnabled", StringComparison.Ordinal), "Media Foundation denoise startup should avoid capture-thread denoise when DX12 will render the preview");
