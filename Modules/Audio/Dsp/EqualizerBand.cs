@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Dsp;
 
 public sealed class EqualizerBand : INotifyPropertyChanged
 {

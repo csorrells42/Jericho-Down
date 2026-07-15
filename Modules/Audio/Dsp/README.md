@@ -4,15 +4,17 @@ Owns microphone voice processing, EQ, presets, verification, and signal-shaping 
 
 Current entry points:
 - `DspVerificationReportGenerator.cs`
+- `VoiceProcessorSettings.cs`
+- `BuiltInVoicePresetCatalog.cs`
+- `VoiceProcessingTelemetry.cs`
+- `EqualizerBand.cs`
 
 Temporary dependencies:
-- `JerichoDown.Audio` voice processor and EQ types until the rest of the DSP stack moves into this module.
+- `JerichoDown.Audio` voice processor and effect types until the rest of the DSP stack moves into this module.
 
 Current legacy files include:
 - `Audio/VoiceSampleProcessor.cs`
-- `Audio/VoiceProcessorSettings.cs`
 - `Audio/VoiceProcessorSampleProvider.cs`
-- `Audio/BuiltInVoicePresetCatalog.cs`
 - `Audio/NAudioBiQuadFilterRack.cs`
 - `Audio/NAudioPitchShiftProcessor.cs`
 - `Audio/NAudioImpulseConvolutionProcessor.cs`

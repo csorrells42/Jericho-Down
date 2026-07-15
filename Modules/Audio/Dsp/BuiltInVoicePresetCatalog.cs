@@ -1,4 +1,4 @@
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Dsp;
 
 internal sealed class BuiltInVoicePreset
 {

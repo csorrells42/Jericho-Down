@@ -1,4 +1,5 @@
 using NAudio.Wave;
+using JerichoDown.Modules.Audio.Dsp;
 
 namespace JerichoDown.Audio;
 
