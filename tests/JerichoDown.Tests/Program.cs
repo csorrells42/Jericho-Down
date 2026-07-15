@@ -1316,6 +1316,7 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
     var audioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
+    var recordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionRecordingCatalog.cs")));
     var interop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
 
     Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
@@ -1325,9 +1326,17 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     Assert(windowCode.Contains("new MediaFoundationFilePlaybackService()", StringComparison.Ordinal), "session playback should use the Media Foundation file reader service");
     Assert(playbackService.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "file playback service should live in the SessionPlayback module namespace");
     Assert(audioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session sidecar audio resolver should live in the SessionPlayback module namespace");
+    Assert(recordingCatalog.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session recording catalog should live in the SessionPlayback module namespace");
+    Assert(recordingCatalog.Contains("public static class SessionRecordingCatalog", StringComparison.Ordinal), "session recording catalog should be a module entry point");
+    Assert(windowCode.Contains("SessionRecordingCatalog.CreateRecordingTarget(_outputFolder)", StringComparison.Ordinal), "recording set creation should be delegated to the session catalog module");
+    Assert(windowCode.Contains("SessionRecordingCatalog.IsSessionBrowserPath", StringComparison.Ordinal), "session browser watcher should use the module-owned predicate");
     Assert(windowCode.Contains("SessionPlaybackAudioResolver.ResolveAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio through the module");
     Assert(audioResolver.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
     Assert(audioResolver.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
+    Assert(recordingCatalog.Contains("Podcast_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}", StringComparison.Ordinal), "session catalog should own podcast session folder recognition");
+    Assert(recordingCatalog.Contains("video_{number}.mp4", StringComparison.Ordinal), "session catalog should own video file naming");
+    Assert(recordingCatalog.Contains("mix_{number}.wav", StringComparison.Ordinal), "session catalog should own mix sidecar naming");
+    Assert(recordingCatalog.Contains("raw_backup_{number}.wav", StringComparison.Ordinal), "session catalog should own raw backup sidecar naming");
     Assert(windowCode.Contains("new AudioFileReader(audioPath)", StringComparison.Ordinal), "DX12 video playback should keep resolved session audio routed through NAudio");
     Assert(windowCode.Contains("CreateSelectedPlaybackOutput(reader.ToWaveProvider()", StringComparison.Ordinal), "session audio should use the selected Jericho output route");
     Assert(windowCode.Contains("TryStartSessionSidecarAudioPlayback(path", StringComparison.Ordinal), "Windows media fallback should still play sidecar audio for podcast session videos");
@@ -1468,10 +1477,15 @@ static void ModuleReadmesDefineOwnership()
 
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     var sessionPlaybackAudioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
+    var sessionRecordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionRecordingCatalog.cs")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
     Assert(sessionPlaybackReadme.Contains("SessionPlaybackAudioResolver.cs", StringComparison.Ordinal), "session playback docs should name migrated sidecar audio resolver ownership");
+    Assert(sessionPlaybackReadme.Contains("SessionRecordingCatalog.cs", StringComparison.Ordinal), "session playback docs should name migrated recording catalog ownership");
     Assert(sessionPlaybackAudioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session playback audio resolver should live in the SessionPlayback module namespace");
+    Assert(sessionRecordingCatalog.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session recording catalog should live in the SessionPlayback module namespace");
+    Assert(sessionRecordingCatalog.Contains("public sealed record SessionRecordingItem", StringComparison.Ordinal), "session recording catalog should expose browser item records");
+    Assert(sessionRecordingCatalog.Contains("public sealed record SessionRecordingTarget", StringComparison.Ordinal), "session recording catalog should expose recording target records");
 
     var visualizationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "README.md")));
     var spectrumAnalyzer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumAnalyzer.cs")));

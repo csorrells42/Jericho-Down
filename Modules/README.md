@@ -26,7 +26,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam/DirectShow`: DirectShow camera enumeration, controls, and fallback preview capture.
 - `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise, and GPU preview diagnostics.
 - `Webcam/Dx11Bridge`: D3D11 bridge code used when camera frames need to cross into DX12 rendering.
-- `SessionPlayback`: playback of saved podcast sessions, including MP4 video pacing and sidecar WAV audio selection.
+- `SessionPlayback`: playback and cataloging of saved podcast sessions, including MP4 video pacing, sidecar WAV audio selection, session folder naming, and recording set numbering.
 - `Karaoke`: worship track playback, lyrics, queueing, vocal recording, and lyric generation support.
 - `Midi`: MIDI device catalog, file playback planning, monitoring, output, and control mappings.
 - `Help`: About, verification, and tab-specific guide assets.
@@ -38,7 +38,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `AppShell` owns `App`, `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`.
 - `Help` owns `AboutView` and `VerificationView`.
 - `Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`.
-- `SessionPlayback` owns `MediaFoundationFilePlaybackService` and `SessionPlaybackAudioResolver`.
+- `SessionPlayback` owns `MediaFoundationFilePlaybackService`, `SessionPlaybackAudioResolver`, and `SessionRecordingCatalog`.
 - `Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`, plus `VideoFrameColorSettings`.
 - `Webcam` owns `VideoFrameDenoiser` for CPU BGRA temporal denoise used by preview/recording fallbacks.
 - `Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`.

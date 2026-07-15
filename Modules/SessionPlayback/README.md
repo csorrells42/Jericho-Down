@@ -1,16 +1,18 @@
 # SessionPlayback Module
 
-Owns playback of saved podcast session files.
+Owns playback and cataloging of saved podcast session files.
 
 Responsibilities:
 - Play saved `video_###.mp4` files through the DX12 preview host.
 - Pace video defensively when hardware-camera MP4 timestamps are missing, sparse, or implausibly tiny.
 - Resolve session sidecar audio beside the MP4, preferring `mix_###.wav` and falling back to `raw_backup_###.wav`.
+- Own podcast session folder naming, set numbering, file display metadata, and session browser predicates.
 - Keep Windows media fallback available when DX12 playback is unavailable.
 
 Current entry points:
 - `MediaFoundationFilePlaybackService.cs`
 - `SessionPlaybackAudioResolver.cs`
+- `SessionRecordingCatalog.cs`
 - Session playback methods in `Modules/AppShell/EqualizerWindow.xaml.cs` until the UI controller is split out.
 
 Dependencies:
@@ -18,5 +20,6 @@ Dependencies:
 - `JerichoDown.Modules.Webcam.Dx12` for the DX12 playback preview host.
 - `JerichoDown.Modules.Webcam` for camera frame payloads.
 - NAudio routing from AppShell for sidecar WAV output.
+- AppShell still owns UI selection, deletion confirmation, and recording transport commands.
 
 Do not put live camera preview, camera recording, or karaoke track playback here.

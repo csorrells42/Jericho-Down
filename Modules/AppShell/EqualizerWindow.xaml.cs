@@ -86,8 +86,6 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan AudioStreamRestartMaximumBackoff = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AppStatePersistDebounceInterval = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
-    private static readonly Regex PodcastSessionFolderRegex = new(@"^Podcast_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", RegexOptions.Compiled);
-    private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
     private static readonly string KaraokeTrackOpenFileFilter = KaraokePlaybackPolicy.CreateOpenFileFilter();
@@ -4307,7 +4305,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var deleteFolder = IsPodcastSessionFolder(selected.SessionFolder);
+        var deleteFolder = SessionRecordingCatalog.IsPodcastSessionFolder(selected.SessionFolder);
         var targetName = deleteFolder
             ? System.IO.Path.GetFileName(selected.SessionFolder)
             : System.IO.Path.GetFileName(selected.Path);
@@ -4368,7 +4366,7 @@ public partial class EqualizerWindow : Window
 
         StopSessionPlayback();
 
-        var recordingTarget = CreatePodcastRecordingTarget();
+        var recordingTarget = SessionRecordingCatalog.CreateRecordingTarget(_outputFolder);
         _activeRecordingSessionFolder = recordingTarget.SessionFolder;
         _activeRecordingSetNumber = recordingTarget.SetNumber;
         _recordingStartedAt = DateTime.UtcNow;
@@ -4391,10 +4389,10 @@ public partial class EqualizerWindow : Window
                 && StartActivePreviewRecording(videoPath));
 
         RecordingStatusText.Text = textureVideoStarted
-            ? $"Recording GPU video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+            ? $"Recording GPU video set {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
             : videoStarted
-                ? $"Recording video set {FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
-            : $"Recording set {FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
+                ? $"Recording video set {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
+            : $"Recording set {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
         UpdateRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
     }
@@ -6212,103 +6210,19 @@ public partial class EqualizerWindow : Window
 
         if (NextSessionFolderText is not null)
         {
-            var previewFolder = ResolvePodcastSessionFolderForPreview();
+            var previewFolder = SessionRecordingCatalog.ResolvePodcastSessionFolderForPreview(_outputFolder);
             NextSessionFolderText.Text = previewFolder;
             if (NextRecordingFilesText is not null)
             {
                 var setNumber = Directory.Exists(previewFolder)
-                    ? GetNextRecordingSetNumber(previewFolder)
+                    ? SessionRecordingCatalog.GetNextRecordingSetNumber(previewFolder)
                     : 1;
-                NextRecordingFilesText.Text = FormatRecordingFileSet(setNumber);
+                NextRecordingFilesText.Text = SessionRecordingCatalog.FormatRecordingFileSet(setNumber);
             }
         }
 
         ConfigureSessionFolderWatcher();
         RefreshSessionRecordings(_lastSessionRecordingPath);
-    }
-
-    private RecordingTarget CreatePodcastRecordingTarget()
-    {
-        var sessionFolder = ResolvePodcastSessionFolderForRecording();
-        Directory.CreateDirectory(sessionFolder);
-        var setNumber = GetNextRecordingSetNumber(sessionFolder);
-        return new RecordingTarget(sessionFolder, setNumber);
-    }
-
-    private string ResolvePodcastSessionFolderForRecording()
-    {
-        Directory.CreateDirectory(_outputFolder);
-
-        if (IsPodcastSessionFolder(_outputFolder))
-        {
-            return _outputFolder;
-        }
-
-        var now = DateTime.Now;
-        for (var attempt = 0; attempt < 100; attempt++)
-        {
-            var timestamp = attempt == 0
-                ? now
-                : now.AddSeconds(attempt);
-            var sessionFolder = System.IO.Path.Combine(_outputFolder, CreatePodcastSessionFolderName(timestamp));
-            if (Directory.Exists(sessionFolder))
-            {
-                continue;
-            }
-
-            Directory.CreateDirectory(sessionFolder);
-            return sessionFolder;
-        }
-
-        var fallbackFolder = System.IO.Path.Combine(_outputFolder, $"Podcast_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(fallbackFolder);
-        return fallbackFolder;
-    }
-
-    private string ResolvePodcastSessionFolderForPreview()
-    {
-        return IsPodcastSessionFolder(_outputFolder)
-            ? _outputFolder
-            : System.IO.Path.Combine(_outputFolder, CreatePodcastSessionFolderName(DateTime.Now));
-    }
-
-    private static string CreatePodcastSessionFolderName(DateTime timestamp)
-    {
-        return $"Podcast_{timestamp:yyyy-MM-dd_HH-mm-ss}";
-    }
-
-    private static bool IsPodcastSessionFolder(string folder)
-    {
-        return PodcastSessionFolderRegex.IsMatch(System.IO.Path.GetFileName(folder.TrimEnd(
-            System.IO.Path.DirectorySeparatorChar,
-            System.IO.Path.AltDirectorySeparatorChar)));
-    }
-
-    private static int GetNextRecordingSetNumber(string sessionFolder)
-    {
-        if (!Directory.Exists(sessionFolder))
-        {
-            return 1;
-        }
-
-        var highest = Directory.EnumerateFiles(sessionFolder)
-            .Select(file => NumberedRecordingFileRegex.Match(System.IO.Path.GetFileName(file)))
-            .Where(match => match.Success)
-            .Select(match => int.TryParse(match.Groups["number"].Value, out var number) ? number : 0)
-            .DefaultIfEmpty(0)
-            .Max();
-        return highest + 1;
-    }
-
-    private static string FormatRecordingSetNumber(int setNumber)
-    {
-        return setNumber.ToString("000");
-    }
-
-    private static string FormatRecordingFileSet(int setNumber)
-    {
-        var number = FormatRecordingSetNumber(setNumber);
-        return $"video_{number}.mp4{Environment.NewLine}mix_{number}.wav{Environment.NewLine}raw_backup_{number}.wav{Environment.NewLine}session.json";
     }
 
     private string? GetActiveRecordingVideoPath()
@@ -6320,7 +6234,7 @@ public partial class EqualizerWindow : Window
 
         return System.IO.Path.Combine(
             _activeRecordingSessionFolder,
-            $"video_{FormatRecordingSetNumber(_activeRecordingSetNumber)}.mp4");
+            $"video_{SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)}.mp4");
     }
 
     private void WriteRecordingSessionMetadata(
@@ -11450,6 +11364,14 @@ public partial class EqualizerWindow : Window
             .ToList();
     }
 
+    private static string? TryGetJsonString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.String
+                ? property.GetString()
+                : null;
+    }
+
     private static bool TryGetJsonSeconds(JsonElement element, string propertyName, out double seconds)
     {
         seconds = 0d;
@@ -15761,7 +15683,7 @@ public partial class EqualizerWindow : Window
                 _outputFolder,
                 includeSubdirectories: true,
                 NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.CreationTime,
-                IsSessionBrowserPath,
+                SessionRecordingCatalog.IsSessionBrowserPath,
                 QueueSessionRecordingsRefresh);
         }
         catch
@@ -15814,7 +15736,7 @@ public partial class EqualizerWindow : Window
         }
 
         var selectedPath = preferredPath ?? GetSelectedSessionRecordingPath();
-        var items = EnumerateSessionRecordings()
+        var items = SessionRecordingCatalog.EnumerateSessionRecordings(_outputFolder)
             .OrderByDescending(item => item.LastWriteTimeUtc)
             .ToList();
 
@@ -15837,101 +15759,6 @@ public partial class EqualizerWindow : Window
         {
             SessionFilesListBox.ScrollIntoView(selection);
         }
-    }
-
-    private List<SessionRecordingItem> EnumerateSessionRecordings()
-    {
-        if (!Directory.Exists(_outputFolder))
-        {
-            return [];
-        }
-
-        IEnumerable<string> folders = IsPodcastSessionFolder(_outputFolder)
-            ? [_outputFolder]
-            : Directory.EnumerateDirectories(_outputFolder)
-                .Where(IsPodcastSessionFolder);
-        var items = new List<SessionRecordingItem>();
-        foreach (var folder in folders)
-        {
-            foreach (var path in Directory.EnumerateFiles(folder, "video_*.mp4"))
-            {
-                var file = new FileInfo(path);
-                if (!file.Exists)
-                {
-                    continue;
-                }
-
-                var metadata = ReadSessionMetadata(folder, file.Name);
-                var sessionName = System.IO.Path.GetFileName(folder);
-                var displayName = metadata.SetNumber > 0
-                    ? $"{sessionName}  set {FormatRecordingSetNumber(metadata.SetNumber)}"
-                    : $"{sessionName}  {file.Name}";
-                var cameraText = string.IsNullOrWhiteSpace(metadata.Camera) ? "Camera unknown" : metadata.Camera;
-                var durationText = string.IsNullOrWhiteSpace(metadata.Duration) ? "Duration unknown" : metadata.Duration;
-                var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}    {durationText}    {cameraText}";
-                items.Add(new SessionRecordingItem(
-                    file.FullName,
-                    folder,
-                    displayName,
-                    details,
-                    file.LastWriteTimeUtc));
-            }
-        }
-
-        return items;
-    }
-
-    private static SessionMetadataSummary ReadSessionMetadata(string folder, string videoFileName)
-    {
-        var metadataPath = System.IO.Path.Combine(folder, "session.json");
-        if (!File.Exists(metadataPath))
-        {
-            return new SessionMetadataSummary(0, null, null);
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(metadataPath));
-            var root = document.RootElement;
-            var video = TryGetJsonString(root, "video");
-            if (!string.IsNullOrWhiteSpace(video)
-                && !video.Equals(videoFileName, StringComparison.OrdinalIgnoreCase))
-            {
-                return new SessionMetadataSummary(0, null, null);
-            }
-
-            var setNumber = root.TryGetProperty("setNumber", out var setProperty)
-                && setProperty.TryGetInt32(out var number)
-                    ? number
-                    : 0;
-            return new SessionMetadataSummary(
-                setNumber,
-                TryGetJsonString(root, "camera"),
-                TryGetJsonString(root, "duration"));
-        }
-        catch
-        {
-            return new SessionMetadataSummary(0, null, null);
-        }
-    }
-
-    private static string? TryGetJsonString(JsonElement element, string propertyName)
-    {
-        return element.TryGetProperty(propertyName, out var property)
-            && property.ValueKind == JsonValueKind.String
-                ? property.GetString()
-                : null;
-    }
-
-    private static bool IsSessionBrowserPath(string path)
-    {
-        if (Directory.Exists(path))
-        {
-            return IsPodcastSessionFolder(path);
-        }
-
-        return System.IO.Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase)
-            || System.IO.Path.GetFileName(path).Equals("session.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private string? GetSelectedAudioRecordingPath()
@@ -17059,8 +16886,6 @@ public partial class EqualizerWindow : Window
         public override string ToString() => Label;
     }
 
-    private sealed record RecordingTarget(string SessionFolder, int SetNumber);
-
     private sealed record AudioRecordingFileItem(string Path, string Name, string Details, AudioFileAnalysis? Analysis);
 
     private sealed record KaraokeTrackItem(string Path, string Name, string Artist, TimeSpan Duration, string DurationText);
@@ -17086,12 +16911,5 @@ public partial class EqualizerWindow : Window
     private sealed record KaraokeDetectedWord(string Text, TimeSpan Start, TimeSpan End, IReadOnlyList<KaraokeDetectedCharacter>? Characters = null);
 
     private sealed record KaraokeDetectedCharacter(string Text, TimeSpan? Start, TimeSpan? End);
-
-    private sealed record SessionRecordingItem(string Path, string SessionFolder, string Name, string Details, DateTime LastWriteTimeUtc)
-    {
-        public override string ToString() => Name;
-    }
-
-    private sealed record SessionMetadataSummary(int SetNumber, string? Camera, string? Duration);
 
 }
