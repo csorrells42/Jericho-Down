@@ -12,11 +12,11 @@ Responsibilities:
 Current entry points:
 - `MediaFoundationCameraEnumerator.cs`
 - `MediaFoundationCameraModeService.cs`
+- `MediaFoundationCameraDeviceFactory.cs`
 - `MediaFoundationGuids.cs`
 - `MediaFoundationInterop.cs`
 
 Current legacy files:
-- `Video/MediaFoundationCameraDeviceFactory.cs`
 - `Video/MediaFoundationCameraPreviewService.cs`
 - `Video/MediaFoundationVideoRecorder.cs`
 

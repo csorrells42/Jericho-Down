@@ -1,8 +1,7 @@
 using System.Runtime.InteropServices;
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Modules.Webcam.MediaFoundation;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 internal static class MediaFoundationCameraDeviceFactory
 {
