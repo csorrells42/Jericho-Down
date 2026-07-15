@@ -25,6 +25,6 @@ Current entry points:
 - `VideoFrameDenoiser.cs`
 - `VideoFrameColorSettings.cs`
 
-Most camera capture, control, and rendering code still lives in `Video` while migration is in progress. `CameraSourceSelection.cs` still depends on those legacy providers until `MediaFoundation`, `DirectShow`, and `Dx12` migrate.
+Some texture-native camera recording and frame-pump code still lives in `Video` while migration is in progress. `Dx12` documents those temporary dependencies until the remaining GPU camera pieces move.
 
 Do not put session playback here unless it is live camera preview or camera recording.

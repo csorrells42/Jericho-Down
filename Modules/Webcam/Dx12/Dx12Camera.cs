@@ -4,9 +4,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Modules.Webcam.Dx12;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.Dx12;
 
 public sealed class Dx12Camera : IDisposable
 {

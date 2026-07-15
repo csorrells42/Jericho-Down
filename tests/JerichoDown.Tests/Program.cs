@@ -1372,7 +1372,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
-    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, and `Direct3D12PreviewHost`", StringComparison.Ordinal), "module index should record migrated DX12 device manager and preview host ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, and `Dx12CameraOptions`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1422,13 +1422,22 @@ static void ModuleReadmesDefineOwnership()
     var dx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "README.md")));
     var direct3D12DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12DeviceManager.cs")));
     var direct3D12PreviewHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
+    var dx12Camera = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12Camera.cs")));
+    var dx12CameraOptions = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12CameraOptions.cs")));
     Assert(dx12Readme.Contains("Direct3D12DeviceManager.cs", StringComparison.Ordinal), "DX12 docs should name migrated device manager ownership");
     Assert(dx12Readme.Contains("Direct3D12PreviewHost.cs", StringComparison.Ordinal), "DX12 docs should name migrated preview host ownership");
+    Assert(dx12Readme.Contains("Dx12Camera.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera ownership");
+    Assert(dx12Readme.Contains("Dx12CameraOptions.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera options ownership");
     Assert(dx12Readme.Contains("TextureNativeFrameInfo", StringComparison.Ordinal), "DX12 docs should name the temporary texture-native frame dependency");
+    Assert(dx12Readme.Contains("CameraPreviewFramePumps", StringComparison.Ordinal), "DX12 docs should name the temporary frame-pump dependency");
     Assert(direct3D12DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 device manager should live in the DX12 module namespace");
     Assert(direct3D12DeviceManager.Contains("interface ITextureNativeDeviceManager", StringComparison.Ordinal), "D3D12 device manager should own the texture-native device-manager abstraction");
     Assert(direct3D12PreviewHost.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 preview host should live in the DX12 module namespace");
     Assert(direct3D12PreviewHost.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "D3D12 preview host should document its temporary texture-native frame dependency");
+    Assert(dx12Camera.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera should live in the DX12 module namespace");
+    Assert(dx12Camera.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DX12 camera should document its temporary texture-native recorder dependency");
+    Assert(dx12CameraOptions.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera options should live in the DX12 module namespace");
+    Assert(dx12CameraOptions.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DX12 camera options should document their temporary texture-native frame dependency");
 
     var dx11BridgeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md")));
     var direct3D11DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11DeviceManager.cs")));
@@ -1478,7 +1487,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(cameraControlItem.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control item should live in the Webcam module namespace");
     Assert(cameraControlText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control text should live in the Webcam module namespace");
     Assert(cameraSourceSelection.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera source selection should live in the Webcam module namespace");
-    Assert(cameraSourceSelection.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "camera source selection should document its temporary legacy provider dependency");
+    Assert(cameraSourceSelection.Contains("using JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera source selection should document its DX12 camera dependency");
     Assert(cameraProfile.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile should live in the Webcam module namespace");
     Assert(cameraProfileStore.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile store should live in the Webcam module namespace");
     Assert(cameraStatusText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera status text should live in the Webcam module namespace");

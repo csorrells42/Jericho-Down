@@ -1,6 +1,6 @@
 using JerichoDown.Modules.Webcam.DirectShow;
+using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
-using JerichoDown.Video;
 
 namespace JerichoDown.Modules.Webcam;
 

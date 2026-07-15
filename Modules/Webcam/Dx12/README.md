@@ -12,13 +12,14 @@ Responsibilities:
 Current entry points:
 - `Direct3D12DeviceManager.cs`
 - `Direct3D12PreviewHost.cs`
+- `Dx12Camera.cs`
+- `Dx12CameraOptions.cs`
 
 Current legacy files:
-- `Video/Dx12Camera.cs`
-- `Video/Dx12CameraOptions.cs`
 - Texture-native preview portions of `Video/TextureNativeCameraRecorder.cs`
 
 Temporary dependencies:
-- `JerichoDown.Video.TextureNativeFrameInfo` and `TextureNativeFrameLease` until texture-native frame ownership moves into this module.
+- `JerichoDown.Video.TextureNativeFrameInfo`, `TextureNativeFrameLease`, and texture-native recorder/session types until texture-native frame ownership moves into this module.
+- `JerichoDown.Video.CameraPreviewFramePumps` until preview-frame pump ownership moves into this module.
 
 Do not put generic camera enumeration or session playback here.
