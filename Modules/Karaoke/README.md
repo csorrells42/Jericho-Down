@@ -2,7 +2,7 @@
 
 Owns worship track playback, lyric display, queueing, vocal recording, and lyric-generation support.
 
-Current legacy code is mostly in `EqualizerWindow.xaml.cs` and `Audio` helper classes while migration is in progress.
+Current UI orchestration is mostly in `Modules/AppShell/EqualizerWindow.xaml.cs` while karaoke behavior is split into focused helpers.
 
 Responsibilities:
 - Track loading and playback fallback.

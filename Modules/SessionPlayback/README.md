@@ -10,7 +10,7 @@ Responsibilities:
 
 Current entry points:
 - `MediaFoundationFilePlaybackService.cs`
-- Session playback methods in `EqualizerWindow.xaml.cs` until the UI controller is split out.
+- Session playback methods in `Modules/AppShell/EqualizerWindow.xaml.cs` until the UI controller is split out.
 
 Dependencies:
 - `JerichoDown.Modules.Webcam.MediaFoundation` for Media Foundation interop.
