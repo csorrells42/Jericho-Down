@@ -10,6 +10,7 @@ using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Capture;
+using JerichoDown.Modules.Audio.CoreAudio;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Recording;
@@ -1386,6 +1387,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
     Assert(moduleIndex.Contains("Audio/Capture` owns `ProcessLoopbackCapture` and `SignalGeneratorCapture`", StringComparison.Ordinal), "module index should record migrated audio capture source ownership");
+    Assert(moduleIndex.Contains("Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`", StringComparison.Ordinal), "module index should record migrated CoreAudio ownership");
     Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
@@ -1425,6 +1427,16 @@ static void ModuleReadmesDefineOwnership()
     Assert(audioCaptureReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio capture docs should name the live audio service consumer");
     Assert(processLoopbackCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "process-loopback capture should live in the Audio Capture module namespace");
     Assert(signalGeneratorCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "signal-generator capture should live in the Audio Capture module namespace");
+
+    var audioCoreAudioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "README.md")));
+    var coreAudioSessionCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "CoreAudioSessionCatalog.cs")));
+    var audioDeviceNotificationWatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "AudioDeviceNotificationWatcher.cs")));
+    Assert(audioCoreAudioReadme.Contains("CoreAudioSessionCatalog.cs", StringComparison.Ordinal), "CoreAudio docs should name migrated session catalog ownership");
+    Assert(audioCoreAudioReadme.Contains("AudioDeviceNotificationWatcher.cs", StringComparison.Ordinal), "CoreAudio docs should name migrated notification watcher ownership");
+    Assert(audioCoreAudioReadme.Contains("EqualizerWindow.xaml.cs", StringComparison.Ordinal), "CoreAudio docs should name the shell consumer");
+    Assert(audioCoreAudioReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "CoreAudio docs should name the live audio service consumer");
+    Assert(coreAudioSessionCatalog.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "CoreAudio session catalog should live in the Audio CoreAudio module namespace");
+    Assert(audioDeviceNotificationWatcher.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "audio device notification watcher should live in the Audio CoreAudio module namespace");
 
     var audioDevicesReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "README.md")));
     var audioDeviceSources = new[]
@@ -2343,7 +2355,7 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         [asioDevice, Array.Empty<CoreAudioSessionSnapshot>()]);
     Assert(asioText.Contains("ASIO", StringComparison.Ordinal), "output panel should explain ASIO session visibility");
 
-    var catalogSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "CoreAudioSessionCatalog.cs")));
+    var catalogSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "CoreAudioSessionCatalog.cs")));
     Assert(catalogSource.Contains("SimpleAudioVolume", StringComparison.Ordinal), "CoreAudio controls should use Windows SimpleAudioVolume");
     Assert(catalogSource.Contains("simpleVolume.Volume =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session volume");
     Assert(catalogSource.Contains("simpleVolume.Mute =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session mute");

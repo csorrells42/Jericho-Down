@@ -1,7 +1,7 @@
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.CoreAudio;
 
 public sealed class AudioDeviceNotificationWatcher : IDisposable
 {

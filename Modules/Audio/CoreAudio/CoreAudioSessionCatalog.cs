@@ -2,7 +2,7 @@ using System.Diagnostics;
 using JerichoDown.Modules.Audio.Devices;
 using NAudio.CoreAudioApi;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.CoreAudio;
 
 public sealed record CoreAudioSessionSnapshot(
     string DisplayName,
