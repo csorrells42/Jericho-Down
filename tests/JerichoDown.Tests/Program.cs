@@ -82,6 +82,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio stream restart failures back off", AudioStreamRestartFailuresBackOff),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
     ("Mic DSP monitor exposes processed EQ audition", MicDspMonitorExposesProcessedEqAudition),
+    ("Graphic EQ sliders sync live settings and graph", GraphicEqSlidersSyncLiveSettingsAndGraph),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
@@ -2178,6 +2179,28 @@ static void MicDspMonitorExposesProcessedEqAudition()
     Assert(outputRequestedMethod.Contains("MicDspMonitorOutputCheckBox?.IsChecked == true", StringComparison.Ordinal), "processed-output routing should honor the Mic/DSP monitor switch");
     Assert(eqStatusMethod.Contains("MONITOR EQ is off", StringComparison.Ordinal), "EQ changes should warn when the processed monitor is off");
     Assert(eqStatusMethod.Contains("Direct/interface monitoring bypasses Jericho DSP", StringComparison.Ordinal), "EQ status should explain that direct monitoring bypasses DSP");
+}
+
+static void GraphicEqSlidersSyncLiveSettingsAndGraph()
+{
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var sliderHandlerAndHelpers = ExtractSourceBetween(
+        windowCode,
+        "    private void EqSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
+        "    private void ProcessingSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)");
+    var bandChangeHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)",
+        "    private void SyncEqualizerSettings()");
+
+    Assert(sliderHandlerAndHelpers.Contains("ApplyEqualizerSliderValue(slider);", StringComparison.Ordinal), "manual EQ slider movement should write the slider value back to the band model");
+    Assert(sliderHandlerAndHelpers.Contains("band.GainDb = slider.Value;", StringComparison.Ordinal), "manual EQ slider movement should not depend only on WPF binding timing");
+    Assert(sliderHandlerAndHelpers.Contains("QueueEqualizerSliderSync();", StringComparison.Ordinal), "manual EQ slider movement should queue a live EQ sync");
+    Assert(sliderHandlerAndHelpers.Contains("Dispatcher.BeginInvoke", StringComparison.Ordinal), "manual EQ sync should run after WPF data binding settles");
+    Assert(sliderHandlerAndHelpers.Contains("SyncEqualizerSettings();", StringComparison.Ordinal), "manual EQ slider movement should push graphic EQ gains into active processor settings");
+    Assert(sliderHandlerAndHelpers.Contains("ReportEqualizerAuditionStatus();", StringComparison.Ordinal), "manual EQ slider movement should keep the audition status honest");
+    Assert(sliderHandlerAndHelpers.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "manual EQ slider movement should request an immediate graph refresh");
+    Assert(bandChangeHandler.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "band enable or gain changes should also refresh the graph");
 }
 
 static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()

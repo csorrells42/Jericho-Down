@@ -247,6 +247,8 @@ public partial class EqualizerWindow : Window
     private int _silentFrameCount;
     private readonly Dictionary<Slider, double> _processingSliderDefaults = [];
     private readonly Dictionary<Slider, string> _processingSliderBaseToolTips = [];
+    private int _queuedEqualizerSliderSyncVersion;
+    private bool _isSnappingEqualizerSlider;
     private bool _isSnappingProcessingSlider;
     private bool _isSnappingMixerUnitySlider;
     private bool _isSnappingVideoDenoiseSlider;
@@ -590,6 +592,7 @@ public partial class EqualizerWindow : Window
         {
             SyncEqualizerSettings();
             ReportEqualizerAuditionStatus();
+            _spectrumService.RequestImmediateSpectrumAnalysis();
         }
     }
 
@@ -6638,12 +6641,50 @@ public partial class EqualizerWindow : Window
 
     private void EqSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (sender is not Slider slider || Math.Abs(e.NewValue) > 0.35d || Math.Abs(e.NewValue) < 0.001d)
+        if (sender is not Slider slider)
         {
             return;
         }
 
-        slider.Value = 0d;
+        if (!_isSnappingEqualizerSlider && Math.Abs(e.NewValue) <= 0.35d && Math.Abs(e.NewValue) >= 0.001d)
+        {
+            _isSnappingEqualizerSlider = true;
+            try
+            {
+                slider.Value = 0d;
+            }
+            finally
+            {
+                _isSnappingEqualizerSlider = false;
+            }
+        }
+
+        ApplyEqualizerSliderValue(slider);
+        QueueEqualizerSliderSync();
+    }
+
+    private static void ApplyEqualizerSliderValue(Slider slider)
+    {
+        if (slider.DataContext is EqualizerBand band)
+        {
+            band.GainDb = slider.Value;
+        }
+    }
+
+    private void QueueEqualizerSliderSync()
+    {
+        var syncVersion = ++_queuedEqualizerSliderSyncVersion;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_isClosing || syncVersion != _queuedEqualizerSliderSyncVersion)
+            {
+                return;
+            }
+
+            SyncEqualizerSettings();
+            ReportEqualizerAuditionStatus();
+            _spectrumService.RequestImmediateSpectrumAnalysis();
+        }), DispatcherPriority.DataBind);
     }
 
     private void ProcessingSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
