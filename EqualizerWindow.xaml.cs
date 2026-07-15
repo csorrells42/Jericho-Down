@@ -25,6 +25,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using JerichoDown.Modules.AppShell;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.CoreAudio;
 using JerichoDown.Modules.Audio.Devices;

@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 public sealed class FileBrowserWatcher : IDisposable
 {

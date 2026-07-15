@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using JerichoDown;
+using JerichoDown.Modules.AppShell;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Capture;
 using JerichoDown.Modules.Audio.CoreAudio;
@@ -320,14 +321,14 @@ static void FileBrowserWatcherIgnoresChangedEvents()
 
 static void AppStorageUsesLocalAppDataAndRotatesDiagnostics()
 {
-    var storageSource = File.ReadAllText(FindRepoFile("AppStoragePaths.cs"));
+    var storageSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStoragePaths.cs")));
     Assert(storageSource.Contains("Environment.SpecialFolder.LocalApplicationData", StringComparison.Ordinal), "app storage should use the per-user LocalAppData folder");
     Assert(storageSource.Contains("AppDataFolderName = \"JerichoDown\"", StringComparison.Ordinal), "app storage should be rooted in a JerichoDown folder");
     Assert(storageSource.Contains("LegacySettingsFolder", StringComparison.Ordinal), "app storage should retain a legacy settings migration path");
     Assert(storageSource.Contains("CopyLegacyDirectory", StringComparison.Ordinal), "legacy settings should be migrated into LocalAppData without user data loss");
     Assert(storageSource.Contains("run-state.json", StringComparison.Ordinal) && storageSource.Contains("diagnostics.log", StringComparison.Ordinal), "legacy volatile run state and logs should not be copied as persistent state");
 
-    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    var stateSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
     Assert(stateSource.Contains("MaximumDiagnosticsLogBytes", StringComparison.Ordinal), "diagnostics logging should have a size cap");
     Assert(stateSource.Contains("RetainedDiagnosticsLogCount", StringComparison.Ordinal), "diagnostics logging should retain a bounded number of rotated logs");
     Assert(stateSource.Contains("RotateDiagnosticsLogIfNeeded", StringComparison.Ordinal), "diagnostics logging should rotate before appending forever");
@@ -336,11 +337,11 @@ static void AppStorageUsesLocalAppDataAndRotatesDiagnostics()
 
 static void AppGeneratedFilesUseAtomicWrites()
 {
-    var atomicSource = File.ReadAllText(FindRepoFile("AtomicFile.cs"));
+    var atomicSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AtomicFile.cs")));
     Assert(atomicSource.Contains("File.Replace", StringComparison.Ordinal), "atomic writes should replace existing files through the filesystem replace primitive");
     Assert(atomicSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "atomic writes should use unique temp files");
 
-    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    var stateSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
     Assert(!stateSource.Contains("            File.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should not be written directly");
     Assert(!stateSource.Contains("            File.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should not be written directly");
     Assert(stateSource.Contains("AtomicFile.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should use atomic writes");
@@ -357,7 +358,7 @@ static void AppGeneratedFilesUseAtomicWrites()
 
 static void RecordingDeletesArePathBounded()
 {
-    var pathSafetySource = File.ReadAllText(FindRepoFile("PathSafety.cs"));
+    var pathSafetySource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "PathSafety.cs")));
     Assert(pathSafetySource.Contains("IsRegularFileUnderFolder", StringComparison.Ordinal), "path safety should validate files against configured roots");
     Assert(pathSafetySource.Contains("IsDirectoryUnderFolder", StringComparison.Ordinal), "path safety should validate folders against configured roots");
     Assert(pathSafetySource.Contains("FileAttributes.ReparsePoint", StringComparison.Ordinal), "path safety should reject reparse points before destructive operations");
@@ -1374,6 +1375,7 @@ static void ModuleReadmesDefineOwnership()
 
     Assert(rootReadme.Contains("[Modules](Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map");
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
+    Assert(moduleIndex.Contains("AppShell` owns `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell infrastructure ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
@@ -1404,6 +1406,23 @@ static void ModuleReadmesDefineOwnership()
         var text = File.ReadAllText(FindRepoFile(readmePath));
         Assert(text.Contains("Owns", StringComparison.OrdinalIgnoreCase) || text.Contains("Responsibilities", StringComparison.OrdinalIgnoreCase), $"{readmePath} should define ownership or responsibilities");
     }
+
+    var appShellReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "README.md")));
+    var appStateStore = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
+    var appStoragePaths = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStoragePaths.cs")));
+    var atomicFile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AtomicFile.cs")));
+    var pathSafety = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "PathSafety.cs")));
+    var fileBrowserWatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "FileBrowserWatcher.cs")));
+    Assert(appShellReadme.Contains("AppStateStore.cs", StringComparison.Ordinal), "AppShell docs should name migrated app state ownership");
+    Assert(appShellReadme.Contains("AppStoragePaths.cs", StringComparison.Ordinal), "AppShell docs should name migrated storage-path ownership");
+    Assert(appShellReadme.Contains("AtomicFile.cs", StringComparison.Ordinal), "AppShell docs should name migrated atomic-write ownership");
+    Assert(appShellReadme.Contains("PathSafety.cs", StringComparison.Ordinal), "AppShell docs should name migrated path safety ownership");
+    Assert(appShellReadme.Contains("FileBrowserWatcher.cs", StringComparison.Ordinal), "AppShell docs should name migrated browser watcher ownership");
+    Assert(appStateStore.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "app state store should live in the AppShell module namespace");
+    Assert(appStoragePaths.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "app storage paths should live in the AppShell module namespace");
+    Assert(atomicFile.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "atomic file helper should live in the AppShell module namespace");
+    Assert(pathSafety.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "path safety helper should live in the AppShell module namespace");
+    Assert(fileBrowserWatcher.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "file browser watcher should live in the AppShell module namespace");
 
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
@@ -1757,7 +1776,7 @@ static void MidiTabIsOptInAndOrderedAfterKaraoke()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var stateCode = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    var stateCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
 
     Assert(xaml.Contains("x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\"", StringComparison.Ordinal), "MIDI tab should be hidden by default");
     Assert(xaml.Contains("x:Name=\"RefreshMidiDevicesMenuItem\"", StringComparison.Ordinal), "MIDI refresh menu item should be addressable");
@@ -2743,10 +2762,10 @@ static void BlankMixerChannelsRestoreWithoutFallbackInput()
 static void AppSettingsRoundtripPreservesMicMixerRoutingState()
 {
     var appAssembly = typeof(EqualizerWindow).Assembly;
-    var settingsType = appAssembly.GetType("JerichoDown.AppSettingsState");
-    var micStateType = appAssembly.GetType("JerichoDown.MicChannelSettingsState");
-    var midiMappingStateType = appAssembly.GetType("JerichoDown.MidiControlMappingSettingsState");
-    var bandStateType = appAssembly.GetType("JerichoDown.EqualizerBandSettingsState");
+    var settingsType = appAssembly.GetType("JerichoDown.Modules.AppShell.AppSettingsState");
+    var micStateType = appAssembly.GetType("JerichoDown.Modules.AppShell.MicChannelSettingsState");
+    var midiMappingStateType = appAssembly.GetType("JerichoDown.Modules.AppShell.MidiControlMappingSettingsState");
+    var bandStateType = appAssembly.GetType("JerichoDown.Modules.AppShell.EqualizerBandSettingsState");
     Assert(settingsType is not null, "app settings state type should be available");
     Assert(micStateType is not null, "mic channel settings state type should be available");
     Assert(midiMappingStateType is not null, "MIDI control mapping settings state type should be available");
@@ -4518,7 +4537,7 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     service.ConfigureWasapiOutput(custom);
     Assert(service.WasapiOutputModeStatus.Contains("Custom exclusive", StringComparison.Ordinal), "audio service should surface the active WASAPI profile");
 
-    var settingsType = typeof(EqualizerWindow).Assembly.GetType("JerichoDown.AppSettingsState")
+    var settingsType = typeof(EqualizerWindow).Assembly.GetType("JerichoDown.Modules.AppShell.AppSettingsState")
         ?? throw new InvalidOperationException("app settings state type should be available");
     var settings = Activator.CreateInstance(settingsType)!;
     SetProperty(settings, "WasapiOutputProfile", WasapiOutputLatencyProfile.Custom.ToString());

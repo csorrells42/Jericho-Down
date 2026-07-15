@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using JerichoDown.Modules.AppShell;
 
 namespace JerichoDown.Modules.Webcam;
 
@@ -45,7 +46,7 @@ internal static class CameraProfileStore
     {
         Directory.CreateDirectory(profileFolder);
         var json = JsonSerializer.Serialize(profile, jsonOptions);
-        JerichoDown.AtomicFile.WriteAllText(GetPath(profileFolder, name), json);
+        AtomicFile.WriteAllText(GetPath(profileFolder, name), json);
     }
 
     public static CameraProfile? Load(

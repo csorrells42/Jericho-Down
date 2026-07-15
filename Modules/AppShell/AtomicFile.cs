@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 internal static class AtomicFile
 {

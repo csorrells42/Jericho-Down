@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 internal static class PathSafety
 {

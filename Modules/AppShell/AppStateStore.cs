@@ -3,7 +3,7 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 internal static class AppStateStore
 {
