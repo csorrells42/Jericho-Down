@@ -8,6 +8,12 @@ Responsibilities:
 - Feedback danger visualization.
 - Graph clear/history behavior when audio callbacks stop.
 
+Current entry points:
+- `SpectrumAnalyzer.cs`
+- `SpectrumFrame.cs`
+- `SpectrumFrameRouter.cs`
+- `FeedbackDangerDetector.cs`
+
 Important submodules:
 - `Dx12`: DX12 audio graph host and retained graph history.
 

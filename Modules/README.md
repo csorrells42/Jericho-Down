@@ -45,6 +45,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
 - `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
 - `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
+- `Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`.
 - `Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`.
 - `Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`.
 - `Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.

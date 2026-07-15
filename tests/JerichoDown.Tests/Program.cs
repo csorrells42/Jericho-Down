@@ -13,6 +13,7 @@ using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
+using JerichoDown.Modules.Visualization;
 using JerichoDown.Modules.Visualization.Dx12;
 using NAudio.Midi;
 using NAudio.Wave;
@@ -1376,6 +1377,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
+    Assert(moduleIndex.Contains("Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`", StringComparison.Ordinal), "module index should record migrated visualization data ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
@@ -1390,6 +1392,20 @@ static void ModuleReadmesDefineOwnership()
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+
+    var visualizationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "README.md")));
+    var spectrumAnalyzer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumAnalyzer.cs")));
+    var spectrumFrame = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumFrame.cs")));
+    var spectrumFrameRouter = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumFrameRouter.cs")));
+    var feedbackDangerDetector = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "FeedbackDangerDetector.cs")));
+    Assert(visualizationReadme.Contains("SpectrumAnalyzer.cs", StringComparison.Ordinal), "Visualization docs should name migrated analyzer ownership");
+    Assert(visualizationReadme.Contains("SpectrumFrame.cs", StringComparison.Ordinal), "Visualization docs should name migrated frame ownership");
+    Assert(visualizationReadme.Contains("SpectrumFrameRouter.cs", StringComparison.Ordinal), "Visualization docs should name migrated frame router ownership");
+    Assert(visualizationReadme.Contains("FeedbackDangerDetector.cs", StringComparison.Ordinal), "Visualization docs should name migrated feedback detector ownership");
+    Assert(spectrumAnalyzer.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum analyzer should live in the Visualization module namespace");
+    Assert(spectrumFrame.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame should live in the Visualization module namespace");
+    Assert(spectrumFrameRouter.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame router should live in the Visualization module namespace");
+    Assert(feedbackDangerDetector.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "feedback detector should live in the Visualization module namespace");
 
     var audioAsioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "README.md")));
     var asioInputCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));

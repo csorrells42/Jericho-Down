@@ -1,4 +1,4 @@
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Visualization;
 
 public sealed class SpectrumAnalyzer
 {

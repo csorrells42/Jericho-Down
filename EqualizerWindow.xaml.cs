@@ -34,6 +34,7 @@ using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.DirectShow;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
+using JerichoDown.Modules.Visualization;
 using JerichoDown.Modules.Visualization.Dx12;
 using ShapePath = System.Windows.Shapes.Path;
 

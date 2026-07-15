@@ -1,6 +1,6 @@
 using JerichoDown.Modules.Audio.Dsp;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Visualization;
 
 public sealed class MicrophoneSpectrumLine
 {
