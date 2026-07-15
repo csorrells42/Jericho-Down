@@ -2,8 +2,9 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.MediaFoundation;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.DirectShow;
 
 public sealed class DirectShowCameraPreviewService : IDisposable
 {

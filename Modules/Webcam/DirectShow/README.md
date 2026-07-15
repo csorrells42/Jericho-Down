@@ -11,8 +11,9 @@ Responsibilities:
 Current entry points:
 - `DirectShowCameraEnumerator.cs`
 - `DirectShowCameraControlService.cs`
+- `DirectShowCameraPreviewService.cs`
 
-Current legacy files:
-- `Video/DirectShowCameraPreviewService.cs`
+Temporary dependencies:
+- `JerichoDown.Video.VideoFrameDenoiser` until denoise helpers migrate.
 
 Do not add Media Foundation source reader code or DX12 shader code here.

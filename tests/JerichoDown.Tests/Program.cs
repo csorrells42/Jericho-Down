@@ -1370,7 +1370,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
-    Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator` and `DirectShowCameraControlService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control ownership");
+    Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1409,10 +1409,14 @@ static void ModuleReadmesDefineOwnership()
     var directShowReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "README.md")));
     var directShowCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraEnumerator.cs")));
     var directShowCameraControlService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraControlService.cs")));
+    var directShowCameraPreviewService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
     Assert(directShowReadme.Contains("DirectShowCameraEnumerator.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera enumerator ownership");
     Assert(directShowReadme.Contains("DirectShowCameraControlService.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera control ownership");
+    Assert(directShowReadme.Contains("DirectShowCameraPreviewService.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera preview ownership");
     Assert(directShowCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera enumerator should live in the DirectShow module namespace");
     Assert(directShowCameraControlService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera control service should live in the DirectShow module namespace");
+    Assert(directShowCameraPreviewService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera preview service should live in the DirectShow module namespace");
+    Assert(directShowCameraPreviewService.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DirectShow camera preview service should document its temporary legacy denoise dependency");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));
@@ -1464,7 +1468,7 @@ static void CameraDenoiseStaysOnDx12PreviewPaths()
 {
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     var mediaFoundationPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
-    var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "DirectShowCameraPreviewService.cs")));
+    var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
     var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "Direct3D12PreviewHost.cs")));
 
     Assert(windowCode.Contains("DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true", StringComparison.Ordinal), "CPU preview services should know when the DX12 preview renderer owns denoise");
