@@ -19,7 +19,7 @@ It is offered freely for Christian churches, worship teams, and ministries.
 
 ## Module Map
 
-Jericho Down is being organized into self-documenting modules under [Modules](Modules/README.md). Each module README records what the module owns, what it must not own, and the key files that still need to migrate from the original `Audio`, `Video`, and `Visualization` folders.
+Jericho Down source code lives under `src/`. Reusable production pieces are organized as self-documenting modules under [src/Modules](src/Modules/README.md). Each module README records what the module owns, what it must not own, and which code is meant to be reusable outside this app.
 
 Migration rule: move one small ownership boundary at a time, preserve behavior, build, run the test harness, then commit before the next pass.
 
