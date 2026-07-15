@@ -1,14 +1,14 @@
 namespace JerichoDown.Modules.Webcam;
 
-internal static class VideoRecordingPolicy
+public static class VideoRecordingPolicy
 {
-    internal static bool ShouldUseTextureNativeRecording()
+    public static bool ShouldUseTextureNativeRecording()
     {
         var value = Environment.GetEnvironmentVariable("PODCAST_WORKBENCH_TEXTURE_NATIVE_RECORDING");
         return IsEnabledEnvironmentValue(value);
     }
 
-    internal static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled)
+    public static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled)
     {
         return denoiseEnabled;
     }

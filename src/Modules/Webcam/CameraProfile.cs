@@ -1,6 +1,6 @@
 namespace JerichoDown.Modules.Webcam;
 
-internal sealed class CameraProfile
+public sealed class CameraProfile
 {
     public int Version { get; set; } = 1;
 

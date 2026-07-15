@@ -348,7 +348,10 @@ static void AppGeneratedFilesUseAtomicWrites()
     Assert(stateSource.Contains("AtomicFile.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should use atomic writes");
 
     var cameraSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfileStore.cs")));
-    Assert(cameraSource.Contains("AtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use atomic writes");
+    var webcamAtomicSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamAtomicFile.cs")));
+    Assert(cameraSource.Contains("WebcamAtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use webcam-module atomic writes");
+    Assert(!cameraSource.Contains("using JerichoDown;", StringComparison.Ordinal), "camera profiles should not depend on app-specific helpers");
+    Assert(webcamAtomicSource.Contains("File.Replace", StringComparison.Ordinal), "webcam-module atomic writes should replace existing files through the filesystem replace primitive");
 
     var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("AtomicFile.WriteAllText(metadataPath", StringComparison.Ordinal), "podcast session metadata should use atomic writes");
@@ -1394,10 +1397,11 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
+    Assert(moduleIndex.Contains("Webcam` owns `WebcamModule`", StringComparison.Ordinal), "module index should record the reusable webcam facade ownership");
     Assert(moduleIndex.Contains("DirectX12Viewport", StringComparison.Ordinal), "module index should list reusable DX12 viewport ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`", StringComparison.Ordinal), "module index should record migrated webcam vocabulary helpers");
-    Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, `CameraProfileStore`, and `WebcamAtomicFile`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
@@ -1787,6 +1791,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(direct3D11SharedTextureBridge.Contains("namespace JerichoDown.Modules.Webcam.Dx11Bridge;", StringComparison.Ordinal), "D3D11 shared texture bridge should live in the DX11 bridge module namespace");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
+    var webcamModule = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamModule.cs")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));
     var cameraDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDeviceCatalog.cs")));
     var cameraVideoMode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraVideoMode.cs")));
@@ -1797,10 +1802,12 @@ static void ModuleReadmesDefineOwnership()
     var cameraSourceSelection = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraSourceSelection.cs")));
     var cameraProfile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfile.cs")));
     var cameraProfileStore = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfileStore.cs")));
+    var webcamAtomicFile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamAtomicFile.cs")));
     var cameraStatusText = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraStatusText.cs")));
     var textureNativePreviewPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "TextureNativePreviewPolicy.cs")));
     var videoRecordingPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoRecordingPolicy.cs")));
     var videoFrameDenoiser = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameDenoiser.cs")));
+    Assert(webcamReadme.Contains("WebcamModule.cs", StringComparison.Ordinal), "webcam docs should name the standalone facade ownership");
     Assert(webcamReadme.Contains("CameraDevice.cs", StringComparison.Ordinal), "webcam docs should name migrated camera device ownership");
     Assert(webcamReadme.Contains("CameraDeviceCatalog.cs", StringComparison.Ordinal), "webcam docs should name migrated camera catalog ownership");
     Assert(webcamReadme.Contains("CameraVideoMode.cs", StringComparison.Ordinal), "webcam docs should name migrated camera mode ownership");
@@ -1816,6 +1823,13 @@ static void ModuleReadmesDefineOwnership()
     Assert(webcamReadme.Contains("VideoRecordingPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated recording policy ownership");
     Assert(webcamReadme.Contains("VideoFrameDenoiser.cs", StringComparison.Ordinal), "webcam docs should name migrated frame denoiser ownership");
     Assert(webcamReadme.Contains("VideoFrameColorSettings.cs", StringComparison.Ordinal), "webcam docs should name migrated color settings ownership");
+    Assert(webcamReadme.Contains("WebcamAtomicFile.cs", StringComparison.Ordinal), "webcam docs should name module-local atomic file ownership");
+    Assert(webcamModule.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "webcam facade should live in the Webcam module namespace");
+    Assert(webcamModule.Contains("public static class WebcamModule", StringComparison.Ordinal), "webcam facade should be a public reusable module entry point");
+    Assert(webcamModule.Contains("CameraSourceSelection.GetCameras", StringComparison.Ordinal), "webcam facade should expose merged camera discovery");
+    Assert(webcamModule.Contains("CreateMediaFoundationPreviewService", StringComparison.Ordinal), "webcam facade should expose Media Foundation preview creation");
+    Assert(webcamModule.Contains("CreateDirectShowPreviewService", StringComparison.Ordinal), "webcam facade should expose DirectShow preview creation");
+    Assert(webcamModule.Contains("CreateDirect3D12PreviewHost", StringComparison.Ordinal), "webcam facade should expose the DX12 preview host");
     Assert(cameraDevice.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device should live in the Webcam module namespace");
     Assert(cameraDeviceCatalog.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device catalog should live in the Webcam module namespace");
     Assert(cameraVideoMode.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera video mode should live in the Webcam module namespace");
@@ -1823,13 +1837,23 @@ static void ModuleReadmesDefineOwnership()
     Assert(cameraControlKind.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control kind should live in the Webcam module namespace");
     Assert(cameraControlItem.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control item should live in the Webcam module namespace");
     Assert(cameraControlText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control text should live in the Webcam module namespace");
+    Assert(cameraControlText.Contains("public static class CameraControlText", StringComparison.Ordinal), "camera control text should be public reusable webcam UI text");
     Assert(cameraSourceSelection.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera source selection should live in the Webcam module namespace");
+    Assert(cameraSourceSelection.Contains("public static class CameraSourceSelection", StringComparison.Ordinal), "camera source selection should be a public reusable camera-routing helper");
     Assert(cameraSourceSelection.Contains("using JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera source selection should document its DX12 camera dependency");
     Assert(cameraProfile.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile should live in the Webcam module namespace");
+    Assert(cameraProfile.Contains("public sealed class CameraProfile", StringComparison.Ordinal), "camera profile should be public so another app can persist camera profiles");
     Assert(cameraProfileStore.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile store should live in the Webcam module namespace");
+    Assert(cameraProfileStore.Contains("public static class CameraProfileStore", StringComparison.Ordinal), "camera profile store should be public reusable profile persistence");
+    Assert(cameraProfileStore.Contains("WebcamAtomicFile.WriteAllText", StringComparison.Ordinal), "camera profile store should use the module-local atomic writer");
+    Assert(!cameraProfileStore.Contains("using JerichoDown;", StringComparison.Ordinal), "camera profile store should not depend on the Jericho Down app namespace");
+    Assert(webcamAtomicFile.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "webcam atomic file writer should live in the Webcam module namespace");
     Assert(cameraStatusText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera status text should live in the Webcam module namespace");
+    Assert(cameraStatusText.Contains("public static class CameraStatusText", StringComparison.Ordinal), "camera status text should be public reusable webcam UI text");
     Assert(textureNativePreviewPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "texture-native preview policy should live in the Webcam module namespace");
+    Assert(textureNativePreviewPolicy.Contains("public static class TextureNativePreviewPolicy", StringComparison.Ordinal), "texture-native preview policy should be public reusable preview policy");
     Assert(videoRecordingPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video recording policy should live in the Webcam module namespace");
+    Assert(videoRecordingPolicy.Contains("public static class VideoRecordingPolicy", StringComparison.Ordinal), "video recording policy should be public reusable recording policy");
     Assert(videoFrameDenoiser.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame denoiser should live in the Webcam module namespace");
     var videoFrameColorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameColorSettings.cs")));
     Assert(videoFrameColorSettings.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame color settings should live in the Webcam module namespace");

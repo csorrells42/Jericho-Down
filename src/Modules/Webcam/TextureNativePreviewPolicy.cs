@@ -1,10 +1,10 @@
 namespace JerichoDown.Modules.Webcam;
 
-internal static class TextureNativePreviewPolicy
+public static class TextureNativePreviewPolicy
 {
     private static readonly Dictionary<string, string> PreviewFailures = new(StringComparer.OrdinalIgnoreCase);
 
-    internal static bool ShouldUseSharedTextureCameraStream(bool safeStartDx12Disabled)
+    public static bool ShouldUseSharedTextureCameraStream(bool safeStartDx12Disabled)
     {
         if (safeStartDx12Disabled)
         {
@@ -16,7 +16,7 @@ internal static class TextureNativePreviewPolicy
             || string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static bool TryGetPreviewFailure(
+    public static bool TryGetPreviewFailure(
         CameraDevice camera,
         CameraVideoMode mode,
         out string reason)
@@ -24,7 +24,7 @@ internal static class TextureNativePreviewPolicy
         return PreviewFailures.TryGetValue(CreatePreviewFailureKey(camera, mode), out reason!);
     }
 
-    internal static void RememberPreviewFailure(
+    public static void RememberPreviewFailure(
         CameraDevice camera,
         CameraVideoMode mode,
         string reason)
@@ -34,7 +34,7 @@ internal static class TextureNativePreviewPolicy
             : reason;
     }
 
-    internal static void ForgetPreviewFailure(CameraDevice camera, CameraVideoMode mode)
+    public static void ForgetPreviewFailure(CameraDevice camera, CameraVideoMode mode)
     {
         PreviewFailures.Remove(CreatePreviewFailureKey(camera, mode));
     }

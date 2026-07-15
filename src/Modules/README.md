@@ -24,7 +24,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Audio/Dsp`: voice processing, EQ, presets, DSP verification, and signal analysis.
 - `Audio/Live`: live microphone service orchestration, capture startup, processed monitoring, recording routing, spectrum publishing, and live output coordination.
 - `Mixer`: live program bus, channel strips, pan, gain, mute, solo, delay, and metering.
-- `Webcam`: camera device vocabulary, controls, preview policy, recording policy, frame/color helpers, and camera status text.
+- `Webcam`: reusable webcam facade, camera device vocabulary, controls, preview policy, recording policy, profiles, frame/color helpers, and camera status text.
 - `Webcam/MediaFoundation`: Media Foundation camera enumeration, modes, source readers, and video writing.
 - `Webcam/DirectShow`: DirectShow camera enumeration, controls, and fallback preview capture.
 - `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise, and GPU preview diagnostics.
@@ -49,10 +49,11 @@ Keep visual content separate from the reusable viewport: camera frames and audio
 - `Help` owns `AboutView` and `VerificationView`.
 - `Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`.
 - `SessionPlayback` owns `MediaFoundationFilePlaybackService`, `SessionPlaybackAudioResolver`, and `SessionRecordingCatalog`.
+- `Webcam` owns `WebcamModule`, the reusable facade another WPF program should start from.
 - `Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`, plus `VideoFrameColorSettings`.
 - `Webcam` owns `VideoFrameDenoiser` for CPU BGRA temporal denoise used by preview/recording fallbacks.
 - `Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`.
-- `Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`.
+- `Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, `CameraProfileStore`, and `WebcamAtomicFile`.
 - `Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`; they route camera choices and recording policy into the provider modules.
 - `Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`.
 - `Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`.

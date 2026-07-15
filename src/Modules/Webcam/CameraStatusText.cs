@@ -2,53 +2,53 @@ using JerichoDown.Modules.Webcam.Dx12;
 
 namespace JerichoDown.Modules.Webcam;
 
-internal static class CameraStatusText
+public static class CameraStatusText
 {
-    internal static string FormatCameraMode(CameraVideoMode mode)
+    public static string FormatCameraMode(CameraVideoMode mode)
     {
         return mode.IsAuto ? "Auto mode" : mode.Label;
     }
 
-    internal static CameraVideoMode ResolveSelectedCameraMode(object? selectedItem)
+    public static CameraVideoMode ResolveSelectedCameraMode(object? selectedItem)
     {
         return selectedItem as CameraVideoMode ?? CameraVideoMode.Auto;
     }
 
-    internal static string FormatCameraDisabledStatus(CameraVideoMode mode)
+    public static string FormatCameraDisabledStatus(CameraVideoMode mode)
     {
         return $"Camera disabled - selected mode: {FormatCameraMode(mode)}";
     }
 
-    internal static string FormatCameraStatus(string state, CameraDevice camera, CameraVideoMode mode)
+    public static string FormatCameraStatus(string state, CameraDevice camera, CameraVideoMode mode)
     {
         return $"{state}: {camera.Name} at {FormatCameraMode(mode)}";
     }
 
-    internal static string FormatDirectShowCameraSelectedStatus(CameraDevice camera)
+    public static string FormatDirectShowCameraSelectedStatus(CameraDevice camera)
     {
         return $"DirectShow camera selected: {camera.Name} - Auto uses the camera's current output";
     }
 
-    internal static string FormatLoadingCameraModesStatus(CameraDevice camera, CameraVideoMode selectedMode)
+    public static string FormatLoadingCameraModesStatus(CameraDevice camera, CameraVideoMode selectedMode)
     {
         return $"Loading modes: {camera.Name} - selected mode: {FormatCameraMode(selectedMode)}";
     }
 
-    internal static string FormatCameraIdleStatus(bool cameraAvailable, CameraVideoMode mode)
+    public static string FormatCameraIdleStatus(bool cameraAvailable, CameraVideoMode mode)
     {
         return cameraAvailable
             ? FormatCameraDisabledStatus(mode)
             : "No camera source found";
     }
 
-    internal static string FormatCameraPreviewStatus(string status, CameraDevice? camera, CameraVideoMode mode)
+    public static string FormatCameraPreviewStatus(string status, CameraDevice? camera, CameraVideoMode mode)
     {
         return camera is null
             ? status
             : $"{FormatCameraStatus("Preview", camera, mode)} - {status}";
     }
 
-    internal static string FormatVideoDenoiseStatus(bool isTextureNative, bool denoiseEnabled)
+    public static string FormatVideoDenoiseStatus(bool isTextureNative, bool denoiseEnabled)
     {
         if (isTextureNative)
         {
@@ -62,7 +62,7 @@ internal static class CameraStatusText
             : "Video grain reduction is off on the preview and CPU recording path.";
     }
 
-    internal static string FormatVideoColorPolishStatus(bool isTextureNative, VideoFrameColorSettings settings)
+    public static string FormatVideoColorPolishStatus(bool isTextureNative, VideoFrameColorSettings settings)
     {
         if (isTextureNative)
         {
@@ -76,7 +76,7 @@ internal static class CameraStatusText
             : "Color polish is neutral on the preview and recording path.";
     }
 
-    internal static object BuildVideoProcessingMetadata(
+    public static object BuildVideoProcessingMetadata(
         TextureNativeRecordingResult? textureResult,
         Dx12Camera? activeCamera,
         bool denoiseEnabled,
@@ -135,7 +135,7 @@ internal static class CameraStatusText
         };
     }
 
-    internal static object CreateVideoColorMetadata(VideoFrameColorSettings settings)
+    public static object CreateVideoColorMetadata(VideoFrameColorSettings settings)
     {
         return new
         {
@@ -147,7 +147,7 @@ internal static class CameraStatusText
         };
     }
 
-    internal static string FormatTextureNativeCameraStatus(
+    public static string FormatTextureNativeCameraStatus(
         Dx12Camera? activeCamera,
         string state,
         CameraDevice camera,
@@ -166,7 +166,7 @@ internal static class CameraStatusText
         return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
     }
 
-    internal static string FormatCpuCameraPreviewPipeline(bool isDirectShow, bool isDirect3D12Ready)
+    public static string FormatCpuCameraPreviewPipeline(bool isDirectShow, bool isDirect3D12Ready)
     {
         var capturePath = isDirectShow ? "DirectShow RGB32 CPU frames" : "Media Foundation NV12/BGRA CPU frames";
         var presentationPath = isDirect3D12Ready
@@ -175,7 +175,7 @@ internal static class CameraStatusText
         return $"{capturePath} -> {presentationPath}";
     }
 
-    internal static string FormatPreviewRecordParity(
+    public static string FormatPreviewRecordParity(
         bool isCameraEnabled,
         Dx12Camera? activeCamera,
         bool denoiseEnabled,
@@ -218,7 +218,7 @@ internal static class CameraStatusText
             : "preview matches recording";
     }
 
-    internal static string FormatActiveVideoPipeline(
+    public static string FormatActiveVideoPipeline(
         bool isCameraAvailable,
         bool isCameraEnabled,
         Dx12Camera? activeCamera,

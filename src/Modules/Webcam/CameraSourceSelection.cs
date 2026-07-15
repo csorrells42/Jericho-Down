@@ -4,27 +4,27 @@ using JerichoDown.Modules.Webcam.MediaFoundation;
 
 namespace JerichoDown.Modules.Webcam;
 
-internal static class CameraSourceSelection
+public static class CameraSourceSelection
 {
-    internal static IReadOnlyList<CameraDevice> GetCameras()
+    public static IReadOnlyList<CameraDevice> GetCameras()
     {
         return CameraDeviceCatalog.MergeDevices(
             MediaFoundationCameraEnumerator.GetVideoInputDevices(),
             DirectShowCameraEnumerator.GetVideoInputDevices());
     }
 
-    internal static CameraDevice? GetDefaultCamera()
+    public static CameraDevice? GetDefaultCamera()
     {
         return GetCameras().FirstOrDefault();
     }
 
-    internal static CameraDevice RequireDefaultCamera()
+    public static CameraDevice RequireDefaultCamera()
     {
         return GetDefaultCamera()
             ?? throw new InvalidOperationException("No camera devices were found.");
     }
 
-    internal static CameraDevice? FindCamera(
+    public static CameraDevice? FindCamera(
         IReadOnlyList<CameraDevice> cameras,
         string? devicePath,
         string? source,
@@ -52,18 +52,18 @@ internal static class CameraSourceSelection
                     camera.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
     }
 
-    internal static bool IsDirectShowCamera(CameraDevice camera)
+    public static bool IsDirectShowCamera(CameraDevice camera)
     {
         return string.Equals(camera.Source, "DirectShow", StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static bool IsSelectedDirectShowCamera(bool isDirectShowPreviewActive, CameraDevice? selectedCamera)
+    public static bool IsSelectedDirectShowCamera(bool isDirectShowPreviewActive, CameraDevice? selectedCamera)
     {
         return isDirectShowPreviewActive
             || selectedCamera is not null && IsDirectShowCamera(selectedCamera);
     }
 
-    internal static bool IsCpuCameraPreviewOwningCamera(
+    public static bool IsCpuCameraPreviewOwningCamera(
         bool isCameraEnabled,
         Dx12Camera? activeCamera,
         bool mediaFoundationPreviewIsRunning,
@@ -75,7 +75,7 @@ internal static class CameraSourceSelection
             && (mediaFoundationPreviewIsRunning || directShowPreviewIsRunning || isDirectShowPreviewActive);
     }
 
-    internal static bool TryGetDirectShowFallbackCamera(CameraDevice primaryCamera, out CameraDevice? directShowFallback)
+    public static bool TryGetDirectShowFallbackCamera(CameraDevice primaryCamera, out CameraDevice? directShowFallback)
     {
         directShowFallback = primaryCamera.FallbackDevice;
         return directShowFallback is not null && IsDirectShowCamera(directShowFallback);
