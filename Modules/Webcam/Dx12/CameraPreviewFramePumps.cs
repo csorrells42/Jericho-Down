@@ -1,7 +1,8 @@
 using System.Windows.Threading;
 using JerichoDown.Modules.Webcam;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.Dx12;
 
 internal sealed class TextureNativeStatusPump
 {
