@@ -1302,7 +1302,7 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
-    var interop = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationInterop.cs")));
+    var interop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
 
     Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
     Assert(xaml.Contains("x:Name=\"SessionPlaybackElement\"", StringComparison.Ordinal), "legacy MediaElement fallback should remain available");
@@ -1368,6 +1368,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`", StringComparison.Ordinal), "module index should record migrated webcam vocabulary helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
+    Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1378,6 +1379,14 @@ static void ModuleReadmesDefineOwnership()
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+
+    var mediaFoundationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md")));
+    var mediaFoundationGuids = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationGuids.cs")));
+    var mediaFoundationInterop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
+    Assert(mediaFoundationReadme.Contains("MediaFoundationGuids.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated GUID ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationInterop.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated interop ownership");
+    Assert(mediaFoundationGuids.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation GUIDs should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationInterop.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation interop should live in the MediaFoundation module namespace");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));

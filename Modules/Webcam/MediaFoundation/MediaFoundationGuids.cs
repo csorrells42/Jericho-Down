@@ -1,4 +1,4 @@
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 internal static class MediaFoundationGuids
 {

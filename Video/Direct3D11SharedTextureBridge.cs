@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 using Vortice.DXGI;
 
 namespace JerichoDown.Video;

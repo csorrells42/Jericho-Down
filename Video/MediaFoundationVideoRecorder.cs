@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.IO;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 
 namespace JerichoDown.Video;
 

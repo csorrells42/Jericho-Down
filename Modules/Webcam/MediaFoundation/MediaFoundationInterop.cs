@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 internal static class MediaFoundationInterop
 {

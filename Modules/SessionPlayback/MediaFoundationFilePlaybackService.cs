@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using JerichoDown.Modules.Webcam;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 
 namespace JerichoDown.Modules.SessionPlayback;

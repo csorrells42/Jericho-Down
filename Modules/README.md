@@ -39,4 +39,5 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`.
 - `Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`.
 - `Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`; they still call legacy `Video` providers until the provider modules migrate.
+- `Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`.
 - Most legacy code still lives in the original `Audio`, `Video`, and `Visualization` folders until it is moved in verified passes.
