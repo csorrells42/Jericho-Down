@@ -589,12 +589,45 @@ public partial class EqualizerWindow : Window
         if (e.PropertyName is nameof(EqualizerBand.GainDb) or nameof(EqualizerBand.IsEnabled))
         {
             SyncEqualizerSettings();
+            ReportEqualizerAuditionStatus();
         }
     }
 
     private void SyncEqualizerSettings()
     {
         SyncEqualizerSettings(_activeMicChannel);
+    }
+
+    private void ReportEqualizerAuditionStatus()
+    {
+        if (StatusText is null || _activeMicChannel is null)
+        {
+            return;
+        }
+
+        var activeBandCount = _activeMicChannel.Bands.Count(band => band.IsEnabled && Math.Abs(band.GainDb) > 0.05d);
+        var channelName = string.IsNullOrWhiteSpace(_activeMicChannel.DisplayName)
+            ? $"Mic {_activeMicChannel.ChannelNumber}"
+            : _activeMicChannel.DisplayName;
+        string status;
+        if (activeBandCount == 0)
+        {
+            status = $"{channelName} EQ is flat.";
+        }
+        else if (IsProcessedOutputRequested() && _spectrumService.IsProcessedOutputEnabled)
+        {
+            var outputName = _selectedOutputDevice?.Name ?? "selected output";
+            status = $"{channelName} EQ active ({activeBandCount} band(s)); monitoring Jericho processed output on {outputName}.";
+        }
+        else
+        {
+            status = $"{channelName} EQ active ({activeBandCount} band(s)), but MONITOR EQ is off. Direct/interface monitoring bypasses Jericho DSP.";
+        }
+
+        if (!string.Equals(StatusText.Text, status, StringComparison.Ordinal))
+        {
+            StatusText.Text = status;
+        }
     }
 
     private static void SyncEqualizerSettings(MicChannelStrip channel)
@@ -6741,12 +6774,7 @@ public partial class EqualizerWindow : Window
         AttachEqualizerBandHandlers(_activeMicChannel);
         if (refreshEditor)
         {
-            DataContext = Settings;
-            EqBandPanel.ItemsSource = Bands;
-            UpdateEqVoiceZoneGuide();
-            SyncEqualizerSettings();
             ApplyActiveMicChannelToUi();
-            ApplyActiveMicPresetUiState();
             ConfigureLiveMixFromChannels();
         }
         else
@@ -6771,6 +6799,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        ApplyActiveMicEditorBindings();
         var previousSelectedDevice = _selectedDevice;
         var previousSelectedDeviceFormat = _selectedDeviceFormat;
         _isUpdatingMicChannelUi = true;
@@ -6802,6 +6831,15 @@ public partial class EqualizerWindow : Window
 
         QueueSelectedDeviceFormatRefresh(_selectedDevice);
         UpdateAudioFormatRouteText();
+    }
+
+    private void ApplyActiveMicEditorBindings()
+    {
+        DataContext = Settings;
+        EqBandPanel.ItemsSource = Bands;
+        UpdateEqVoiceZoneGuide();
+        SyncEqualizerSettings();
+        ApplyActiveMicPresetUiState();
     }
 
     private void ApplyActiveMicChannelSelectionToMixerUi()
@@ -7226,6 +7264,11 @@ public partial class EqualizerWindow : Window
                 ProcessedOutputCheckBox.IsChecked = enabled;
             }
 
+            if (MicDspMonitorOutputCheckBox is not null)
+            {
+                MicDspMonitorOutputCheckBox.IsChecked = enabled;
+            }
+
             if (KaraokeMonitorOutputCheckBox is not null)
             {
                 KaraokeMonitorOutputCheckBox.IsChecked = enabled;
@@ -7239,7 +7282,9 @@ public partial class EqualizerWindow : Window
 
     private bool IsProcessedOutputRequested()
     {
-        return ProcessedOutputCheckBox?.IsChecked == true || KaraokeMonitorOutputCheckBox?.IsChecked == true;
+        return ProcessedOutputCheckBox?.IsChecked == true
+            || MicDspMonitorOutputCheckBox?.IsChecked == true
+            || KaraokeMonitorOutputCheckBox?.IsChecked == true;
     }
 
     private void ApplyWasapiOutputSettingsToUi()

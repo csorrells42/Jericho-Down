@@ -1649,6 +1649,11 @@
                 <ComboBox x:Name="MicChannelComboBox" Width="104" SelectionChanged="MicChannelSelectionChanged" Margin="0,0,10,0" />
                 <ComboBox x:Name="MicrophoneComboBox" Width="220" SelectionChanged="MicrophoneSelectionChanged" Margin="0,0,10,0" />
                 <ComboBox x:Name="InputChannelComboBox" Width="120" SelectionChanged="InputChannelSelectionChanged" Margin="0,0,12,0" />
+                <ToggleButton x:Name="MicDspMonitorOutputCheckBox" Style="{StaticResource ProcessedOutputToggle}" Content="MONITOR EQ" Checked="ProcessedOutputChanged" Unchecked="ProcessedOutputChanged" Padding="10,4" Margin="0,0,12,0">
+                  <ToggleButton.ToolTip>
+                    <TextBlock Style="{StaticResource WrappedToolTipText}" Text="Routes Jericho's processed program output so you can hear EQ and DSP changes. Direct monitoring on an audio interface bypasses these controls." />
+                  </ToggleButton.ToolTip>
+                </ToggleButton>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,0,0">
                   <ToggleButton x:Name="SpectrumViewButton" Style="{StaticResource PresetConsoleButton}" Content="Spectrum" Click="SpectrumViewClicked" Padding="10,4" Margin="0,0,6,0" />
                   <ToggleButton x:Name="Waveform3DButton" Style="{StaticResource PresetConsoleButton}" Content="3D Wave" IsChecked="True" Click="Waveform3DClicked" Padding="10,4" Margin="0,0,6,0">

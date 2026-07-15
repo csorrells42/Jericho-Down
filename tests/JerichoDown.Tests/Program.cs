@@ -49,6 +49,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
+    ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
     ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
@@ -80,6 +81,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
     ("Audio stream restart failures back off", AudioStreamRestartFailuresBackOff),
     ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
+    ("Mic DSP monitor exposes processed EQ audition", MicDspMonitorExposesProcessedEqAudition),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
@@ -139,6 +141,7 @@ var tests = new (string Name, Action Test)[]
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Mixer strip clicks select channels cheaply", MixerStripClicksSelectChannelsCheaply),
     ("Active mic selection avoids synchronous format probe", ActiveMicSelectionAvoidsSynchronousFormatProbe),
+    ("Mic DSP editor rebinds after mixer selection", MicDspEditorRebindsAfterMixerSelection),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Mixer volume controls mark and snap unity", MixerVolumeControlsMarkAndSnapUnity),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
@@ -566,6 +569,34 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(highShapedRms < highBypassRms * 0.70d, "high shelf cut should tame high air");
     Assert(midShapedRms > midBypassRms * 0.82d && midShapedRms < midBypassRms * 1.22d, "shelf EQ should keep mid voice mostly stable");
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
+}
+
+static void GraphicEqUpdatesWhileLiveProviderIsRunning()
+{
+    const int sampleRate = 48_000;
+    var source = GenerateSine(sampleRate, 1_000d, 0.25d, 0.5d);
+    var settings = CreateTransparentVoiceSettings();
+    var blockProvider = new LiveMicBlockSampleProvider(sampleRate);
+    var provider = new VoiceProcessorSampleProvider(blockProvider, new VoiceSampleProcessor(settings, sampleRate));
+    var bypass = new float[source.Length];
+    var boosted = new float[source.Length];
+
+    blockProvider.SetBlock(source);
+    provider.Read(bypass, 0, bypass.Length);
+
+    var gains = new double[20];
+    gains[10] = 12d;
+    settings.SetEqualizerGains(gains);
+    blockProvider.SetBlock(source);
+    provider.Read(boosted, 0, boosted.Length);
+
+    var start = sampleRate / 5;
+    var bypassMagnitude = CalculateToneMagnitude(bypass, sampleRate, 1_000d, start);
+    var boostedMagnitude = CalculateToneMagnitude(boosted, sampleRate, 1_000d, start);
+
+    Assert(provider.LastProcessedSampleCount == source.Length, "live DSP provider should process the whole live block");
+    Assert(boostedMagnitude > bypassMagnitude * 1.45d, "graphic EQ gain changes should update a running live DSP provider without a restart");
+    Assert(boosted.All(float.IsFinite), "live graphic EQ output should stay finite");
 }
 
 static void DspVerificationReportProvesCustomDspClaims()
@@ -2116,6 +2147,37 @@ static void ProcessedMonitorUsesStabilityFirstBuffering()
     Assert(targetBuffer >= TimeSpan.FromMilliseconds(100), "target live monitor buffer should absorb callback jitter");
     Assert(maximumBuffer >= TimeSpan.FromMilliseconds(300), "maximum live monitor buffer should avoid over-trimming on slower computers");
     Assert(providerBuffer >= maximumBuffer, "processed output provider must be able to hold the stability buffer");
+}
+
+static void MicDspMonitorExposesProcessedEqAudition()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var micDspTab = ExtractSourceBetween(
+        xaml,
+        "      <TabItem x:Name=\"MicDspTabItem\" Header=\"Mic / DSP\">",
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
+    var toggleSyncMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void SetProcessedOutputToggleState(bool enabled)",
+        "    private bool IsProcessedOutputRequested()");
+    var outputRequestedMethod = ExtractSourceBetween(
+        windowCode,
+        "    private bool IsProcessedOutputRequested()",
+        "    private void ApplyWasapiOutputSettingsToUi()");
+    var eqStatusMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ReportEqualizerAuditionStatus()",
+        "    private static void SyncEqualizerSettings(MicChannelStrip channel)");
+
+    Assert(micDspTab.Contains("x:Name=\"MicDspMonitorOutputCheckBox\"", StringComparison.Ordinal), "Mic/DSP should expose a local processed monitor toggle beside the EQ controls");
+    Assert(micDspTab.Contains("Content=\"MONITOR EQ\"", StringComparison.Ordinal), "Mic/DSP monitor toggle should make EQ audition explicit");
+    Assert(micDspTab.Contains("Checked=\"ProcessedOutputChanged\" Unchecked=\"ProcessedOutputChanged\"", StringComparison.Ordinal), "Mic/DSP monitor toggle should use the existing processed-output route");
+    Assert(micDspTab.Contains("Direct monitoring on an audio interface bypasses these controls", StringComparison.Ordinal), "Mic/DSP monitor tooltip should explain why direct interface monitoring will not hear EQ");
+    Assert(toggleSyncMethod.Contains("MicDspMonitorOutputCheckBox.IsChecked = enabled;", StringComparison.Ordinal), "processed-output toggle sync should include the Mic/DSP monitor switch");
+    Assert(outputRequestedMethod.Contains("MicDspMonitorOutputCheckBox?.IsChecked == true", StringComparison.Ordinal), "processed-output routing should honor the Mic/DSP monitor switch");
+    Assert(eqStatusMethod.Contains("MONITOR EQ is off", StringComparison.Ordinal), "EQ changes should warn when the processed monitor is off");
+    Assert(eqStatusMethod.Contains("Direct/interface monitoring bypasses Jericho DSP", StringComparison.Ordinal), "EQ status should explain that direct monitoring bypasses DSP");
 }
 
 static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
@@ -4386,6 +4448,29 @@ static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
         "    private void ApplySelectedMixerInputPanelToUi()",
         "    private void QueueSelectedDeviceFormatRefresh(AudioInputDevice? selectedDevice)");
     Assert(panelHelper.Contains("SelectedMixerInputPanel.DataContext = _activeMicChannel;", StringComparison.Ordinal), "mixer selected-input panel should bind directly to the active channel");
+}
+
+static void MicDspEditorRebindsAfterMixerSelection()
+{
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var applyEditorMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelToUi()",
+        "    private void ApplyActiveMicEditorBindings()");
+    var bindingMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicEditorBindings()",
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()");
+    var mixerSelectionMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()",
+        "    private void ApplySelectedMixerInputPanelToUi()");
+
+    Assert(applyEditorMethod.Contains("ApplyActiveMicEditorBindings();", StringComparison.Ordinal), "entering Mic/DSP should rebind the editor to the active channel after mixer-side selection");
+    Assert(bindingMethod.Contains("DataContext = Settings;", StringComparison.Ordinal), "active Mic/DSP editor should bind processing controls to the active channel settings");
+    Assert(bindingMethod.Contains("EqBandPanel.ItemsSource = Bands;", StringComparison.Ordinal), "active Mic/DSP editor should bind graphic EQ bands to the active channel bands");
+    Assert(bindingMethod.Contains("SyncEqualizerSettings();", StringComparison.Ordinal), "rebinding the Mic/DSP editor should push visible band gains into the active processor settings");
+    Assert(!mixerSelectionMethod.Contains("ApplyActiveMicEditorBindings();", StringComparison.Ordinal), "mixer-side selection should stay cheap until the Mic/DSP editor is shown");
 }
 
 static void MixerChannelControlsDebounceStatePersistence()
