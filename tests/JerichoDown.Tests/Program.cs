@@ -11,6 +11,7 @@ using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Midi;
+using JerichoDown.Modules.Mixer;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Visualization;
@@ -1381,6 +1382,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
+    Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
 
     foreach (var readmePath in moduleReadmes)
@@ -1406,6 +1408,29 @@ static void ModuleReadmesDefineOwnership()
     Assert(spectrumFrame.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame should live in the Visualization module namespace");
     Assert(spectrumFrameRouter.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame router should live in the Visualization module namespace");
     Assert(feedbackDangerDetector.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "feedback detector should live in the Visualization module namespace");
+
+    var mixerReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "README.md")));
+    var mixerSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "MixBusProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveProgramMixBus.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMicBlockSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveStereoBlockSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMixAudibility.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoPanSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoBalanceSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "NaudioPeakMeterSampleProvider.cs")))
+    };
+    Assert(mixerReadme.Contains("MixBusProcessor.cs", StringComparison.Ordinal), "Mixer docs should name migrated mix bus processor ownership");
+    Assert(mixerReadme.Contains("LiveProgramMixBus.cs", StringComparison.Ordinal), "Mixer docs should name migrated live program bus ownership");
+    Assert(mixerReadme.Contains("LiveMicBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated mono block provider ownership");
+    Assert(mixerReadme.Contains("LiveStereoBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated stereo block provider ownership");
+    Assert(mixerReadme.Contains("LiveMixAudibility.cs", StringComparison.Ordinal), "Mixer docs should name migrated audibility ownership");
+    Assert(mixerReadme.Contains("StereoPanSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated pan provider ownership");
+    Assert(mixerReadme.Contains("StereoBalanceSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated balance provider ownership");
+    Assert(mixerReadme.Contains("NaudioPeakMeterSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated peak meter ownership");
+    Assert(mixerReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Mixer docs should name the live audio service consumer");
+    Assert(mixerSources.All(source => source.Contains("namespace JerichoDown.Modules.Mixer;", StringComparison.Ordinal)), "Mixer primitives should live in the Mixer module namespace");
 
     var audioAsioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "README.md")));
     var asioInputCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));

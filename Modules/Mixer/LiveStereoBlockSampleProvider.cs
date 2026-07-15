@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Mixer;
 
 public sealed class LiveStereoBlockSampleProvider : ISampleProvider
 {

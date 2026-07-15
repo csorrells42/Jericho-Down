@@ -1,4 +1,4 @@
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Mixer;
 
 public static class LiveMixAudibility
 {

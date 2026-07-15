@@ -1,6 +1,7 @@
+using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Dsp;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Mixer;
 
 public sealed class MixBusProcessor
 {

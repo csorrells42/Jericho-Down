@@ -5,6 +5,7 @@ using NAudio.Dmo;
 using NAudio.Wave.SampleProviders;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Dsp;
+using JerichoDown.Modules.Mixer;
 using JerichoDown.Modules.Visualization;
 using System.Buffers;
 using System.IO;

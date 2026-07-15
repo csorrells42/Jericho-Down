@@ -1,7 +1,7 @@
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Mixer;
 
 public sealed class NaudioPeakMeterSampleProvider : ISampleProvider
 {

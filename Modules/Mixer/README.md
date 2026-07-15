@@ -8,6 +8,17 @@ Responsibilities:
 - CoreAudio app mix capture routing where it feeds the program bus.
 - Recording source selection for selected mics and program mix.
 
-Current legacy files live mostly in `Audio`.
+Current entry points:
+- `MixBusProcessor.cs`
+- `LiveProgramMixBus.cs`
+- `LiveMicBlockSampleProvider.cs`
+- `LiveStereoBlockSampleProvider.cs`
+- `LiveMixAudibility.cs`
+- `StereoPanSampleProvider.cs`
+- `StereoBalanceSampleProvider.cs`
+- `NaudioPeakMeterSampleProvider.cs`
+
+Consumed by:
+- `JerichoDown.Audio.MicrophoneSpectrumService` for live routing and program mix output.
 
 Do not put low-level ASIO driver startup, camera preview, or karaoke lyrics here.
