@@ -6,9 +6,12 @@ Current UI orchestration is mostly in `Modules/AppShell/EqualizerWindow.xaml.cs`
 
 Current entry points:
 - `KaraokeTrackAudioReader.cs`
+- `KaraokePlaybackPolicy.cs`
 
 Responsibilities:
 - Track loading and playback fallback.
+- Supported backing-track extension policy.
+- Restart-from-end and codec-failure fallback decisions.
 - NAudio-backed sample-reader playback for supported backing-track formats.
 - M4A/MP4 duration probing when normal sample readers cannot decode metadata.
 - Tempo-rate sample provider and stereo vocal-reduction sample provider.

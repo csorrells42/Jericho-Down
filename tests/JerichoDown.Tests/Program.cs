@@ -1378,7 +1378,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
     Assert(moduleIndex.Contains("AppShell` owns `App`, `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell ownership");
     Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
-    Assert(moduleIndex.Contains("Karaoke` owns `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
+    Assert(moduleIndex.Contains("Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
@@ -1452,8 +1452,13 @@ static void ModuleReadmesDefineOwnership()
     Assert(verificationViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "Verification view code-behind should live in the Help module namespace");
 
     var karaokeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "README.md")));
+    var karaokePlaybackPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "KaraokePlaybackPolicy.cs")));
     var karaokeTrackAudioReader = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "KaraokeTrackAudioReader.cs")));
+    Assert(karaokeReadme.Contains("KaraokePlaybackPolicy.cs", StringComparison.Ordinal), "Karaoke docs should name migrated playback policy ownership");
     Assert(karaokeReadme.Contains("KaraokeTrackAudioReader.cs", StringComparison.Ordinal), "Karaoke docs should name migrated track audio reader ownership");
+    Assert(karaokePlaybackPolicy.Contains("namespace JerichoDown.Modules.Karaoke;", StringComparison.Ordinal), "karaoke playback policy should live in the Karaoke module namespace");
+    Assert(karaokePlaybackPolicy.Contains("public static class KaraokePlaybackPolicy", StringComparison.Ordinal), "karaoke playback policy should be a module entry point");
+    Assert(karaokePlaybackPolicy.Contains("ShouldTryMediaFallbackAfterSampleReaderFailure", StringComparison.Ordinal), "karaoke playback policy should own sample-reader fallback decisions");
     Assert(karaokeTrackAudioReader.Contains("namespace JerichoDown.Modules.Karaoke;", StringComparison.Ordinal), "karaoke track audio reader should live in the Karaoke module namespace");
     Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeTrackAudioReader", StringComparison.Ordinal), "karaoke sample-reader playback should be a module entry point");
     Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeRateSampleProvider", StringComparison.Ordinal), "karaoke tempo provider should be a module entry point");
@@ -4757,7 +4762,7 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     {
         var path = Path.Combine(Path.GetTempPath(), "track" + extension);
         var isSupported = KaraokeTrackAudioReader.CanUseSampleReader(path);
-        var isVisible = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", path);
+        var isVisible = KaraokePlaybackPolicy.IsSupportedTrackFile(path);
 
         Assert(isSupported, $"{extension} should use the NAudio sample reader path when the local codec can decode it");
         Assert(isVisible, $"{extension} should be visible in the karaoke track browser");
@@ -4765,7 +4770,7 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
 
     var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
     Assert(!KaraokeTrackAudioReader.CanUseSampleReader(m4pPath), "protected Apple Music M4P should not use the sample reader path");
-    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
+    Assert(!KaraokePlaybackPolicy.IsSupportedTrackFile(m4pPath), "protected Apple Music M4P should stay hidden");
 }
 
 static void KaraokeSampleReaderFailuresUseMediaFallback()
@@ -4774,13 +4779,13 @@ static void KaraokeSampleReaderFailuresUseMediaFallback()
     var outputError = new IOException("The selected output device is unavailable.");
 
     Assert(
-        (bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\song.m4a", codecError),
+        KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\song.m4a", codecError),
         "MediaFoundation COM reader failures should fall back to Windows media playback");
     Assert(
-        !(bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\song.m4a", outputError),
+        !KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\song.m4a", outputError),
         "plain output-device failures should not be hidden behind media fallback");
     Assert(
-        !(bool)InvokeEqualizerWindowPrivateStatic("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure", @"C:\Music\protected.m4p", codecError),
+        !KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\protected.m4p", codecError),
         "unsupported protected tracks should not be routed into fallback playback");
 }
 
@@ -4798,7 +4803,7 @@ static void KaraokePlaybackStoppedCodecFailuresUseMediaFallback()
 
     Assert(fallbackMethod.Contains("player.Position = clampedPosition", StringComparison.Ordinal), "media fallback should preserve the attempted playback position");
     Assert(completedMethod.Contains("stoppedSampleReaderPlayback", StringComparison.Ordinal), "playback stopped should know whether the NAudio sample reader path failed");
-    Assert(completedMethod.Contains("ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(trackPath, exception)", StringComparison.Ordinal), "sample-reader playback exceptions should route through codec fallback detection");
+    Assert(completedMethod.Contains("KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(trackPath, exception)", StringComparison.Ordinal), "sample-reader playback exceptions should route through codec fallback detection");
     Assert(completedMethod.Contains("StartKaraokeMediaFallbackPlayback(trackPath, stoppedPosition)", StringComparison.Ordinal), "sample-reader playback exceptions should restart through Windows media fallback");
 }
 
@@ -4806,9 +4811,9 @@ static void KaraokePlayRestartsAfterTrackEnd()
 {
     var duration = TimeSpan.FromSeconds(180);
 
-    var endedStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", duration.TotalSeconds, duration);
-    var nearEndStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", duration.TotalSeconds - 0.1d, duration);
-    var middleStart = (TimeSpan)InvokeEqualizerWindowPrivateStatic("ResolveKaraokePlaybackStartPosition", 42d, duration);
+    var endedStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(duration.TotalSeconds, duration);
+    var nearEndStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(duration.TotalSeconds - 0.1d, duration);
+    var middleStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(42d, duration);
 
     Assert(endedStart == TimeSpan.Zero, "karaoke play should restart instead of resuming from the exact end");
     Assert(nearEndStart == TimeSpan.Zero, "karaoke play should restart when the transport is effectively at the end");
@@ -4902,7 +4907,7 @@ static void KaraokeBrowserDfsHidesM4pTracks()
         File.WriteAllBytes(m4pPath, CreateMinimalM4aWithDuration(44100, 44100));
         File.WriteAllBytes(ignoredPath, [1, 2, 3, 4]);
 
-        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath);
+        var isSupported = KaraokePlaybackPolicy.IsSupportedTrackFile(m4pPath);
         var files = ((IEnumerable<string>)InvokeEqualizerWindowPrivateStatic("EnumerateKaraokeTrackFiles", folder)).ToList();
 
         Assert(!isSupported, "M4P tracks should stay hidden because protected Apple Music files are not reliably playable");

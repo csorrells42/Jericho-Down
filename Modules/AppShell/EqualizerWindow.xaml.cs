@@ -78,7 +78,6 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan KaraokeLyricDisplayLead = TimeSpan.FromMilliseconds(280);
     private static readonly TimeSpan KaraokeShortWordDisplayHold = TimeSpan.FromMilliseconds(155);
     private static readonly TimeSpan KaraokeLyricLineTransitionDuration = TimeSpan.FromMilliseconds(135);
-    private static readonly TimeSpan KaraokeReplayFromEndTolerance = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AudioCallbackStartupGrace = TimeSpan.FromSeconds(3);
@@ -91,18 +90,7 @@ public partial class EqualizerWindow : Window
     private static readonly Regex NumberedRecordingFileRegex = new(@"^(?:video|mix|raw_backup)_(?<number>\d{3,})\.(?:mp4|wav)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
-    private static readonly string[] SupportedKaraokeTrackExtensions =
-    [
-        ".wav",
-        ".mp3",
-        ".m4a",
-        ".aac",
-        ".wma",
-        ".flac",
-        ".aiff",
-        ".aif"
-    ];
-    private static readonly string KaraokeTrackOpenFileFilter = $"Audio files|{string.Join(';', SupportedKaraokeTrackExtensions.Select(extension => $"*{extension}"))}|All files|*.*";
+    private static readonly string KaraokeTrackOpenFileFilter = KaraokePlaybackPolicy.CreateOpenFileFilter();
     private static readonly string[] SupportedAudioRecordingExtensions =
     [
         ".wav",
@@ -8962,7 +8950,7 @@ public partial class EqualizerWindow : Window
             yield break;
         }
 
-        foreach (var file in files.Where(IsSupportedKaraokeTrackFile))
+        foreach (var file in files.Where(KaraokePlaybackPolicy.IsSupportedTrackFile))
         {
             yield return file;
         }
@@ -9113,7 +9101,7 @@ public partial class EqualizerWindow : Window
         try
         {
             foreach (var path in paths
-                         .Where(IsSupportedKaraokeTrackFile)
+                         .Where(KaraokePlaybackPolicy.IsSupportedTrackFile)
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (_karaokeQueue.Any(item => string.Equals(item.Path, path, StringComparison.OrdinalIgnoreCase)))
@@ -9321,12 +9309,6 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private static bool IsSupportedKaraokeTrackFile(string path)
-    {
-        var extension = System.IO.Path.GetExtension(path);
-        return SupportedKaraokeTrackExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
-    }
-
     private void KaraokePlayPauseClicked(object sender, RoutedEventArgs e)
     {
         if (_isKaraokeTrackPlaying)
@@ -9377,7 +9359,7 @@ public partial class EqualizerWindow : Window
         {
             if (_karaokeTrackMediaPlayer is not null)
             {
-                if (ShouldRestartKaraokePlaybackFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
+                if (KaraokePlaybackPolicy.ShouldRestartFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
                 {
                     SeekKaraokePlaybackTo(TimeSpan.Zero);
                 }
@@ -9403,7 +9385,7 @@ public partial class EqualizerWindow : Window
                 {
                     reader = KaraokeTrackAudioReader.Open(_karaokeTrackPath);
                 }
-                catch (Exception ex) when (ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(_karaokeTrackPath, ex))
+                catch (Exception ex) when (KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(_karaokeTrackPath, ex))
                 {
                     AppStateStore.LogDiagnostic("karaoke-sample-reader-fallback", ex);
                     return StartKaraokeMediaFallbackPlayback(_karaokeTrackPath);
@@ -9423,7 +9405,7 @@ public partial class EqualizerWindow : Window
                 _karaokeTrackVocalReductionProvider = vocalReductionProvider;
                 _karaokeTrackOutput = output;
                 _karaokeTrackDuration = reader.TotalTime;
-                SeekKaraokePlaybackTo(ResolveKaraokePlaybackStartPosition(KaraokeSeekSlider.Value, _karaokeTrackDuration));
+                SeekKaraokePlaybackTo(KaraokePlaybackPolicy.ResolvePlaybackStartPosition(KaraokeSeekSlider.Value, _karaokeTrackDuration));
             }
             else
             {
@@ -9431,7 +9413,7 @@ public partial class EqualizerWindow : Window
                 _karaokeTrackVocalReductionProvider?.SetEnabled(_karaokeVocalReductionEnabled);
             }
 
-            if (ShouldRestartKaraokePlaybackFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
+            if (KaraokePlaybackPolicy.ShouldRestartFromEnd(GetKaraokeMediaPosition(), _karaokeTrackDuration))
             {
                 SeekKaraokePlaybackTo(TimeSpan.Zero);
             }
@@ -9454,45 +9436,6 @@ public partial class EqualizerWindow : Window
         {
             UpdateKaraokeTransportControls();
         }
-    }
-
-    private static TimeSpan ResolveKaraokePlaybackStartPosition(double requestedSeconds, TimeSpan duration)
-    {
-        if (duration <= TimeSpan.Zero)
-        {
-            return TimeSpan.Zero;
-        }
-
-        var clampedSeconds = Math.Clamp(requestedSeconds, 0d, duration.TotalSeconds);
-        var position = TimeSpan.FromSeconds(clampedSeconds);
-        return ShouldRestartKaraokePlaybackFromEnd(position, duration)
-            ? TimeSpan.Zero
-            : position;
-    }
-
-    private static bool ShouldRestartKaraokePlaybackFromEnd(TimeSpan position, TimeSpan duration)
-    {
-        return duration > TimeSpan.Zero
-            && position >= TimeSpan.Zero
-            && duration - position <= KaraokeReplayFromEndTolerance;
-    }
-
-    private static bool ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(string? path, Exception exception)
-    {
-        return !string.IsNullOrWhiteSpace(path)
-            && IsSupportedKaraokeTrackFile(path)
-            && IsKaraokeSampleReaderCodecFailure(exception);
-    }
-
-    private static bool IsKaraokeSampleReaderCodecFailure(Exception exception)
-    {
-        return exception is NotSupportedException
-            || exception is COMException
-            || (exception is InvalidCastException
-                && exception.Message.Contains("COM object", StringComparison.OrdinalIgnoreCase))
-            || exception.Message.Contains("IMFSourceReader", StringComparison.OrdinalIgnoreCase)
-            || exception.Message.Contains("MediaFoundation", StringComparison.OrdinalIgnoreCase)
-            || (exception.InnerException is not null && IsKaraokeSampleReaderCodecFailure(exception.InnerException));
     }
 
     private void PauseKaraokePlayback()
@@ -9662,13 +9605,13 @@ public partial class EqualizerWindow : Window
             ? "track"
             : System.IO.Path.GetFileName(trackPath);
         var stoppedSampleReaderPlayback = _karaokeTrackOutput is not null && _karaokeTrackMediaPlayer is null;
-        var stoppedPosition = ResolveKaraokePlaybackStartPosition(GetKaraokeMediaPosition().TotalSeconds, _karaokeTrackDuration);
+        var stoppedPosition = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(GetKaraokeMediaPosition().TotalSeconds, _karaokeTrackDuration);
         StopKaraokePlayback(clearTrack: false);
         if (exception is not null)
         {
             if (!wasStoppedByUser
                 && stoppedSampleReaderPlayback
-                && ShouldTryKaraokeMediaFallbackAfterSampleReaderFailure(trackPath, exception)
+                && KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(trackPath, exception)
                 && !string.IsNullOrWhiteSpace(trackPath)
                 && File.Exists(trackPath))
             {
