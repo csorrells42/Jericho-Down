@@ -1369,7 +1369,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
-    Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, and `MediaFoundationCameraDeviceFactory`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory ownership");
+    Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, and `MediaFoundationVideoRecorder`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1385,16 +1385,19 @@ static void ModuleReadmesDefineOwnership()
     var mediaFoundationCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraEnumerator.cs")));
     var mediaFoundationCameraModeService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraModeService.cs")));
     var mediaFoundationCameraDeviceFactory = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraDeviceFactory.cs")));
+    var mediaFoundationVideoRecorder = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationVideoRecorder.cs")));
     var mediaFoundationGuids = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationGuids.cs")));
     var mediaFoundationInterop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
     Assert(mediaFoundationReadme.Contains("MediaFoundationCameraEnumerator.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera enumerator ownership");
     Assert(mediaFoundationReadme.Contains("MediaFoundationCameraModeService.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera mode service ownership");
     Assert(mediaFoundationReadme.Contains("MediaFoundationCameraDeviceFactory.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera device factory ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationVideoRecorder.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated video recorder ownership");
     Assert(mediaFoundationReadme.Contains("MediaFoundationGuids.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated GUID ownership");
     Assert(mediaFoundationReadme.Contains("MediaFoundationInterop.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated interop ownership");
     Assert(mediaFoundationCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera enumerator should live in the MediaFoundation module namespace");
     Assert(mediaFoundationCameraModeService.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera mode service should live in the MediaFoundation module namespace");
     Assert(mediaFoundationCameraDeviceFactory.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera device factory should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationVideoRecorder.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation video recorder should live in the MediaFoundation module namespace");
     Assert(mediaFoundationGuids.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation GUIDs should live in the MediaFoundation module namespace");
     Assert(mediaFoundationInterop.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation interop should live in the MediaFoundation module namespace");
 

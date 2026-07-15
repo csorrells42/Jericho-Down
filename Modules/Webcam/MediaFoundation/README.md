@@ -13,11 +13,11 @@ Current entry points:
 - `MediaFoundationCameraEnumerator.cs`
 - `MediaFoundationCameraModeService.cs`
 - `MediaFoundationCameraDeviceFactory.cs`
+- `MediaFoundationVideoRecorder.cs`
 - `MediaFoundationGuids.cs`
 - `MediaFoundationInterop.cs`
 
 Current legacy files:
 - `Video/MediaFoundationCameraPreviewService.cs`
-- `Video/MediaFoundationVideoRecorder.cs`
 
 Session file playback belongs in `SessionPlayback`, even when it uses Media Foundation.

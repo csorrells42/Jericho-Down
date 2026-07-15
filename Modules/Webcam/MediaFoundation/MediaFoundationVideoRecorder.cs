@@ -1,8 +1,7 @@
 using System.Runtime.InteropServices;
 using System.IO;
-using JerichoDown.Modules.Webcam.MediaFoundation;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 internal sealed class MediaFoundationVideoRecorder : IDisposable
 {
