@@ -1315,6 +1315,7 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
+    var audioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
     var interop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
 
     Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
@@ -1323,9 +1324,10 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     Assert(windowCode.Contains("new Direct3D12PreviewHost", StringComparison.Ordinal), "session playback should render through the existing DX12 swap-chain host");
     Assert(windowCode.Contains("new MediaFoundationFilePlaybackService()", StringComparison.Ordinal), "session playback should use the Media Foundation file reader service");
     Assert(playbackService.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "file playback service should live in the SessionPlayback module namespace");
-    Assert(windowCode.Contains("ResolveSessionAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio");
-    Assert(windowCode.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
-    Assert(windowCode.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
+    Assert(audioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session sidecar audio resolver should live in the SessionPlayback module namespace");
+    Assert(windowCode.Contains("SessionPlaybackAudioResolver.ResolveAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio through the module");
+    Assert(audioResolver.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
+    Assert(audioResolver.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
     Assert(windowCode.Contains("new AudioFileReader(audioPath)", StringComparison.Ordinal), "DX12 video playback should keep resolved session audio routed through NAudio");
     Assert(windowCode.Contains("CreateSelectedPlaybackOutput(reader.ToWaveProvider()", StringComparison.Ordinal), "session audio should use the selected Jericho output route");
     Assert(windowCode.Contains("TryStartSessionSidecarAudioPlayback(path", StringComparison.Ordinal), "Windows media fallback should still play sidecar audio for podcast session videos");
@@ -1465,8 +1467,11 @@ static void ModuleReadmesDefineOwnership()
     Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeVocalReductionSampleProvider", StringComparison.Ordinal), "karaoke vocal-reduction provider should be a module entry point");
 
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
+    var sessionPlaybackAudioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+    Assert(sessionPlaybackReadme.Contains("SessionPlaybackAudioResolver.cs", StringComparison.Ordinal), "session playback docs should name migrated sidecar audio resolver ownership");
+    Assert(sessionPlaybackAudioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session playback audio resolver should live in the SessionPlayback module namespace");
 
     var visualizationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "README.md")));
     var spectrumAnalyzer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumAnalyzer.cs")));

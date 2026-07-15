@@ -13155,7 +13155,7 @@ public partial class EqualizerWindow : Window
         failure = null;
         try
         {
-            var audioPath = ResolveSessionAudioPlaybackPath(path);
+            var audioPath = SessionPlaybackAudioResolver.ResolveAudioPlaybackPath(path);
             var reader = new AudioFileReader(audioPath);
             var output = CreateSelectedPlaybackOutput(reader.ToWaveProvider(), desiredLatency: 90);
             output.PlaybackStopped += SessionAudioPlaybackStopped;
@@ -13172,33 +13172,6 @@ public partial class EqualizerWindow : Window
             StopSessionAudioPlayback();
             return false;
         }
-    }
-
-    private static string ResolveSessionAudioPlaybackPath(string path)
-    {
-        var directory = System.IO.Path.GetDirectoryName(path);
-        var fileName = System.IO.Path.GetFileName(path);
-        if (!string.IsNullOrWhiteSpace(directory)
-            && fileName.StartsWith("video_", StringComparison.OrdinalIgnoreCase)
-            && fileName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
-        {
-            var number = fileName.Substring(
-                "video_".Length,
-                fileName.Length - "video_".Length - ".mp4".Length);
-            if (number.Length > 0 && number.All(char.IsDigit))
-            {
-                foreach (var audioFileName in new[] { $"mix_{number}.wav", $"raw_backup_{number}.wav" })
-                {
-                    var audioPath = System.IO.Path.Combine(directory, audioFileName);
-                    if (File.Exists(audioPath))
-                    {
-                        return audioPath;
-                    }
-                }
-            }
-        }
-
-        return path;
     }
 
     private string FormatSessionPlaybackStatus(string videoPath, string route)
@@ -13237,7 +13210,7 @@ public partial class EqualizerWindow : Window
 
     private bool TryStartSessionSidecarAudioPlayback(string path, out string? failure)
     {
-        var audioPath = ResolveSessionAudioPlaybackPath(path);
+        var audioPath = SessionPlaybackAudioResolver.ResolveAudioPlaybackPath(path);
         if (string.Equals(audioPath, path, StringComparison.OrdinalIgnoreCase))
         {
             failure = "no session sidecar audio file was found";

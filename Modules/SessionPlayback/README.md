@@ -10,6 +10,7 @@ Responsibilities:
 
 Current entry points:
 - `MediaFoundationFilePlaybackService.cs`
+- `SessionPlaybackAudioResolver.cs`
 - Session playback methods in `Modules/AppShell/EqualizerWindow.xaml.cs` until the UI controller is split out.
 
 Dependencies:
