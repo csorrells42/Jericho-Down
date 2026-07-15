@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Video;
+using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Visualization;
 using NAudio.Midi;
 using NAudio.Wave;
@@ -1372,7 +1372,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
-    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, and `CameraPreviewFramePumps`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1425,22 +1425,23 @@ static void ModuleReadmesDefineOwnership()
     var dx12Camera = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12Camera.cs")));
     var dx12CameraOptions = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12CameraOptions.cs")));
     var cameraPreviewFramePumps = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "CameraPreviewFramePumps.cs")));
+    var textureNativeCameraRecorder = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraRecorder.cs")));
+    var textureNativeCameraProbe = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraProbe.cs")));
     Assert(dx12Readme.Contains("Direct3D12DeviceManager.cs", StringComparison.Ordinal), "DX12 docs should name migrated device manager ownership");
     Assert(dx12Readme.Contains("Direct3D12PreviewHost.cs", StringComparison.Ordinal), "DX12 docs should name migrated preview host ownership");
     Assert(dx12Readme.Contains("Dx12Camera.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera ownership");
     Assert(dx12Readme.Contains("Dx12CameraOptions.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera options ownership");
     Assert(dx12Readme.Contains("CameraPreviewFramePumps.cs", StringComparison.Ordinal), "DX12 docs should name migrated frame pump ownership");
-    Assert(dx12Readme.Contains("TextureNativeFrameInfo", StringComparison.Ordinal), "DX12 docs should name the temporary texture-native frame dependency");
+    Assert(dx12Readme.Contains("TextureNativeCameraRecorder.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native recorder ownership");
+    Assert(dx12Readme.Contains("TextureNativeCameraProbe.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native probe ownership");
     Assert(direct3D12DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 device manager should live in the DX12 module namespace");
     Assert(direct3D12DeviceManager.Contains("interface ITextureNativeDeviceManager", StringComparison.Ordinal), "D3D12 device manager should own the texture-native device-manager abstraction");
     Assert(direct3D12PreviewHost.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 preview host should live in the DX12 module namespace");
-    Assert(direct3D12PreviewHost.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "D3D12 preview host should document its temporary texture-native frame dependency");
     Assert(dx12Camera.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera should live in the DX12 module namespace");
-    Assert(dx12Camera.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DX12 camera should document its temporary texture-native recorder dependency");
     Assert(dx12CameraOptions.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera options should live in the DX12 module namespace");
-    Assert(dx12CameraOptions.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DX12 camera options should document their temporary texture-native frame dependency");
     Assert(cameraPreviewFramePumps.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera preview frame pumps should live in the DX12 module namespace");
-    Assert(cameraPreviewFramePumps.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "camera preview frame pumps should document their temporary texture-native frame dependency");
+    Assert(textureNativeCameraRecorder.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "texture-native recorder should live in the DX12 module namespace");
+    Assert(textureNativeCameraProbe.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "texture-native probe should live in the DX12 module namespace");
 
     var dx11BridgeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md")));
     var direct3D11DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11DeviceManager.cs")));
@@ -2380,7 +2381,7 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
     Assert(mediaFoundationPreviewSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "Media Foundation preview stop should flush ReadSample before waiting for capture shutdown");
     Assert(mediaFoundationPreviewSource.Contains("CaptureStopTimeout", StringComparison.Ordinal), "Media Foundation preview stop should use a named bounded shutdown wait");
 
-    var textureNativeSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "TextureNativeCameraRecorder.cs")));
+    var textureNativeSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraRecorder.cs")));
     Assert(textureNativeSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "texture-native preview stop should flush ReadSample before waiting for capture shutdown");
     Assert(textureNativeSource.Contains("StreamStopTimeout", StringComparison.Ordinal), "texture-native preview stop should use a named bounded shutdown wait");
 }

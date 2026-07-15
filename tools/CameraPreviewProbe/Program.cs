@@ -3,7 +3,6 @@ using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.DirectShow;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
-using JerichoDown.Video;
 using System.Windows;
 using System.Windows.Threading;
 

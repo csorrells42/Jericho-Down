@@ -13,7 +13,8 @@ Current entry points:
 - Session playback methods in `EqualizerWindow.xaml.cs` until the UI controller is split out.
 
 Dependencies:
-- `JerichoDown.Video` for Media Foundation interop.
+- `JerichoDown.Modules.Webcam.MediaFoundation` for Media Foundation interop.
+- `JerichoDown.Modules.Webcam.Dx12` for the DX12 playback preview host.
 - `JerichoDown.Modules.Webcam` for camera frame payloads.
 - NAudio routing from AppShell for sidecar WAV output.
 

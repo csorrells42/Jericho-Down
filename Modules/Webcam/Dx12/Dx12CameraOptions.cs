@@ -1,5 +1,4 @@
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Video;
 
 namespace JerichoDown.Modules.Webcam.Dx12;
 

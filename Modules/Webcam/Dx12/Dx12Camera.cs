@@ -4,7 +4,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Video;
 
 namespace JerichoDown.Modules.Webcam.Dx12;
 

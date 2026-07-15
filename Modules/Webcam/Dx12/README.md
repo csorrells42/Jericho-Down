@@ -15,11 +15,7 @@ Current entry points:
 - `Dx12Camera.cs`
 - `Dx12CameraOptions.cs`
 - `CameraPreviewFramePumps.cs`
-
-Current legacy files:
-- Texture-native preview portions of `Video/TextureNativeCameraRecorder.cs`
-
-Temporary dependencies:
-- `JerichoDown.Video.TextureNativeFrameInfo`, `TextureNativeFrameLease`, and texture-native recorder/session types until texture-native frame ownership moves into this module.
+- `TextureNativeCameraRecorder.cs`
+- `TextureNativeCameraProbe.cs`
 
 Do not put generic camera enumeration or session playback here.

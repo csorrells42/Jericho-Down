@@ -25,6 +25,6 @@ Current entry points:
 - `VideoFrameDenoiser.cs`
 - `VideoFrameColorSettings.cs`
 
-Some texture-native camera recording and frame-pump code still lives in `Video` while migration is in progress. `Dx12` documents those temporary dependencies until the remaining GPU camera pieces move.
+GPU camera rendering, texture-native recording, and preview probes live in `Dx12`. Keep generic camera vocabulary and user-facing camera status helpers here.
 
 Do not put session playback here unless it is live camera preview or camera recording.
