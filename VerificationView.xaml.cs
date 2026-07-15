@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Windows.Controls;
 using System.Windows.Media;
-using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Dsp;
 using Microsoft.Win32;
 
 namespace JerichoDown;

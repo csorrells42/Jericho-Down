@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
@@ -1377,6 +1378,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
+    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`", StringComparison.Ordinal), "module index should record migrated DSP verification ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
 
     foreach (var readmePath in moduleReadmes)
@@ -1402,6 +1404,13 @@ static void ModuleReadmesDefineOwnership()
     Assert(asioCallbackProbe.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO callback probe should live in the Audio ASIO module namespace");
     Assert(asioOutputPlayer.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO output player should live in the Audio ASIO module namespace");
     Assert(staThreadDispatcher.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO STA dispatcher should live in the Audio ASIO module namespace");
+
+    var audioDspReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "README.md")));
+    var dspVerificationReportGenerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "DspVerificationReportGenerator.cs")));
+    Assert(audioDspReadme.Contains("DspVerificationReportGenerator.cs", StringComparison.Ordinal), "DSP docs should name migrated verification report ownership");
+    Assert(audioDspReadme.Contains("JerichoDown.Audio", StringComparison.Ordinal), "DSP docs should name the temporary legacy audio DSP dependency");
+    Assert(dspVerificationReportGenerator.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "DSP verification report generator should live in the Audio DSP module namespace");
+    Assert(dspVerificationReportGenerator.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "DSP verification report generator should document its temporary legacy audio DSP dependency");
 
     var midiReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "README.md")));
     var midiDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
