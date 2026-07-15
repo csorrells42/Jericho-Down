@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Threading;
-using System.Windows;
-using System.Windows.Interop;
+using JerichoDown.Modules.DirectX12Viewport;
 using JerichoDown.Modules.Visualization;
 using SharpGen.Runtime;
 using Vortice;
@@ -23,19 +22,11 @@ public enum Direct3D12AudioGraphMode
     MicrophoneSpectrumLines
 }
 
-public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
+public sealed class Direct3D12AudioGraphHost : DirectX12ViewportHost, IDisposable
 {
     public const int DefaultWaterfallLinesPerGap = 8;
     public const int MinimumWaterfallLinesPerGap = 0;
     public const int MaximumWaterfallLinesPerGap = 16;
-
-    private const int WsChild = 0x40000000;
-    private const int WsVisible = 0x10000000;
-    private const int WsClipChildren = 0x02000000;
-    private const int WsClipSiblings = 0x04000000;
-    private const int SsBlackRect = 0x00000004;
-    private const int SwpNoZOrder = 0x0004;
-    private const int SwpNoActivate = 0x0010;
 
     private readonly object _rendererLock = new();
     private readonly object _renderWorkerLock = new();
@@ -44,7 +35,6 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
     private Thread? _renderThread;
     private SpectrumFrame? _pendingFrame;
     private Direct3D12AudioGraphRenderer? _renderer;
-    private IntPtr _hwnd;
     private int _graphMode;
     private int _waterfallLinesPerGap = DefaultWaterfallLinesPerGap;
     private float _spectrumHoverStart = float.NaN;
@@ -53,6 +43,7 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
     private bool _disposed;
 
     public Direct3D12AudioGraphHost()
+        : base("Could not create DX12 audio graph child window.", useBlackBackground: true)
     {
         _renderThread = new Thread(RenderWorkerLoop)
         {
@@ -223,81 +214,40 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         }
     }
 
-    protected override HandleRef BuildWindowCore(HandleRef hwndParent)
+    protected override void OnViewportCreated(IntPtr hwnd, int width, int height)
     {
-        _hwnd = CreateWindowEx(
-            0,
-            "static",
-            string.Empty,
-            WsChild | WsVisible | WsClipChildren | WsClipSiblings | SsBlackRect,
-            0,
-            0,
-            Math.Max(1, (int)ActualWidth),
-            Math.Max(1, (int)ActualHeight),
-            hwndParent.Handle,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            IntPtr.Zero);
-
-        if (_hwnd == IntPtr.Zero)
+        Direct3D12AudioGraphRenderer renderer;
+        lock (_rendererLock)
         {
-            throw new InvalidOperationException("Could not create DX12 audio graph child window.");
+            renderer = new Direct3D12AudioGraphRenderer(hwnd, width, height);
+            _renderer = renderer;
+            renderer.RenderProofFrame(GraphMode, WaterfallLinesPerGap);
         }
 
-        try
-        {
-            lock (_rendererLock)
-            {
-                _renderer = new Direct3D12AudioGraphRenderer(
-                    _hwnd,
-                    Math.Max(1, (int)ActualWidth),
-                    Math.Max(1, (int)ActualHeight));
-                _renderer.RenderProofFrame(GraphMode, WaterfallLinesPerGap);
-            }
-
-            StatusChanged?.Invoke(this, $"{_renderer.DeviceDescription} audio graph ready. {_renderer.StartupStatus}");
-        }
-        catch (Exception ex)
-        {
-            StatusChanged?.Invoke(this, $"DX12 audio graph unavailable: {ex.Message}");
-        }
-
-        return new HandleRef(this, _hwnd);
+        StatusChanged?.Invoke(this, $"{renderer.DeviceDescription} audio graph ready. {renderer.StartupStatus}");
     }
 
-    protected override void DestroyWindowCore(HandleRef hwnd)
+    protected override void OnViewportCreateFailed(Exception ex)
+    {
+        StatusChanged?.Invoke(this, $"DX12 audio graph unavailable: {ex.Message}");
+    }
+
+    protected override void OnViewportDestroying()
     {
         DisposeRenderer();
-        if (hwnd.Handle != IntPtr.Zero)
-        {
-            DestroyWindow(hwnd.Handle);
-        }
-
-        _hwnd = IntPtr.Zero;
     }
 
-    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    protected override void OnViewportResized(int width, int height)
     {
-        base.OnRenderSizeChanged(sizeInfo);
-        if (_hwnd == IntPtr.Zero)
+        lock (_rendererLock)
         {
-            return;
+            _renderer?.Resize(width, height, GraphMode, WaterfallLinesPerGap);
         }
+    }
 
-        var width = Math.Max(1, (int)ActualWidth);
-        var height = Math.Max(1, (int)ActualHeight);
-        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, width, height, SwpNoZOrder | SwpNoActivate);
-        try
-        {
-            lock (_rendererLock)
-            {
-                _renderer?.Resize(width, height, GraphMode, WaterfallLinesPerGap);
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusChanged?.Invoke(this, $"DX12 audio graph resize failed: {ex.Message}");
-        }
+    protected override void OnViewportResizeFailed(Exception ex)
+    {
+        StatusChanged?.Invoke(this, $"DX12 audio graph resize failed: {ex.Message}");
     }
 
     public new void Dispose()
@@ -332,34 +282,6 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
             _renderer = null;
         }
     }
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr CreateWindowEx(
-        int exStyle,
-        string className,
-        string windowName,
-        int style,
-        int x,
-        int y,
-        int width,
-        int height,
-        IntPtr parent,
-        IntPtr menu,
-        IntPtr instance,
-        IntPtr param);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool DestroyWindow(IntPtr hwnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetWindowPos(
-        IntPtr hwnd,
-        IntPtr hwndInsertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        int flags);
 
     private sealed class Direct3D12AudioGraphRenderer : IDisposable
     {

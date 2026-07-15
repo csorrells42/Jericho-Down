@@ -8,6 +8,7 @@ Responsibilities:
 - Manage texture-native camera stream preview.
 - Report the active GPU preview path.
 - Keep expensive preview work off the camera capture thread.
+- Use `DirectX12Viewport` for reusable WPF child-window hosting, while keeping camera-specific rendering here.
 
 Current entry points:
 - `Direct3D12DeviceManager.cs`

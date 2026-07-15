@@ -1376,6 +1376,7 @@ static void ModuleReadmesDefineOwnership()
         Path.Combine("Modules", "Webcam", "DirectShow", "README.md"),
         Path.Combine("Modules", "Webcam", "Dx12", "README.md"),
         Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md"),
+        Path.Combine("Modules", "DirectX12Viewport", "README.md"),
         Path.Combine("Modules", "SessionPlayback", "README.md"),
         Path.Combine("Modules", "Karaoke", "README.md"),
         Path.Combine("Modules", "Midi", "README.md"),
@@ -1393,6 +1394,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
+    Assert(moduleIndex.Contains("DirectX12Viewport", StringComparison.Ordinal), "module index should list reusable DX12 viewport ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`", StringComparison.Ordinal), "module index should record migrated webcam vocabulary helpers");
     Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
@@ -1402,6 +1404,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
+    Assert(moduleIndex.Contains("DirectX12Viewport` owns `DirectX12ViewportHost`", StringComparison.Ordinal), "module index should record reusable DX12 viewport host ownership");
     Assert(moduleIndex.Contains("Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`", StringComparison.Ordinal), "module index should record migrated visualization data ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
@@ -1696,10 +1699,20 @@ static void ModuleReadmesDefineOwnership()
     Assert(midiControlMappingTriggerState.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI control mapping trigger state should live in the MIDI module namespace");
     Assert(soundFontLibrarySource.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "SoundFont library should live in the MIDI module namespace");
 
+    var directX12ViewportReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "DirectX12Viewport", "README.md")));
+    var directX12ViewportHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "DirectX12Viewport", "DirectX12ViewportHost.cs")));
+    Assert(directX12ViewportReadme.Contains("DirectX12ViewportHost.cs", StringComparison.Ordinal), "DX12 viewport docs should name the reusable viewport host");
+    Assert(directX12ViewportHost.Contains("namespace JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "DX12 viewport host should live in the DirectX12Viewport module namespace");
+    Assert(directX12ViewportHost.Contains("abstract class DirectX12ViewportHost : HwndHost", StringComparison.Ordinal), "DX12 viewport host should own reusable WPF child-window hosting");
+    Assert(directX12ViewportHost.Contains("CreateWindowEx", StringComparison.Ordinal), "DX12 viewport host should own child HWND creation");
+
     var visualizationDx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "README.md")));
     var direct3D12AudioGraphHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
     Assert(visualizationDx12Readme.Contains("Direct3D12AudioGraphHost.cs", StringComparison.Ordinal), "Visualization DX12 docs should name migrated audio graph host ownership");
+    Assert(visualizationDx12Readme.Contains("DirectX12Viewport", StringComparison.Ordinal), "Visualization DX12 docs should document the reusable viewport dependency");
     Assert(direct3D12AudioGraphHost.Contains("namespace JerichoDown.Modules.Visualization.Dx12;", StringComparison.Ordinal), "DX12 audio graph host should live in the Visualization DX12 module namespace");
+    Assert(direct3D12AudioGraphHost.Contains("using JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "DX12 audio graph host should use the reusable viewport module");
+    Assert(direct3D12AudioGraphHost.Contains(": DirectX12ViewportHost, IDisposable", StringComparison.Ordinal), "DX12 audio graph host should inherit the reusable viewport host");
 
     var mediaFoundationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md")));
     var mediaFoundationCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraEnumerator.cs")));
@@ -1751,9 +1764,12 @@ static void ModuleReadmesDefineOwnership()
     Assert(dx12Readme.Contains("CameraPreviewFramePumps.cs", StringComparison.Ordinal), "DX12 docs should name migrated frame pump ownership");
     Assert(dx12Readme.Contains("TextureNativeCameraRecorder.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native recorder ownership");
     Assert(dx12Readme.Contains("TextureNativeCameraProbe.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native probe ownership");
+    Assert(dx12Readme.Contains("DirectX12Viewport", StringComparison.Ordinal), "DX12 camera docs should document the reusable viewport dependency");
     Assert(direct3D12DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 device manager should live in the DX12 module namespace");
     Assert(direct3D12DeviceManager.Contains("interface ITextureNativeDeviceManager", StringComparison.Ordinal), "D3D12 device manager should own the texture-native device-manager abstraction");
     Assert(direct3D12PreviewHost.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 preview host should live in the DX12 module namespace");
+    Assert(direct3D12PreviewHost.Contains("using JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "D3D12 preview host should use the reusable viewport module");
+    Assert(direct3D12PreviewHost.Contains(": DirectX12ViewportHost, IDisposable", StringComparison.Ordinal), "D3D12 preview host should inherit the reusable viewport host");
     Assert(dx12Camera.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera should live in the DX12 module namespace");
     Assert(dx12CameraOptions.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera options should live in the DX12 module namespace");
     Assert(cameraPreviewFramePumps.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera preview frame pumps should live in the DX12 module namespace");

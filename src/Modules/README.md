@@ -29,6 +29,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam/DirectShow`: DirectShow camera enumeration, controls, and fallback preview capture.
 - `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise, and GPU preview diagnostics.
 - `Webcam/Dx11Bridge`: D3D11 bridge code used when camera frames need to cross into DX12 rendering.
+- `DirectX12Viewport`: reusable WPF child-window viewport plumbing for DX12 swap-chain renderers.
 - `SessionPlayback`: playback and cataloging of saved podcast sessions, including MP4 video pacing, sidecar WAV audio selection, session folder naming, and recording set numbering.
 - `Karaoke`: worship track playback, lyrics, queueing, vocal recording, and lyric generation support.
 - `Midi`: MIDI device catalog, file playback planning, monitoring, output, and control mappings.
@@ -37,10 +38,11 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Visualization/Dx12`: DX12 audio graph rendering and retained graph history.
 
 The DX12 code is currently split by use case:
+- `DirectX12Viewport` owns reusable WPF/DX12 viewport hosting.
 - `Webcam/Dx12` owns camera/video preview surfaces and GPU camera processing.
 - `Visualization/Dx12` owns audio waveform, spectrum, waterfall, and retained graph rendering.
 
-If a future pass extracts a shared DirectX view/window module, move only the renderer/window primitives that are truly shared by both areas.
+Keep visual content separate from the reusable viewport: camera frames and audio graphs can use the same viewport host without sharing renderer logic.
 
 ## Migration Status
 
@@ -57,6 +59,7 @@ If a future pass extracts a shared DirectX view/window module, move only the ren
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
 - `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
 - `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
+- `DirectX12Viewport` owns `DirectX12ViewportHost`, the reusable WPF child-window host used by DX12 renderers.
 - `Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`.
 - `Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`.
 - `Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`.

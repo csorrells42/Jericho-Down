@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Threading;
-using System.Windows;
-using System.Windows.Interop;
+using JerichoDown.Modules.DirectX12Viewport;
 using JerichoDown.Modules.Webcam;
 using SharpGen.Runtime;
 using Vortice;
@@ -15,17 +14,10 @@ using static Vortice.DXGI.DXGI;
 
 namespace JerichoDown.Modules.Webcam.Dx12;
 
-public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
+public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
 {
-    private const int WsChild = 0x40000000;
-    private const int WsVisible = 0x10000000;
-    private const int WsClipChildren = 0x02000000;
-    private const int WsClipSiblings = 0x04000000;
-    private const int SwpNoZOrder = 0x0004;
-    private const int SwpNoActivate = 0x0010;
     private static readonly TimeSpan RendererDisposeLockTimeout = TimeSpan.FromMilliseconds(250);
 
-    private IntPtr _hwnd;
     private IntPtr _nativeD3D12Device;
     private readonly object _rendererLock = new();
     private readonly object _renderWorkerLock = new();
@@ -38,6 +30,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
     private bool _disposed;
 
     public Direct3D12PreviewHost(IntPtr nativeD3D12Device = default)
+        : base("Could not create DX12 preview child window.")
     {
         _nativeD3D12Device = nativeD3D12Device;
         _renderThread = new Thread(RenderWorkerLoop)
@@ -317,98 +310,56 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         return $"{path}; direct unavailable: {reason}";
     }
 
-    protected override HandleRef BuildWindowCore(HandleRef hwndParent)
+    protected override void OnViewportCreated(IntPtr hwnd, int width, int height)
     {
-        _hwnd = CreateWindowEx(
-            0,
-            "static",
-            string.Empty,
-            WsChild | WsVisible | WsClipChildren | WsClipSiblings,
-            0,
-            0,
-            Math.Max(1, (int)ActualWidth),
-            Math.Max(1, (int)ActualHeight),
-            hwndParent.Handle,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            IntPtr.Zero);
-
-        if (_hwnd == IntPtr.Zero)
-        {
-            throw new InvalidOperationException("Could not create DX12 preview child window.");
-        }
-
+        Direct3D12SwapChainRenderer renderer;
+        var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
         try
         {
-            var nativeDevice = Interlocked.Exchange(ref _nativeD3D12Device, IntPtr.Zero);
-            try
-            {
-                lock (_rendererLock)
-                {
-                    _renderer = new Direct3D12SwapChainRenderer(
-                        _hwnd,
-                        Math.Max(1, (int)ActualWidth),
-                        Math.Max(1, (int)ActualHeight),
-                        nativeDevice);
-                }
-
-                nativeDevice = IntPtr.Zero;
-            }
-            finally
-            {
-                if (nativeDevice != IntPtr.Zero)
-                {
-                    Marshal.Release(nativeDevice);
-                }
-            }
-
-            StatusChanged?.Invoke(this, $"{_renderer.DeviceDescription} preview surface ready.");
             lock (_rendererLock)
             {
-                _renderer.RenderProofFrame(0);
+                renderer = new Direct3D12SwapChainRenderer(hwnd, width, height, nativeDevice);
+                _renderer = renderer;
+            }
+
+            nativeDevice = IntPtr.Zero;
+        }
+        finally
+        {
+            if (nativeDevice != IntPtr.Zero)
+            {
+                Marshal.Release(nativeDevice);
             }
         }
-        catch (Exception ex)
-        {
-            StatusChanged?.Invoke(this, $"DX12 preview surface unavailable: {ex.Message}");
-        }
 
-        return new HandleRef(this, _hwnd);
+        StatusChanged?.Invoke(this, $"{renderer.DeviceDescription} preview surface ready.");
+        lock (_rendererLock)
+        {
+            renderer.RenderProofFrame(0);
+        }
     }
 
-    protected override void DestroyWindowCore(HandleRef hwnd)
+    protected override void OnViewportCreateFailed(Exception ex)
+    {
+        StatusChanged?.Invoke(this, $"DX12 preview surface unavailable: {ex.Message}");
+    }
+
+    protected override void OnViewportDestroying()
     {
         TryDisposeRenderer("window destroy");
-        if (hwnd.Handle != IntPtr.Zero)
-        {
-            DestroyWindow(hwnd.Handle);
-        }
-
-        _hwnd = IntPtr.Zero;
     }
 
-    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    protected override void OnViewportResized(int width, int height)
     {
-        base.OnRenderSizeChanged(sizeInfo);
-        if (_hwnd == IntPtr.Zero)
+        lock (_rendererLock)
         {
-            return;
+            _renderer?.Resize(width, height);
         }
+    }
 
-        var width = Math.Max(1, (int)ActualWidth);
-        var height = Math.Max(1, (int)ActualHeight);
-        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, width, height, SwpNoZOrder | SwpNoActivate);
-        try
-        {
-            lock (_rendererLock)
-            {
-                _renderer?.Resize(width, height);
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusChanged?.Invoke(this, $"DX12 preview resize failed: {ex.Message}");
-        }
+    protected override void OnViewportResizeFailed(Exception ex)
+    {
+        StatusChanged?.Invoke(this, $"DX12 preview resize failed: {ex.Message}");
     }
 
     public new void Dispose()
@@ -464,34 +415,6 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
         _renderer?.Dispose();
         _renderer = null;
     }
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr CreateWindowEx(
-        int exStyle,
-        string className,
-        string windowName,
-        int style,
-        int x,
-        int y,
-        int width,
-        int height,
-        IntPtr parent,
-        IntPtr menu,
-        IntPtr instance,
-        IntPtr param);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool DestroyWindow(IntPtr hwnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetWindowPos(
-        IntPtr hwnd,
-        IntPtr hwndInsertAfter,
-        int x,
-        int y,
-        int width,
-        int height,
-        int flags);
 
     private sealed class Direct3D12SwapChainRenderer : IDisposable
     {
