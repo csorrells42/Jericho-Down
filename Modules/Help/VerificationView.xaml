@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<UserControl x:Class="JerichoDown.VerificationView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="#05070A">
+<UserControl x:Class="JerichoDown.Modules.Help.VerificationView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="#05070A">
   <UserControl.Resources>
     <Style TargetType="TextBlock">
       <Setter Property="Foreground" Value="#F8FAFC" />

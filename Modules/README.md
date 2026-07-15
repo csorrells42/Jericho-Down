@@ -36,6 +36,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 ## Migration Status
 
 - `AppShell` owns `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`.
+- `Help` owns `AboutView` and `VerificationView`.
 - `SessionPlayback` owns `MediaFoundationFilePlaybackService`.
 - `Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`, plus `VideoFrameColorSettings`.
 - `Webcam` owns `VideoFrameDenoiser` for CPU BGRA temporal denoise used by preview/recording fallbacks.

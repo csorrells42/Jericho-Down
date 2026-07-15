@@ -33,6 +33,7 @@ using JerichoDown.Modules.Audio.Diagnostics;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Live;
 using JerichoDown.Modules.Audio.Recording;
+using JerichoDown.Modules.Help;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Mixer;
 using JerichoDown.Modules.SessionPlayback;

@@ -1305,8 +1305,8 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
 
     Assert(!project.Contains("Docs\\jericho-down-tabs-guide.pdf", StringComparison.Ordinal), "grouped tab guide PDF should not be copied to output");
     Assert(File.ReadAllText(FindRepoFile(".gitattributes")).Contains("*.pdf binary", StringComparison.Ordinal), "PDF guides should be treated as binary files");
-    Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
-    Assert(File.ReadAllText(FindRepoFile("VerificationView.xaml")).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
+    Assert(File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml"))).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+    Assert(File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml"))).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
 }
 
 static void PodcastSessionPlaybackPrefersDx12FileRenderer()
@@ -1376,6 +1376,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(rootReadme.Contains("[Modules](Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map");
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
     Assert(moduleIndex.Contains("AppShell` owns `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell infrastructure ownership");
+    Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
@@ -1423,6 +1424,18 @@ static void ModuleReadmesDefineOwnership()
     Assert(atomicFile.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "atomic file helper should live in the AppShell module namespace");
     Assert(pathSafety.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "path safety helper should live in the AppShell module namespace");
     Assert(fileBrowserWatcher.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "file browser watcher should live in the AppShell module namespace");
+
+    var helpReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "README.md")));
+    var aboutViewXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml")));
+    var aboutViewCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml.cs")));
+    var verificationViewXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml")));
+    var verificationViewCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml.cs")));
+    Assert(helpReadme.Contains("AboutView.xaml", StringComparison.Ordinal), "Help docs should name migrated About view ownership");
+    Assert(helpReadme.Contains("VerificationView.xaml", StringComparison.Ordinal), "Help docs should name migrated Verification view ownership");
+    Assert(aboutViewXaml.Contains("x:Class=\"JerichoDown.Modules.Help.AboutView\"", StringComparison.Ordinal), "About view XAML should live in the Help module namespace");
+    Assert(aboutViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "About view code-behind should live in the Help module namespace");
+    Assert(verificationViewXaml.Contains("x:Class=\"JerichoDown.Modules.Help.VerificationView\"", StringComparison.Ordinal), "Verification view XAML should live in the Help module namespace");
+    Assert(verificationViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "Verification view code-behind should live in the Help module namespace");
 
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");

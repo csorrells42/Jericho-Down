@@ -5,7 +5,7 @@ using JerichoDown.Modules.AppShell;
 using JerichoDown.Modules.Audio.Dsp;
 using Microsoft.Win32;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.Help;
 
 public partial class VerificationView : UserControl
 {

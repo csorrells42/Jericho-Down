@@ -10,7 +10,9 @@ Responsibilities:
 
 Current files:
 - `AboutView.xaml`
+- `AboutView.xaml.cs`
 - `VerificationView.xaml`
+- `VerificationView.xaml.cs`
 - `Docs/jericho-down-podcast-guide.pdf`
 - `Docs/jericho-down-karaoke-guide.pdf`
 - `Docs/jericho-down-mic-dsp-guide.pdf`

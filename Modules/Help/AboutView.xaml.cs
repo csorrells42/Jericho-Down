@@ -1,5 +1,5 @@
 using System.Windows.Controls;
-namespace JerichoDown;
+namespace JerichoDown.Modules.Help;
 public partial class AboutView : UserControl
 {
     public AboutView()
