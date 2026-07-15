@@ -13,11 +13,13 @@ Current entry points:
 - `MediaFoundationCameraEnumerator.cs`
 - `MediaFoundationCameraModeService.cs`
 - `MediaFoundationCameraDeviceFactory.cs`
+- `MediaFoundationCameraPreviewService.cs`
 - `MediaFoundationVideoRecorder.cs`
 - `MediaFoundationGuids.cs`
 - `MediaFoundationInterop.cs`
 
-Current legacy files:
-- `Video/MediaFoundationCameraPreviewService.cs`
+Temporary dependencies:
+- `JerichoDown.Video.Direct3D12DeviceManager` for accelerated preview upload.
+- `JerichoDown.Video.VideoFrameDenoiser` until denoise/render helpers migrate.
 
 Session file playback belongs in `SessionPlayback`, even when it uses Media Foundation.

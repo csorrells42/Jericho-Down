@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Modules.Webcam.MediaFoundation;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 public sealed class MediaFoundationCameraPreviewService : IDisposable
 {
