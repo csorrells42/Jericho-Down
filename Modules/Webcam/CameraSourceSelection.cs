@@ -1,6 +1,6 @@
-using JerichoDown.Modules.Webcam;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam;
 
 internal static class CameraSourceSelection
 {

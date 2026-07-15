@@ -16,12 +16,14 @@ Current entry points:
 - `CameraControlKind.cs`
 - `CameraControlItem.cs`
 - `CameraControlText.cs`
+- `CameraSourceSelection.cs`
 - `CameraProfile.cs`
 - `CameraProfileStore.cs`
 - `CameraStatusText.cs`
+- `TextureNativePreviewPolicy.cs`
 - `VideoRecordingPolicy.cs`
 - `VideoFrameColorSettings.cs`
 
-Most camera capture, control, and rendering code still lives in `Video` while migration is in progress.
+Most camera capture, control, and rendering code still lives in `Video` while migration is in progress. `CameraSourceSelection.cs` still depends on those legacy providers until `MediaFoundation`, `DirectShow`, and `Dx12` migrate.
 
 Do not put session playback here unless it is live camera preview or camera recording.
