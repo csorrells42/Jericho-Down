@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using JerichoDown.Modules.Webcam;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.SessionPlayback;
 
 public sealed class MediaFoundationFilePlaybackService : IDisposable
 {

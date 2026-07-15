@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
+using JerichoDown.Modules.Webcam;
 using SharpGen.Runtime;
 using Vortice;
 using Vortice.D3DCompiler;

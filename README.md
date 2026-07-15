@@ -17,6 +17,12 @@ It is offered freely for Christian churches, worship teams, and ministries.
 - Podcast session recording with video, processed mix WAV, optional raw backup WAV, session metadata, and a saved-video browser.
 - Camera profiles, Windows camera controls, video grain reduction, color polish, and preview/record parity reporting.
 
+## Module Map
+
+Jericho Down is being organized into self-documenting modules under [Modules](Modules/README.md). Each module README records what the module owns, what it must not own, and the key files that still need to migrate from the original `Audio`, `Video`, and `Visualization` folders.
+
+Migration rule: move one small ownership boundary at a time, preserve behavior, build, run the test harness, then commit before the next pass.
+
 ## Build
 
 ```powershell

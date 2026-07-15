@@ -1,3 +1,5 @@
+using JerichoDown.Modules.Webcam;
+
 namespace JerichoDown.Video;
 
 public sealed class Dx12CameraOptions

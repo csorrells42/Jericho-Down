@@ -1,4 +1,4 @@
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam;
 
 public readonly record struct VideoFrameColorSettings(
     bool Enabled,

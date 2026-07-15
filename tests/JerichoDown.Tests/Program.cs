@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
+using JerichoDown.Modules.Webcam;
 using JerichoDown.Video;
 using JerichoDown.Visualization;
 using NAudio.Midi;
@@ -57,6 +58,7 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
+    ("Module readmes define ownership", ModuleReadmesDefineOwnership),
     ("Podcast session playback prefers DX12 file renderer", PodcastSessionPlaybackPrefersDx12FileRenderer),
     ("Camera denoise stays on DX12 preview paths", CameraDenoiseStaysOnDx12PreviewPaths),
     ("MIDI tab is opt-in and ordered after Karaoke", MidiTabIsOptInAndOrderedAfterKaraoke),
@@ -1299,13 +1301,15 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationFilePlaybackService.cs")));
+    var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
     var interop = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationInterop.cs")));
 
     Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
     Assert(xaml.Contains("x:Name=\"SessionPlaybackElement\"", StringComparison.Ordinal), "legacy MediaElement fallback should remain available");
+    Assert(windowCode.Contains("using JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "AppShell should reference the SessionPlayback module namespace explicitly");
     Assert(windowCode.Contains("new Direct3D12PreviewHost", StringComparison.Ordinal), "session playback should render through the existing DX12 swap-chain host");
     Assert(windowCode.Contains("new MediaFoundationFilePlaybackService()", StringComparison.Ordinal), "session playback should use the Media Foundation file reader service");
+    Assert(playbackService.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "file playback service should live in the SessionPlayback module namespace");
     Assert(windowCode.Contains("ResolveSessionAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio");
     Assert(windowCode.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
     Assert(windowCode.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
@@ -1330,6 +1334,74 @@ static void PodcastSessionPlaybackPrefersDx12FileRenderer()
     Assert(playbackService.Contains("sourceDeltaTicks >= minimumSourceDeltaTicks", StringComparison.Ordinal), "file playback should reject implausibly tiny camera timestamps that make real-camera recordings race");
     Assert(playbackService.Contains("syntheticPresentationTicks = syntheticTicks + frameDurationTicks", StringComparison.Ordinal), "file playback should pace bad-timestamp frames from the decoded frame rate");
     Assert(interop.Contains("MFCreateSourceReaderFromURL", StringComparison.Ordinal), "Media Foundation interop should expose file source readers");
+}
+
+static void ModuleReadmesDefineOwnership()
+{
+    var rootReadme = File.ReadAllText(FindRepoFile("README.md"));
+    var moduleIndex = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "README.md")));
+    string[] moduleReadmes =
+    [
+        Path.Combine("Modules", "AppShell", "README.md"),
+        Path.Combine("Modules", "Audio", "README.md"),
+        Path.Combine("Modules", "Audio", "Asio", "README.md"),
+        Path.Combine("Modules", "Audio", "Dsp", "README.md"),
+        Path.Combine("Modules", "Mixer", "README.md"),
+        Path.Combine("Modules", "Webcam", "README.md"),
+        Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md"),
+        Path.Combine("Modules", "Webcam", "DirectShow", "README.md"),
+        Path.Combine("Modules", "Webcam", "Dx12", "README.md"),
+        Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md"),
+        Path.Combine("Modules", "SessionPlayback", "README.md"),
+        Path.Combine("Modules", "Karaoke", "README.md"),
+        Path.Combine("Modules", "Midi", "README.md"),
+        Path.Combine("Modules", "Help", "README.md"),
+        Path.Combine("Modules", "Visualization", "README.md"),
+        Path.Combine("Modules", "Visualization", "Dx12", "README.md")
+    ];
+
+    Assert(rootReadme.Contains("[Modules](Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map");
+    Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
+    Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`", StringComparison.Ordinal), "module index should record migrated webcam vocabulary helpers");
+
+    foreach (var readmePath in moduleReadmes)
+    {
+        var text = File.ReadAllText(FindRepoFile(readmePath));
+        Assert(text.Contains("Owns", StringComparison.OrdinalIgnoreCase) || text.Contains("Responsibilities", StringComparison.OrdinalIgnoreCase), $"{readmePath} should define ownership or responsibilities");
+    }
+
+    var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
+    Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
+    Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+
+    var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
+    var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));
+    var cameraVideoMode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraVideoMode.cs")));
+    var cameraFrame = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraFrame.cs")));
+    var cameraControlKind = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraControlKind.cs")));
+    var cameraControlItem = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraControlItem.cs")));
+    var cameraStatusText = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraStatusText.cs")));
+    var videoRecordingPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoRecordingPolicy.cs")));
+    Assert(webcamReadme.Contains("CameraDevice.cs", StringComparison.Ordinal), "webcam docs should name migrated camera device ownership");
+    Assert(webcamReadme.Contains("CameraVideoMode.cs", StringComparison.Ordinal), "webcam docs should name migrated camera mode ownership");
+    Assert(webcamReadme.Contains("CameraFrame.cs", StringComparison.Ordinal), "webcam docs should name migrated camera frame ownership");
+    Assert(webcamReadme.Contains("CameraControlKind.cs", StringComparison.Ordinal), "webcam docs should name migrated camera control kind ownership");
+    Assert(webcamReadme.Contains("CameraControlItem.cs", StringComparison.Ordinal), "webcam docs should name migrated camera control item ownership");
+    Assert(webcamReadme.Contains("CameraStatusText.cs", StringComparison.Ordinal), "webcam docs should name migrated camera status ownership");
+    Assert(webcamReadme.Contains("VideoRecordingPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated recording policy ownership");
+    Assert(webcamReadme.Contains("VideoFrameColorSettings.cs", StringComparison.Ordinal), "webcam docs should name migrated color settings ownership");
+    Assert(cameraDevice.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device should live in the Webcam module namespace");
+    Assert(cameraVideoMode.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera video mode should live in the Webcam module namespace");
+    Assert(cameraFrame.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera frame should live in the Webcam module namespace");
+    Assert(cameraControlKind.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control kind should live in the Webcam module namespace");
+    Assert(cameraControlItem.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control item should live in the Webcam module namespace");
+    Assert(cameraStatusText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera status text should live in the Webcam module namespace");
+    Assert(videoRecordingPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video recording policy should live in the Webcam module namespace");
+    var videoFrameColorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameColorSettings.cs")));
+    Assert(videoFrameColorSettings.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame color settings should live in the Webcam module namespace");
 }
 
 static void CameraDenoiseStaysOnDx12PreviewPaths()

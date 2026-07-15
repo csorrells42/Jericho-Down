@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using JerichoDown.Modules.Webcam;
 
 namespace JerichoDown.Video;
 

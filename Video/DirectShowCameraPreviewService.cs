@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using JerichoDown.Modules.Webcam;
 
 namespace JerichoDown.Video;
 

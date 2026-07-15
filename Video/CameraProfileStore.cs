@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using JerichoDown.Modules.Webcam;
 
 namespace JerichoDown.Video;
 

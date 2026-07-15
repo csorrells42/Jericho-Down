@@ -1,4 +1,6 @@
-namespace JerichoDown.Video;
+using JerichoDown.Video;
+
+namespace JerichoDown.Modules.Webcam;
 
 internal static class CameraStatusText
 {

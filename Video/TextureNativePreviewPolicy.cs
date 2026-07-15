@@ -1,3 +1,5 @@
+using JerichoDown.Modules.Webcam;
+
 namespace JerichoDown.Video;
 
 internal static class TextureNativePreviewPolicy
