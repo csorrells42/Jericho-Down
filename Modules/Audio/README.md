@@ -6,6 +6,7 @@ Most entry points still live in the legacy `Audio` folder while migration is in 
 
 Important submodules:
 - `Asio`: ASIO-specific driver startup, callback testing, and diagnostics.
+- `Devices`: input/output device vocabulary, selected-channel modes, and output route policy.
 - `Dsp`: voice processor, EQ, verification, and signal shaping.
 - `Sync`: delay lines, auxiliary latency buffers, and NAudio-backed sample-rate conversion.
 

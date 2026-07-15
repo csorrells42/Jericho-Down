@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Sync;
 using JerichoDown.Modules.Midi;
@@ -1382,6 +1383,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`", StringComparison.Ordinal), "module index should record migrated visualization data ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
+    Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
     Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
@@ -1410,6 +1412,27 @@ static void ModuleReadmesDefineOwnership()
     Assert(spectrumFrame.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame should live in the Visualization module namespace");
     Assert(spectrumFrameRouter.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame router should live in the Visualization module namespace");
     Assert(feedbackDangerDetector.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "feedback detector should live in the Visualization module namespace");
+
+    var audioDevicesReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "README.md")));
+    var audioDeviceSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioInputDevice.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioOutputDevice.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioDeviceFormat.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "InputChannelMode.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "PrimaryCaptureSelector.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "ProcessedOutputRoutePlanner.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "WasapiOutputSettings.cs")))
+    };
+    Assert(audioDevicesReadme.Contains("AudioInputDevice.cs", StringComparison.Ordinal), "Audio device docs should name migrated input device ownership");
+    Assert(audioDevicesReadme.Contains("AudioOutputDevice.cs", StringComparison.Ordinal), "Audio device docs should name migrated output device ownership");
+    Assert(audioDevicesReadme.Contains("AudioDeviceFormat.cs", StringComparison.Ordinal), "Audio device docs should name migrated device format ownership");
+    Assert(audioDevicesReadme.Contains("InputChannelMode.cs", StringComparison.Ordinal), "Audio device docs should name migrated input channel mode ownership");
+    Assert(audioDevicesReadme.Contains("PrimaryCaptureSelector.cs", StringComparison.Ordinal), "Audio device docs should name migrated primary capture selector ownership");
+    Assert(audioDevicesReadme.Contains("ProcessedOutputRoutePlanner.cs", StringComparison.Ordinal), "Audio device docs should name migrated processed output route ownership");
+    Assert(audioDevicesReadme.Contains("WasapiOutputSettings.cs", StringComparison.Ordinal), "Audio device docs should name migrated WASAPI settings ownership");
+    Assert(audioDevicesReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio device docs should name the live audio service consumer");
+    Assert(audioDeviceSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Devices;", StringComparison.Ordinal)), "Audio device vocabulary should live in the Audio Devices module namespace");
 
     var mixerReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "README.md")));
     var mixerSources = new[]

@@ -27,6 +27,7 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Mixer;

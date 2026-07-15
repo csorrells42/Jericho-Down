@@ -1,4 +1,4 @@
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Devices;
 
 public readonly record struct PrimaryCaptureCandidate(
     int ChannelNumber,

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using JerichoDown.Modules.Audio.Devices;
 using NAudio.CoreAudioApi;
 
 namespace JerichoDown.Audio;
