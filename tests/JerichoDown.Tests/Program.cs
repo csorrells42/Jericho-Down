@@ -1375,7 +1375,7 @@ static void ModuleReadmesDefineOwnership()
 
     Assert(rootReadme.Contains("[Modules](Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map");
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
-    Assert(moduleIndex.Contains("AppShell` owns `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell ownership");
+    Assert(moduleIndex.Contains("AppShell` owns `App`, `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell ownership");
     Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
@@ -1409,6 +1409,8 @@ static void ModuleReadmesDefineOwnership()
     }
 
     var appShellReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "README.md")));
+    var appXaml = File.ReadAllText(FindRepoFile("App.xaml"));
+    var appCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "App.xaml.cs")));
     var equalizerWindowXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var equalizerWindowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var appStateStore = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
@@ -1416,12 +1418,16 @@ static void ModuleReadmesDefineOwnership()
     var atomicFile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AtomicFile.cs")));
     var pathSafety = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "PathSafety.cs")));
     var fileBrowserWatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "FileBrowserWatcher.cs")));
+    Assert(appShellReadme.Contains("App.xaml.cs", StringComparison.Ordinal), "AppShell docs should name migrated app bootstrap ownership");
     Assert(appShellReadme.Contains("EqualizerWindow.xaml", StringComparison.Ordinal), "AppShell docs should name migrated main window ownership");
     Assert(appShellReadme.Contains("AppStateStore.cs", StringComparison.Ordinal), "AppShell docs should name migrated app state ownership");
     Assert(appShellReadme.Contains("AppStoragePaths.cs", StringComparison.Ordinal), "AppShell docs should name migrated storage-path ownership");
     Assert(appShellReadme.Contains("AtomicFile.cs", StringComparison.Ordinal), "AppShell docs should name migrated atomic-write ownership");
     Assert(appShellReadme.Contains("PathSafety.cs", StringComparison.Ordinal), "AppShell docs should name migrated path safety ownership");
     Assert(appShellReadme.Contains("FileBrowserWatcher.cs", StringComparison.Ordinal), "AppShell docs should name migrated browser watcher ownership");
+    Assert(appXaml.Contains("x:Class=\"JerichoDown.Modules.AppShell.App\"", StringComparison.Ordinal), "app XAML should use the AppShell module namespace");
+    Assert(appXaml.Contains("StartupUri=\"Modules/AppShell/EqualizerWindow.xaml\"", StringComparison.Ordinal), "app bootstrap should start the AppShell main window path");
+    Assert(appCode.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "app code-behind should live in the AppShell module namespace");
     Assert(equalizerWindowXaml.Contains("x:Class=\"JerichoDown.Modules.AppShell.EqualizerWindow\"", StringComparison.Ordinal), "main window XAML should live in the AppShell module namespace");
     Assert(equalizerWindowXaml.Contains("Icon=\"/Assets/jericho-down-icon.ico\"", StringComparison.Ordinal), "main window icon path should remain rooted after moving XAML into AppShell");
     Assert(equalizerWindowCode.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "main window code-behind should live in the AppShell module namespace");

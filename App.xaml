@@ -1,4 +1,4 @@
-<Application x:Class="JerichoDown.App"
+<Application x:Class="JerichoDown.Modules.AppShell.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="Modules/AppShell/EqualizerWindow.xaml">

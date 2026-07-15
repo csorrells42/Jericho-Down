@@ -1,8 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
-using JerichoDown.Modules.AppShell;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 /// <summary>
 /// Interaction logic for App.xaml
