@@ -624,7 +624,7 @@ static void NAudioBiQuadRackExposesEveryEqShape()
     Assert(CalculateTailRms(notch, start) < bypassRms * 0.35d, "NAudio notch should cut the selected frequency");
     Assert(peaking.All(float.IsFinite) && notch.All(float.IsFinite), "NAudio BiQuad output should stay finite");
 
-    var rackSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs")));
+    var rackSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs")));
     foreach (var factory in new[]
     {
         "LowPassFilter",
@@ -685,7 +685,7 @@ static void NAudioPitchShiftMovesToneFrequency()
     Assert(shiftedMagnitude > sourceMagnitude * 1.25d, "NAudio SmbPitchShifter should move a +12 semitone tone toward the octave");
     Assert(shifted.All(float.IsFinite), "NAudio pitch shift output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs")));
     Assert(processor.Contains("SmbPitchShifter", StringComparison.Ordinal), "NAudio pitch shift should use SmbPitchShifter");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
@@ -725,7 +725,7 @@ static void NAudioConvolutionAddsGeneratedImpulseTail()
     Assert(CalculateTailRms(convolved, tailStart) > CalculateTailRms(bypass, tailStart) * 3d + 0.0005d, "NAudio convolution should add an audible generated impulse tail");
     Assert(convolved.All(float.IsFinite), "NAudio convolution output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs")));
     Assert(processor.Contains("ImpulseResponseConvolution", StringComparison.Ordinal), "NAudio convolution should use ImpulseResponseConvolution");
     Assert(processor.Contains(".Convolve(", StringComparison.Ordinal), "NAudio convolution should call Convolve");
     Assert(processor.Contains(".Normalize(", StringComparison.Ordinal), "NAudio convolution should normalize generated impulses");
@@ -758,7 +758,7 @@ static void NAudioEnvelopeGeneratorShapesAttack()
     Assert(earlyRms < sustainedRms * 0.45d, "NAudio EnvelopeGenerator should ramp in with a long attack");
     Assert(shaped.All(float.IsFinite), "NAudio envelope output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs")));
     Assert(processor.Contains("EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope should use EnvelopeGenerator");
 
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
@@ -771,7 +771,7 @@ static void NAudioEnvelopeGeneratorShapesAttack()
 
 static void NAudioDmoEffectChainExposesDirectSoundEffects()
 {
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs")));
     foreach (var effectType in new[]
     {
         "DmoChorus",
@@ -1378,7 +1378,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
-    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, and `EqualizerBand`", StringComparison.Ordinal), "module index should record migrated DSP model ownership");
+    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
 
     foreach (var readmePath in moduleReadmes)
@@ -1411,18 +1411,37 @@ static void ModuleReadmesDefineOwnership()
     var builtInVoicePresetCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "BuiltInVoicePresetCatalog.cs")));
     var voiceProcessingTelemetry = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessingTelemetry.cs")));
     var equalizerBand = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "EqualizerBand.cs")));
+    var voiceSampleProcessor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceSampleProcessor.cs")));
+    var voiceProcessorSampleProvider = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessorSampleProvider.cs")));
+    var stereoVoiceProcessorSampleProvider = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "StereoVoiceProcessorSampleProvider.cs")));
+    var nAudioDspProcessors = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs")))
+    };
     Assert(audioDspReadme.Contains("DspVerificationReportGenerator.cs", StringComparison.Ordinal), "DSP docs should name migrated verification report ownership");
     Assert(audioDspReadme.Contains("VoiceProcessorSettings.cs", StringComparison.Ordinal), "DSP docs should name migrated settings ownership");
     Assert(audioDspReadme.Contains("BuiltInVoicePresetCatalog.cs", StringComparison.Ordinal), "DSP docs should name migrated preset ownership");
     Assert(audioDspReadme.Contains("VoiceProcessingTelemetry.cs", StringComparison.Ordinal), "DSP docs should name migrated telemetry ownership");
     Assert(audioDspReadme.Contains("EqualizerBand.cs", StringComparison.Ordinal), "DSP docs should name migrated equalizer band ownership");
-    Assert(audioDspReadme.Contains("JerichoDown.Audio", StringComparison.Ordinal), "DSP docs should name the temporary legacy audio DSP dependency");
+    Assert(audioDspReadme.Contains("VoiceSampleProcessor.cs", StringComparison.Ordinal), "DSP docs should name migrated voice processor ownership");
+    Assert(audioDspReadme.Contains("VoiceProcessorSampleProvider.cs", StringComparison.Ordinal), "DSP docs should name migrated mono provider ownership");
+    Assert(audioDspReadme.Contains("StereoVoiceProcessorSampleProvider.cs", StringComparison.Ordinal), "DSP docs should name migrated stereo provider ownership");
+    Assert(audioDspReadme.Contains("NAudioDmoEffectChain.cs", StringComparison.Ordinal), "DSP docs should name migrated NAudio effect chain ownership");
+    Assert(audioDspReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "DSP docs should name the live audio service consumer");
     Assert(dspVerificationReportGenerator.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "DSP verification report generator should live in the Audio DSP module namespace");
-    Assert(dspVerificationReportGenerator.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "DSP verification report generator should document its temporary legacy audio DSP dependency");
+    Assert(!dspVerificationReportGenerator.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "DSP verification report generator should not depend on the legacy audio namespace");
     Assert(voiceProcessorSettings.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processor settings should live in the Audio DSP module namespace");
     Assert(builtInVoicePresetCatalog.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "built-in voice preset catalog should live in the Audio DSP module namespace");
     Assert(voiceProcessingTelemetry.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processing telemetry should live in the Audio DSP module namespace");
     Assert(equalizerBand.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "equalizer band should live in the Audio DSP module namespace");
+    Assert(voiceSampleProcessor.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice sample processor should live in the Audio DSP module namespace");
+    Assert(voiceProcessorSampleProvider.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "mono voice sample provider should live in the Audio DSP module namespace");
+    Assert(stereoVoiceProcessorSampleProvider.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "stereo voice sample provider should live in the Audio DSP module namespace");
+    Assert(nAudioDspProcessors.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal)), "NAudio DSP wrappers should live in the Audio DSP module namespace");
 
     var midiReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "README.md")));
     var midiDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
@@ -1628,12 +1647,12 @@ static void VoiceProcessorUsesEveryDspSetting()
 {
     var processor = string.Join(
         Environment.NewLine,
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceSampleProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)

@@ -1,9 +1,8 @@
 using NAudio.Dmo;
 using NAudio.Dmo.Effect;
 using NAudio.Wave;
-using JerichoDown.Modules.Audio.Dsp;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Dsp;
 
 public sealed class NAudioDmoEffectChain : IDisposable
 {

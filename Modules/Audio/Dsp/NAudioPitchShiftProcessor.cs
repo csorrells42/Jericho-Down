@@ -1,7 +1,6 @@
 using NAudio.Dsp;
-using JerichoDown.Modules.Audio.Dsp;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Dsp;
 
 public sealed class NAudioPitchShiftProcessor
 {

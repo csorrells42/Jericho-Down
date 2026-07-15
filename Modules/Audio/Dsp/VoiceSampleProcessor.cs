@@ -1,6 +1,4 @@
-using JerichoDown.Modules.Audio.Dsp;
-
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Dsp;
 
 public sealed class VoiceSampleProcessor
 {

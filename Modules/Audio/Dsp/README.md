@@ -8,17 +8,16 @@ Current entry points:
 - `BuiltInVoicePresetCatalog.cs`
 - `VoiceProcessingTelemetry.cs`
 - `EqualizerBand.cs`
+- `VoiceSampleProcessor.cs`
+- `VoiceProcessorSampleProvider.cs`
+- `StereoVoiceProcessorSampleProvider.cs`
+- `NAudioBiQuadFilterRack.cs`
+- `NAudioPitchShiftProcessor.cs`
+- `NAudioImpulseConvolutionProcessor.cs`
+- `NAudioEnvelopeGeneratorProcessor.cs`
+- `NAudioDmoEffectChain.cs`
 
-Temporary dependencies:
-- `JerichoDown.Audio` voice processor and effect types until the rest of the DSP stack moves into this module.
-
-Current legacy files include:
-- `Audio/VoiceSampleProcessor.cs`
-- `Audio/VoiceProcessorSampleProvider.cs`
-- `Audio/NAudioBiQuadFilterRack.cs`
-- `Audio/NAudioPitchShiftProcessor.cs`
-- `Audio/NAudioImpulseConvolutionProcessor.cs`
-- `Audio/NAudioEnvelopeGeneratorProcessor.cs`
-- `Audio/NAudioDmoEffectChain.cs`
+Consumed by:
+- `JerichoDown.Audio.MicrophoneSpectrumService` for live capture, graphing, and recording pipelines.
 
 Keep NAudio-owned effect verification separate from custom Jericho DSP claims.
