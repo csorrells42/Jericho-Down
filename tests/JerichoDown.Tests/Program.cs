@@ -1370,6 +1370,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
+    Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator` and `DirectShowCameraControlService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1404,6 +1405,14 @@ static void ModuleReadmesDefineOwnership()
     Assert(mediaFoundationVideoRecorder.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation video recorder should live in the MediaFoundation module namespace");
     Assert(mediaFoundationGuids.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation GUIDs should live in the MediaFoundation module namespace");
     Assert(mediaFoundationInterop.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation interop should live in the MediaFoundation module namespace");
+
+    var directShowReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "README.md")));
+    var directShowCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraEnumerator.cs")));
+    var directShowCameraControlService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraControlService.cs")));
+    Assert(directShowReadme.Contains("DirectShowCameraEnumerator.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera enumerator ownership");
+    Assert(directShowReadme.Contains("DirectShowCameraControlService.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera control ownership");
+    Assert(directShowCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera enumerator should live in the DirectShow module namespace");
+    Assert(directShowCameraControlService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera control service should live in the DirectShow module namespace");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));

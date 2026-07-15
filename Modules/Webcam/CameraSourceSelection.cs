@@ -1,3 +1,4 @@
+using JerichoDown.Modules.Webcam.DirectShow;
 using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 

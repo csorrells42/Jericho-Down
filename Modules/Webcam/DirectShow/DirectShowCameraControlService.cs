@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using JerichoDown.Modules.Webcam;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.DirectShow;
 
 public sealed class DirectShowCameraControlService
 {
