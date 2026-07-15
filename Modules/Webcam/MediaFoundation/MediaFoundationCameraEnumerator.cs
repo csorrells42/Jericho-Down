@@ -1,7 +1,7 @@
 using JerichoDown.Modules.Webcam;
-using JerichoDown.Modules.Webcam.MediaFoundation;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.MediaFoundation;
 
 public static class MediaFoundationCameraEnumerator
 {

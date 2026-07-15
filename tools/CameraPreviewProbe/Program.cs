@@ -1,5 +1,6 @@
 using System.Globalization;
 using JerichoDown.Modules.Webcam;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 using System.Windows;
 using System.Windows.Threading;

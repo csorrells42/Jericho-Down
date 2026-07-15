@@ -10,12 +10,12 @@ Responsibilities:
 - Provide CPU preview fallback frames when texture-native preview is unavailable.
 
 Current entry points:
+- `MediaFoundationCameraEnumerator.cs`
+- `MediaFoundationCameraModeService.cs`
 - `MediaFoundationGuids.cs`
 - `MediaFoundationInterop.cs`
 
 Current legacy files:
-- `Video/MediaFoundationCameraEnumerator.cs`
-- `Video/MediaFoundationCameraModeService.cs`
 - `Video/MediaFoundationCameraDeviceFactory.cs`
 - `Video/MediaFoundationCameraPreviewService.cs`
 - `Video/MediaFoundationVideoRecorder.cs`

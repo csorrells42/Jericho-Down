@@ -1,3 +1,4 @@
+using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 
 namespace JerichoDown.Modules.Webcam;

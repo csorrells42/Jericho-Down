@@ -28,6 +28,7 @@ using NAudio.Wave.SampleProviders;
 using JerichoDown.Audio;
 using JerichoDown.Modules.SessionPlayback;
 using JerichoDown.Modules.Webcam;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 using JerichoDown.Video;
 using JerichoDown.Visualization;
 using ShapePath = System.Windows.Shapes.Path;
