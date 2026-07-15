@@ -1416,7 +1416,6 @@ static void ModuleReadmesDefineOwnership()
     Assert(directShowCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera enumerator should live in the DirectShow module namespace");
     Assert(directShowCameraControlService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera control service should live in the DirectShow module namespace");
     Assert(directShowCameraPreviewService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera preview service should live in the DirectShow module namespace");
-    Assert(directShowCameraPreviewService.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "DirectShow camera preview service should document its temporary legacy denoise dependency");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));
@@ -1432,6 +1431,7 @@ static void ModuleReadmesDefineOwnership()
     var cameraStatusText = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraStatusText.cs")));
     var textureNativePreviewPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "TextureNativePreviewPolicy.cs")));
     var videoRecordingPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoRecordingPolicy.cs")));
+    var videoFrameDenoiser = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameDenoiser.cs")));
     Assert(webcamReadme.Contains("CameraDevice.cs", StringComparison.Ordinal), "webcam docs should name migrated camera device ownership");
     Assert(webcamReadme.Contains("CameraDeviceCatalog.cs", StringComparison.Ordinal), "webcam docs should name migrated camera catalog ownership");
     Assert(webcamReadme.Contains("CameraVideoMode.cs", StringComparison.Ordinal), "webcam docs should name migrated camera mode ownership");
@@ -1445,6 +1445,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(webcamReadme.Contains("CameraStatusText.cs", StringComparison.Ordinal), "webcam docs should name migrated camera status ownership");
     Assert(webcamReadme.Contains("TextureNativePreviewPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated texture-native preview policy ownership");
     Assert(webcamReadme.Contains("VideoRecordingPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated recording policy ownership");
+    Assert(webcamReadme.Contains("VideoFrameDenoiser.cs", StringComparison.Ordinal), "webcam docs should name migrated frame denoiser ownership");
     Assert(webcamReadme.Contains("VideoFrameColorSettings.cs", StringComparison.Ordinal), "webcam docs should name migrated color settings ownership");
     Assert(cameraDevice.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device should live in the Webcam module namespace");
     Assert(cameraDeviceCatalog.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device catalog should live in the Webcam module namespace");
@@ -1460,6 +1461,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(cameraStatusText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera status text should live in the Webcam module namespace");
     Assert(textureNativePreviewPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "texture-native preview policy should live in the Webcam module namespace");
     Assert(videoRecordingPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video recording policy should live in the Webcam module namespace");
+    Assert(videoFrameDenoiser.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame denoiser should live in the Webcam module namespace");
     var videoFrameColorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameColorSettings.cs")));
     Assert(videoFrameColorSettings.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame color settings should live in the Webcam module namespace");
 }

@@ -13,7 +13,4 @@ Current entry points:
 - `DirectShowCameraControlService.cs`
 - `DirectShowCameraPreviewService.cs`
 
-Temporary dependencies:
-- `JerichoDown.Video.VideoFrameDenoiser` until denoise helpers migrate.
-
 Do not add Media Foundation source reader code or DX12 shader code here.

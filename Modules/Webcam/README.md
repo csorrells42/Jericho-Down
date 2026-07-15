@@ -22,6 +22,7 @@ Current entry points:
 - `CameraStatusText.cs`
 - `TextureNativePreviewPolicy.cs`
 - `VideoRecordingPolicy.cs`
+- `VideoFrameDenoiser.cs`
 - `VideoFrameColorSettings.cs`
 
 Most camera capture, control, and rendering code still lives in `Video` while migration is in progress. `CameraSourceSelection.cs` still depends on those legacy providers until `MediaFoundation`, `DirectShow`, and `Dx12` migrate.
