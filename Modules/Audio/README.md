@@ -9,6 +9,7 @@ Important submodules:
 - `Capture`: process-loopback and signal-generator capture source implementations.
 - `CoreAudio`: Windows CoreAudio session enumeration, session control, and device notifications.
 - `Devices`: input/output device vocabulary, selected-channel modes, and output route policy.
+- `Diagnostics`: user-facing audio device and ASIO runtime diagnostic reports.
 - `Dsp`: voice processor, EQ, verification, and signal shaping.
 - `Recording`: recording source selection, audio-file analysis, sample conversion, and compressed export.
 - `Sync`: delay lines, auxiliary latency buffers, and NAudio-backed sample-rate conversion.

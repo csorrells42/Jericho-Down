@@ -5,7 +5,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Diagnostics;
 
 public static class AudioDeviceDiagnostics
 {

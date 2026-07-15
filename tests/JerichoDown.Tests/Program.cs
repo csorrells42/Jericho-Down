@@ -12,6 +12,7 @@ using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Capture;
 using JerichoDown.Modules.Audio.CoreAudio;
 using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Diagnostics;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Recording;
 using JerichoDown.Modules.Audio.Sync;
@@ -1389,6 +1390,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Audio/Capture` owns `ProcessLoopbackCapture` and `SignalGeneratorCapture`", StringComparison.Ordinal), "module index should record migrated audio capture source ownership");
     Assert(moduleIndex.Contains("Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`", StringComparison.Ordinal), "module index should record migrated CoreAudio ownership");
     Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
+    Assert(moduleIndex.Contains("Audio/Diagnostics` owns `AudioDeviceDiagnostics`", StringComparison.Ordinal), "module index should record migrated audio diagnostics ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
     Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
@@ -1437,6 +1439,12 @@ static void ModuleReadmesDefineOwnership()
     Assert(audioCoreAudioReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "CoreAudio docs should name the live audio service consumer");
     Assert(coreAudioSessionCatalog.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "CoreAudio session catalog should live in the Audio CoreAudio module namespace");
     Assert(audioDeviceNotificationWatcher.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "audio device notification watcher should live in the Audio CoreAudio module namespace");
+
+    var audioDiagnosticsReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "README.md")));
+    var audioDeviceDiagnostics = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
+    Assert(audioDiagnosticsReadme.Contains("AudioDeviceDiagnostics.cs", StringComparison.Ordinal), "Audio diagnostics docs should name migrated device diagnostics ownership");
+    Assert(audioDiagnosticsReadme.Contains("EqualizerWindow.xaml.cs", StringComparison.Ordinal), "Audio diagnostics docs should name the shell consumer");
+    Assert(audioDeviceDiagnostics.Contains("namespace JerichoDown.Modules.Audio.Diagnostics;", StringComparison.Ordinal), "audio device diagnostics should live in the Audio Diagnostics module namespace");
 
     var audioDevicesReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "README.md")));
     var audioDeviceSources = new[]
@@ -1866,7 +1874,7 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(asioReport.Contains("Focusrite Control", StringComparison.Ordinal), "ASIO diagnostics should name Focusrite routing/clock checks");
     Assert(asioReport.Contains("stopped automatic ASIO retries", StringComparison.Ordinal), "ASIO diagnostics should explain that automatic driver reopen loops are stopped");
 
-    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
     Assert(diagnosticsSource.Contains("AudioEndpointVolume", StringComparison.Ordinal), "diagnostics should inspect Windows endpoint volume/mute state");
     Assert(diagnosticsSource.Contains("AudioMeterInformation", StringComparison.Ordinal), "diagnostics should inspect current endpoint meter state");
 
@@ -2218,7 +2226,7 @@ static void AsioInputCaptureUsesRecordOnlyLiveMode()
 {
     var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
     var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
-    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
 
     Assert(serviceSource.Contains("useSilentOutputClock: false", StringComparison.Ordinal), "live ASIO input should use record-only startup by default");
     Assert(captureSource.Contains("useSilentOutputClock = false", StringComparison.Ordinal), "ASIO input capture should default to record-only mode");

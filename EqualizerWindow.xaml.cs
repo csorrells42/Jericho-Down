@@ -29,6 +29,7 @@ using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.CoreAudio;
 using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Diagnostics;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Recording;
 using JerichoDown.Modules.Midi;

@@ -17,6 +17,6 @@ Current entry points:
 
 Current legacy integration points:
 - ASIO sections of `Audio/MicrophoneSpectrumService.cs`
-- ASIO sections of `Audio/AudioDeviceDiagnostics.cs`
+- ASIO sections of `Modules/Audio/Diagnostics/AudioDeviceDiagnostics.cs`
 
 Do not add generic WASAPI, WaveIn, mixer, or DSP code here.
