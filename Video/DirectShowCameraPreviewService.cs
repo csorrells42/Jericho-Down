@@ -57,6 +57,8 @@ public sealed class DirectShowCameraPreviewService : IDisposable
 
     public bool DenoiseEnabled { get; set; }
 
+    public bool DenoiseHandledByPreviewRenderer { get; set; }
+
     public double DenoiseStrength { get; set; } = 2d;
 
     public VideoFrameColorSettings ColorSettings { get; set; } = VideoFrameColorSettings.Off;
@@ -470,7 +472,7 @@ public sealed class DirectShowCameraPreviewService : IDisposable
             Marshal.Copy(buffer, bytes, 0, bytes.Length);
         }
 
-        if (DenoiseEnabled)
+        if (DenoiseEnabled && !DenoiseHandledByPreviewRenderer)
         {
             _denoiser.Apply(bytes, DenoiseStrength);
         }

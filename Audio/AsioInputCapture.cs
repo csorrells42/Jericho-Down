@@ -8,13 +8,22 @@ public sealed class AsioInputCapture : IWaveIn
     private readonly object _gate = new();
     private readonly int _requestedChannelCount;
     private readonly int _requestedSampleRate;
+    private readonly bool _useSilentOutputClock;
     private StaThreadDispatcher? _dispatcher;
     private AsioOut? _asio;
     private float[] _sampleBuffer = [];
     private byte[] _byteBuffer = [];
+    private AsioInputCaptureDiagnostics? _diagnostics;
+    private long _audioCallbackCount;
+    private long _lastAudioCallbackUtcTicks;
     private bool _stoppedRaised;
 
-    public AsioInputCapture(string driverName, int sampleRate, int channelCount, int inputChannelOffset = 0)
+    public AsioInputCapture(
+        string driverName,
+        int sampleRate,
+        int channelCount,
+        int inputChannelOffset = 0,
+        bool useSilentOutputClock = false)
     {
         if (string.IsNullOrWhiteSpace(driverName))
         {
@@ -25,6 +34,7 @@ public sealed class AsioInputCapture : IWaveIn
         InputChannelOffset = Math.Max(0, inputChannelOffset);
         _requestedSampleRate = Math.Max(8000, sampleRate);
         _requestedChannelCount = Math.Max(1, channelCount);
+        _useSilentOutputClock = useSilentOutputClock;
         WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(_requestedSampleRate, _requestedChannelCount);
     }
 
@@ -36,7 +46,30 @@ public sealed class AsioInputCapture : IWaveIn
 
     public int InputChannelOffset { get; }
 
+    public int RequestedSampleRate => _requestedSampleRate;
+
     public WaveFormat WaveFormat { get; set; }
+
+    public AsioInputCaptureDiagnostics? GetDiagnosticsSnapshot()
+    {
+        AsioInputCaptureDiagnostics? diagnostics;
+        lock (_gate)
+        {
+            diagnostics = _diagnostics;
+        }
+
+        if (diagnostics is null)
+        {
+            return null;
+        }
+
+        var lastCallbackTicks = Interlocked.Read(ref _lastAudioCallbackUtcTicks);
+        return diagnostics with
+        {
+            AudioCallbackCount = Interlocked.Read(ref _audioCallbackCount),
+            LastAudioCallbackUtc = lastCallbackTicks <= 0 ? null : new DateTimeOffset(lastCallbackTicks, TimeSpan.Zero)
+        };
+    }
 
     public void StartRecording()
     {
@@ -113,20 +146,45 @@ public sealed class AsioInputCapture : IWaveIn
 
                 var channelCount = Math.Clamp(_requestedChannelCount, 1, availableChannels);
                 WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(_requestedSampleRate, channelCount);
-                asio.InputChannelOffset = InputChannelOffset;
+                var outputChannelCount = _useSilentOutputClock
+                    ? Math.Min(2, Math.Max(0, asio.DriverOutputChannelCount))
+                    : 0;
+                var outputClockProvider = outputChannelCount > 0
+                    ? new SilentAsioOutputProvider(_requestedSampleRate, outputChannelCount)
+                    : null;
+                _diagnostics = new AsioInputCaptureDiagnostics(
+                    DriverName,
+                    _requestedSampleRate,
+                    _requestedChannelCount,
+                    InputChannelOffset,
+                    asio.DriverInputChannelCount,
+                    asio.DriverOutputChannelCount,
+                    channelCount,
+                    outputChannelCount,
+                    outputClockProvider is not null,
+                    Thread.CurrentThread.GetApartmentState().ToString(),
+                    SynchronizationContext.Current is not null,
+                    Environment.CurrentManagedThreadId,
+                    DateTimeOffset.UtcNow,
+                    null,
+                    0,
+                    null);
+                Interlocked.Exchange(ref _audioCallbackCount, 0);
+                Interlocked.Exchange(ref _lastAudioCallbackUtcTicks, 0);
+                if (InputChannelOffset > 0)
+                {
+                    asio.InputChannelOffset = InputChannelOffset;
+                }
                 asio.AudioAvailable += AsioAudioAvailable;
-                asio.PlaybackStopped += AsioPlaybackStopped;
-                asio.DriverResetRequest += AsioDriverResetRequested;
-                asio.InitRecordAndPlayback(null, channelCount, _requestedSampleRate);
+                asio.InitRecordAndPlayback(outputClockProvider, channelCount, _requestedSampleRate);
                 _stoppedRaised = false;
                 _asio = asio;
                 asio.Play();
+                _diagnostics = _diagnostics with { PlayStartedUtc = DateTimeOffset.UtcNow };
             }
             catch
             {
                 asio.AudioAvailable -= AsioAudioAvailable;
-                asio.PlaybackStopped -= AsioPlaybackStopped;
-                asio.DriverResetRequest -= AsioDriverResetRequested;
                 asio.Dispose();
                 throw;
             }
@@ -137,6 +195,8 @@ public sealed class AsioInputCapture : IWaveIn
     {
         try
         {
+            Interlocked.Increment(ref _audioCallbackCount);
+            Interlocked.Exchange(ref _lastAudioCallbackUtcTicks, DateTimeOffset.UtcNow.UtcTicks);
             var sampleCount = checked(e.SamplesPerBuffer * WaveFormat.Channels);
             if (_sampleBuffer.Length < sampleCount)
             {
@@ -158,16 +218,6 @@ public sealed class AsioInputCapture : IWaveIn
         {
             StopRecording(ex, raiseStopped: true);
         }
-    }
-
-    private void AsioPlaybackStopped(object? sender, StoppedEventArgs e)
-    {
-        StopRecording(e.Exception, raiseStopped: true);
-    }
-
-    private void AsioDriverResetRequested(object? sender, EventArgs e)
-    {
-        ThreadPool.QueueUserWorkItem(_ => StopRecording(null, raiseStopped: true));
     }
 
     private void StopRecording(Exception? exception, bool raiseStopped)
@@ -212,8 +262,6 @@ public sealed class AsioInputCapture : IWaveIn
         }
 
         asio.AudioAvailable -= AsioAudioAvailable;
-        asio.PlaybackStopped -= AsioPlaybackStopped;
-        asio.DriverResetRequest -= AsioDriverResetRequested;
         try
         {
             asio.Stop();
@@ -240,4 +288,38 @@ public sealed class AsioInputCapture : IWaveIn
 
         RecordingStopped?.Invoke(this, new StoppedEventArgs(exception));
     }
+
+    private sealed class SilentAsioOutputProvider : IWaveProvider
+    {
+        public SilentAsioOutputProvider(int sampleRate, int channels)
+        {
+            WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(Math.Max(8000, sampleRate), Math.Max(1, channels));
+        }
+
+        public WaveFormat WaveFormat { get; }
+
+        public int Read(byte[] buffer, int offset, int count)
+        {
+            Array.Clear(buffer, offset, count);
+            return count;
+        }
+    }
 }
+
+public sealed record AsioInputCaptureDiagnostics(
+    string DriverName,
+    int RequestedSampleRate,
+    int RequestedChannelCount,
+    int InputChannelOffset,
+    int DriverInputChannelCount,
+    int DriverOutputChannelCount,
+    int EffectiveInputChannelCount,
+    int OutputClockChannelCount,
+    bool UsesSilentOutputClock,
+    string ThreadApartmentState,
+    bool HasSynchronizationContext,
+    int ManagedThreadId,
+    DateTimeOffset InitStartedUtc,
+    DateTimeOffset? PlayStartedUtc,
+    long AudioCallbackCount,
+    DateTimeOffset? LastAudioCallbackUtc);

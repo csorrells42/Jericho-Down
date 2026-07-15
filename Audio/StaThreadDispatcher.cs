@@ -1,12 +1,14 @@
-using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
+using System.Windows.Threading;
 
 namespace JerichoDown.Audio;
 
 internal sealed class StaThreadDispatcher : IDisposable
 {
-    private readonly BlockingCollection<Action> _workItems = [];
+    private readonly ManualResetEventSlim _dispatcherReady = new(false);
     private readonly Thread _thread;
+    private Dispatcher? _dispatcher;
+    private Exception? _startupException;
     private int _disposeRequested;
 
     public StaThreadDispatcher(string name)
@@ -18,6 +20,11 @@ internal sealed class StaThreadDispatcher : IDisposable
         };
         _thread.SetApartmentState(ApartmentState.STA);
         _thread.Start();
+        _dispatcherReady.Wait();
+        if (_startupException is not null)
+        {
+            ExceptionDispatchInfo.Capture(_startupException).Throw();
+        }
     }
 
     public void Invoke(Action action)
@@ -31,49 +38,29 @@ internal sealed class StaThreadDispatcher : IDisposable
 
     public T Invoke<T>(Func<T> action)
     {
-        if (Volatile.Read(ref _disposeRequested) != 0 && !ReferenceEquals(Thread.CurrentThread, _thread))
+        var dispatcher = _dispatcher;
+        if (dispatcher is null || Volatile.Read(ref _disposeRequested) != 0 && !dispatcher.CheckAccess())
         {
             throw new ObjectDisposedException(GetType().Name);
         }
 
-        if (ReferenceEquals(Thread.CurrentThread, _thread))
+        if (dispatcher.CheckAccess())
         {
             return action();
         }
 
-        using var completed = new ManualResetEventSlim(false);
-        Exception? exception = null;
-        T? result = default;
         try
         {
-            _workItems.Add(() =>
-            {
-                try
-                {
-                    result = action();
-                }
-                catch (Exception ex)
-                {
-                    exception = ex;
-                }
-                finally
-                {
-                    completed.Set();
-                }
-            });
+            return dispatcher.Invoke(action);
         }
-        catch (InvalidOperationException ex)
+        catch (TaskCanceledException ex)
         {
             throw new ObjectDisposedException(GetType().Name, ex);
         }
-
-        completed.Wait();
-        if (exception is not null)
+        catch (InvalidOperationException ex) when (Volatile.Read(ref _disposeRequested) != 0)
         {
-            ExceptionDispatchInfo.Capture(exception).Throw();
+            throw new ObjectDisposedException(GetType().Name, ex);
         }
-
-        return result!;
     }
 
     public void Dispose()
@@ -83,25 +70,34 @@ internal sealed class StaThreadDispatcher : IDisposable
             return;
         }
 
-        _workItems.CompleteAdding();
+        _dispatcher?.BeginInvokeShutdown(DispatcherPriority.Send);
         if (!ReferenceEquals(Thread.CurrentThread, _thread))
         {
             _thread.Join(TimeSpan.FromSeconds(2));
         }
+
+        _dispatcherReady.Dispose();
     }
 
     private void Run()
     {
         try
         {
-            foreach (var workItem in _workItems.GetConsumingEnumerable())
-            {
-                workItem();
-            }
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(dispatcher));
+            _dispatcher = dispatcher;
+            _dispatcherReady.Set();
+            Dispatcher.Run();
+        }
+        catch (Exception ex)
+        {
+            _startupException = ex;
+            _dispatcherReady.Set();
         }
         finally
         {
-            _workItems.Dispose();
+            _dispatcher = null;
+            SynchronizationContext.SetSynchronizationContext(null);
         }
     }
 }

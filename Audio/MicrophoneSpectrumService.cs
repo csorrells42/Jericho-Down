@@ -114,6 +114,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private bool _isStoppingCapture;
     private bool _isDisposing;
     private int _captureRecoveryInProgress;
+    private int _suppressedAdditionalCaptureCount;
     private System.Runtime.GCLatencyMode _previousGcLatencyMode;
     private bool _gcLatencyModeChanged;
     private readonly VoiceProcessingTelemetry _emptyTelemetry = new();
@@ -393,6 +394,20 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return ElapsedSince(lastCallbackTimestamp, now) > staleDuration;
     }
 
+    public bool HasReceivedAudioCallbacks => System.Threading.Volatile.Read(ref _lastAudioCallbackTimestamp) != 0;
+
+    public bool IsWaitingForFirstAudioCallback(TimeSpan startupGrace)
+    {
+        if (_capture is null || System.Threading.Volatile.Read(ref _lastAudioCallbackTimestamp) != 0)
+        {
+            return false;
+        }
+
+        var startedTimestamp = System.Threading.Volatile.Read(ref _audioStreamStartedTimestamp);
+        return startedTimestamp != 0
+            && ElapsedSince(startedTimestamp, System.Diagnostics.Stopwatch.GetTimestamp()) <= startupGrace;
+    }
+
     public string ActiveInputFormatStatus
     {
         get
@@ -405,6 +420,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     }
 
     public bool IsWasapiCaptureActive => _capture is WasapiCapture;
+
+    public AsioInputCaptureDiagnostics? ActiveAsioInputDiagnostics => (_capture as AsioInputCapture)?.GetDiagnosticsSnapshot();
 
     public void PreferWaveInCaptureForCurrentDevice()
     {
@@ -473,11 +490,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private string GetAdditionalCaptureSummary()
     {
+        var suppressedCount = System.Threading.Volatile.Read(ref _suppressedAdditionalCaptureCount);
         lock (_additionalCaptureLock)
         {
-            return _additionalCaptures.Count == 0
+            var activeSummary = _additionalCaptures.Count == 0
                 ? string.Empty
                 : $" + {_additionalCaptures.Count} aux";
+            var suppressedSummary = suppressedCount == 0
+                ? string.Empty
+                : $" ({suppressedCount} aux held while ASIO is primary)";
+            return $"{activeSummary}{suppressedSummary}";
         }
     }
 
@@ -953,39 +975,16 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     continue;
                 }
 
-                var inputChannels = TryGetAsioInputChannelCount(driverName, out var channelCount)
-                    ? channelCount
-                    : 2;
-                if (inputChannels <= 0)
-                {
-                    continue;
-                }
-
                 devices.Add(new AudioInputDevice(
                     AudioInputDevice.AsioInputDeviceNumber,
                     $"ASIO: {driverName}",
-                    Math.Clamp(inputChannels, 1, MaximumAsioInputChannels),
+                    MaximumAsioInputChannels,
                     CreateAsioEndpointId(driverName),
                     AudioInputBackend.Asio));
             }
         }
         catch
         {
-        }
-    }
-
-    private static bool TryGetAsioInputChannelCount(string driverName, out int channelCount)
-    {
-        channelCount = 0;
-        try
-        {
-            using var asio = new AsioOut(driverName);
-            channelCount = Math.Clamp(asio.DriverInputChannelCount, 0, MaximumAsioInputChannels);
-            return channelCount > 0;
-        }
-        catch
-        {
-            return false;
         }
     }
 
@@ -996,35 +995,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return null;
         }
 
-        try
-        {
-            using var asio = new AsioOut(driverName);
-            var sampleRate = PreferredSampleRates.FirstOrDefault(rate => IsAsioSampleRateSupported(asio, rate));
-            if (sampleRate <= 0)
-            {
-                sampleRate = DefaultSampleRate;
-            }
-
-            var channels = Math.Clamp(asio.DriverInputChannelCount, 1, MaximumAsioInputChannels);
-            return new AudioDeviceFormat(sampleRate, channels, 32);
-        }
-        catch
-        {
-            var fallbackChannels = Math.Clamp(device.MaximumInputChannels, 1, MaximumAsioInputChannels);
-            return new AudioDeviceFormat(DefaultSampleRate, fallbackChannels, 32);
-        }
-    }
-
-    private static bool IsAsioSampleRateSupported(AsioOut asio, int sampleRate)
-    {
-        try
-        {
-            return asio.IsSampleRateSupported(sampleRate);
-        }
-        catch
-        {
-            return false;
-        }
+        var fallbackChannels = Math.Clamp(device.MaximumInputChannels, 1, MaximumAsioInputChannels);
+        return new AudioDeviceFormat(DefaultSampleRate, fallbackChannels, 32);
     }
 
     private static string CreateInputDeviceKey(int deviceNumber, string? endpointId, AudioInputBackend backend)
@@ -1439,7 +1411,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         var currentDeviceKey = CreateCurrentInputDeviceKey();
-        var captureDevices = liveMixChannels
+        var currentBackend = _currentInputBackend;
+        var candidateDevices = liveMixChannels
             .Where(channel => channel.IsEnabled
                 && !string.Equals(channel.DeviceKey, currentDeviceKey, StringComparison.Ordinal)
                 && channel.SyncBuffer is not null)
@@ -1447,6 +1420,11 @@ public sealed class MicrophoneSpectrumService : IDisposable
             .Select(group => group.First())
             .OrderBy(channel => channel.DeviceKey, StringComparer.Ordinal)
             .ToArray();
+        var captureDevices = candidateDevices
+            .Where(channel => currentBackend != AudioInputBackend.Asio
+                && channel.Backend != AudioInputBackend.Asio)
+            .ToArray();
+        System.Threading.Volatile.Write(ref _suppressedAdditionalCaptureCount, candidateDevices.Length - captureDevices.Length);
         var deviceKeys = captureDevices.Select(channel => channel.DeviceKey).ToArray();
 
         lock (_additionalCaptureLock)
@@ -1459,6 +1437,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         }
 
         StopAdditionalCaptures();
+        System.Threading.Volatile.Write(ref _suppressedAdditionalCaptureCount, candidateDevices.Length - captureDevices.Length);
         foreach (var device in captureDevices)
         {
             var runtime = new AdditionalCaptureRuntime(
@@ -1521,6 +1500,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private void StopAdditionalCaptures()
     {
+        System.Threading.Volatile.Write(ref _suppressedAdditionalCaptureCount, 0);
         AdditionalCaptureRuntime[] captures;
         lock (_additionalCaptureLock)
         {
@@ -2452,14 +2432,14 @@ public sealed class MicrophoneSpectrumService : IDisposable
             throw new InvalidOperationException("Could not identify the selected ASIO input driver.");
         }
 
-        var channelCount = TryGetAsioInputChannelCount(driverName, out var detectedChannels)
-            ? detectedChannels
-            : MaximumAsioInputChannels;
-        channelCount = Math.Clamp(channelCount, 1, MaximumAsioInputChannels);
         Exception? startException = null;
         foreach (var sampleRate in PreferredAsioSampleRates)
         {
-            var capture = new AsioInputCapture(driverName, sampleRate, channelCount);
+            var capture = new AsioInputCapture(
+                driverName,
+                sampleRate,
+                MaximumAsioInputChannels,
+                useSilentOutputClock: false);
             AttachCaptureEvents(capture, dataAvailable, recordingStopped);
             try
             {

@@ -128,6 +128,45 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         }
     }
 
+    public void ClearFrame()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            lock (_renderWorkerLock)
+            {
+                if (_disposed || _renderWorkerStopping)
+                {
+                    return;
+                }
+
+                _pendingFrame = null;
+            }
+
+            lock (_rendererLock)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _renderer?.ClearHistory();
+                _renderer?.RenderProofFrame(GraphMode, WaterfallLinesPerGap);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke(this, $"DX12 audio graph clear failed: {ex.Message}");
+        }
+    }
+
     private void RenderWorkerLoop()
     {
         try
@@ -431,6 +470,23 @@ public sealed class Direct3D12AudioGraphHost : HwndHost, IDisposable
         public string StartupStatus => _linePipelineState is null
             ? $"Graph shader unavailable: {_pipelineFailureReason ?? "unknown pipeline failure"}"
             : "Graph shader online.";
+
+        public void ClearHistory()
+        {
+            Array.Clear(_history);
+            Array.Clear(_sliceScratch);
+            Array.Clear(_detailedProcessedTarget);
+            Array.Clear(_detailedProcessedTrace);
+            Array.Clear(_detailedSmoothingScratch);
+            Array.Clear(_detailedReferenceTarget);
+            Array.Clear(_detailedReferenceTrace);
+            Array.Clear(_detailedReferenceSmoothingScratch);
+            _historyStart = 0;
+            _historyCount = 0;
+            _detailedVisualCeiling = 0.25f;
+            _hasDetailedSpectrumTrace = false;
+            _hasDetailedReferenceTrace = false;
+        }
 
         public unsafe void RenderFrame(
             SpectrumFrame frame,

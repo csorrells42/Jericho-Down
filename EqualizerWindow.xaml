@@ -907,7 +907,8 @@
         <MenuItem Header="_File">
           <MenuItem Header="Refresh Audio Devices" Click="RefreshAudioDevicesMenuClicked" />
           <MenuItem Header="Refresh Video Devices" Click="RefreshVideoDevicesMenuClicked" />
-          <MenuItem Header="Refresh MIDI Devices" Click="RefreshMidiDevicesMenuClicked" />
+          <MenuItem x:Name="EnableMidiMenuItem" Header="Enable MIDI" IsCheckable="True" Checked="EnableMidiChanged" Unchecked="EnableMidiChanged" />
+          <MenuItem x:Name="RefreshMidiDevicesMenuItem" Header="Refresh MIDI Devices" Click="RefreshMidiDevicesMenuClicked" IsEnabled="False" />
           <Separator />
           <MenuItem Header="Settings">
             <MenuItem Header="Podcast Settings" Click="PodcastSettingsMenuClicked" />
@@ -916,11 +917,14 @@
             <MenuItem Header="Audio Device Diagnostics" Click="AudioDeviceDiagnosticsMenuClicked" />
           </MenuItem>
           <MenuItem Header="ASIO Settings" Click="AsioSettingsMenuClicked" />
+          <MenuItem Header="ASIO Callback Test" Click="AsioCallbackTestMenuClicked" />
         </MenuItem>
         <MenuItem Header="_Help">
-          <MenuItem Header="Equalizer" Click="EqualizerHelpMenuClicked" />
-          <MenuItem Header="Mixer" Click="MixerHelpMenuClicked" />
-          <MenuItem Header="Tabs and Features" Click="TabsHelpMenuClicked" />
+          <MenuItem Header="Podcast" Click="PodcastHelpMenuClicked" />
+          <MenuItem Header="Karaoke" Click="KaraokeHelpMenuClicked" />
+          <MenuItem Header="Mic / DSP" Click="MicDspHelpMenuClicked" />
+          <MenuItem Header="Mixing" Click="MixingHelpMenuClicked" />
+          <MenuItem x:Name="MidiHelpMenuItem" Header="MIDI" Click="MidiHelpMenuClicked" IsEnabled="False" />
           <MenuItem Header="About">
             <MenuItem Header="Jericho Down" Click="AboutMenuClicked" />
             <MenuItem Header="Verification" Click="VerificationMenuClicked" />
@@ -989,7 +993,7 @@
           </Style.Triggers>
         </Style>
       </TabControl.Resources>
-      <TabItem Header="Podcast">
+      <TabItem x:Name="PodcastTabItem" Header="Podcast">
         <Grid Background="#05070A">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -1032,6 +1036,7 @@
               <Grid x:Name="CameraPreviewSurfaceGrid">
                 <Rectangle Fill="#05070A" />
                 <Image x:Name="CameraPreviewImage" Visibility="Collapsed" Stretch="Uniform" SnapsToDevicePixels="True" />
+                <Grid x:Name="SessionDx12PlaybackHostPanel" Visibility="Collapsed" Margin="0,0,0,62" ClipToBounds="True" />
                 <MediaElement x:Name="SessionPlaybackElement" Visibility="Collapsed" LoadedBehavior="Manual" UnloadedBehavior="Manual" ScrubbingEnabled="True" Stretch="Uniform" MediaOpened="SessionPlaybackOpened" MediaEnded="SessionPlaybackEnded" MediaFailed="SessionPlaybackFailed" />
                 <StackPanel x:Name="CameraPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
                   <TextBlock Text="Video Preview" Foreground="#F8FAFC" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center" />
@@ -1312,7 +1317,7 @@
           </Border>
         </Grid>
       </TabItem>
-      <TabItem Header="Karaoke">
+      <TabItem x:Name="KaraokeTabItem" Header="Karaoke">
         <Grid Background="#05070A">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -1629,7 +1634,7 @@
           </Border>
         </Grid>
       </TabItem>
-      <TabItem Header="Mic / DSP">
+      <TabItem x:Name="MicDspTabItem" Header="Mic / DSP">
         <Grid Background="#05070A">
           <Canvas x:Name="SpectrumCanvas" Background="#05070A" Margin="360,0,360,0" />
           <ContentControl x:Name="InlineWaveform3DHost" ClipToBounds="True" Margin="360,58,360,280" Visibility="Collapsed" />
@@ -2684,7 +2689,7 @@
           </Border>
         </Grid>
       </TabItem>
-      <TabItem Header="Mixing">
+      <TabItem x:Name="MixingTabItem" Header="Mixing">
         <Grid Background="#05070A">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -3174,7 +3179,7 @@
           </Border>
         </Grid>
       </TabItem>
-      <TabItem Header="MIDI">
+      <TabItem x:Name="MidiTabItem" Header="MIDI" Visibility="Collapsed">
         <Grid Background="#05070A">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

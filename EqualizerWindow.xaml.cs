@@ -66,6 +66,8 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan KaraokeReplayFromEndTolerance = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan AudioRecordingFolderRefreshDelay = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AudioDeviceFormatPollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan AudioCallbackStartupGrace = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan AudioCallbackStaleDuration = TimeSpan.FromMilliseconds(1400);
     private static readonly TimeSpan AudioStreamRestartBaseBackoff = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AudioStreamRestartMaximumBackoff = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AppStatePersistDebounceInterval = TimeSpan.FromMilliseconds(350);
@@ -279,6 +281,10 @@ public partial class EqualizerWindow : Window
     private bool _isUpdatingMicChannelUi;
     private bool _isUpdatingMixerUi;
     private bool _isUpdatingCoreAudioSessionUi;
+    private bool _isUpdatingMidiEnabledUi;
+    private bool _midiEnabled;
+    private string? _lastShownAsioNoCallbackDiagnosticKey;
+    private string? _asioNoCallbackAutoStartSuppressedDeviceKey;
     private int _audioStreamOperationVersion;
     private int _selectedDeviceFormatRefreshVersion;
     private InputChannelMode _selectedInputChannelMode = InputChannelMode.MonoSum;
@@ -436,6 +442,14 @@ public partial class EqualizerWindow : Window
     private bool _isSessionPlaybackPlaying;
     private bool _isSessionPlaybackEnded;
     private bool _startSessionPlaybackFromBeginning;
+    private MediaFoundationFilePlaybackService? _sessionVideoPlaybackService;
+    private Direct3D12PreviewHost? _sessionDx12PlaybackHost;
+    private IWavePlayer? _sessionAudioPlaybackOutput;
+    private WaveStream? _sessionAudioPlaybackReader;
+    private string? _sessionAudioPlaybackPath;
+    private bool _isStoppingSessionAudioPlayback;
+    private bool _isSessionDx12PlaybackActive;
+    private bool _isSessionMediaElementFallbackActive;
     private static ShapePath[] CreateMixingMicSpectrumTraces()
     {
         var traces = new ShapePath[2];
@@ -539,8 +553,8 @@ public partial class EqualizerWindow : Window
             "Podcast",
             "Mic / DSP",
             "Mixing",
-            "MIDI",
-            "Karaoke"
+            "Karaoke",
+            "MIDI"
         ];
 
         var tabs = MainTabControl.Items.OfType<TabItem>().ToList();
@@ -725,7 +739,7 @@ public partial class EqualizerWindow : Window
         }
 
         _pendingCameraProfileModeLabel = _appSettings.CameraModeLabel;
-        _isCameraEnabled = hasPersistedState && _appSettings.CameraEnabled && !_safeStartCameraRecoveryActive;
+        _isCameraEnabled = false;
         _isLeftControlRailCollapsed = _appSettings.LeftControlRailCollapsed;
         ApplyLeftControlRailLayout();
         _lastAudioRecordingPath = _appSettings.LastAudioRecordingPath;
@@ -758,7 +772,8 @@ public partial class EqualizerWindow : Window
         MidiSoundFontSamplesListBox.ItemsSource = _midiSoundFontSamples;
         CoreAudioSessionsItemsControl.ItemsSource = _coreAudioSessionItems;
         RestoreMidiWorkflowState();
-        RefreshMidiDevicesFromSystem(updateStatus: false);
+        _midiEnabled = _appSettings.MidiEnabled;
+        ApplyMidiEnabledState(refreshDevices: _midiEnabled, persist: false, updateStatus: false);
         UpdateMidiOutputParameterText();
         UpdateSelectedMidiMessageDetails();
 
@@ -1459,6 +1474,7 @@ public partial class EqualizerWindow : Window
             SelectedMicChannelNumber = activeMicChannel?.ChannelNumber ?? 1,
             MicChannels = CaptureMicChannelStates(),
             MidiControlMappings = CaptureMidiControlMappingStates(),
+            MidiEnabled = _midiEnabled,
             MidiInputDeviceName = (MidiInputDeviceComboBox?.SelectedItem as MidiInputDevice)?.ProductName,
             MidiInputDeviceProductId = (MidiInputDeviceComboBox?.SelectedItem as MidiInputDevice)?.ProductId,
             MidiOutputDeviceName = (MidiOutputDeviceComboBox?.SelectedItem as MidiOutputDevice)?.ProductName,
@@ -1690,6 +1706,7 @@ public partial class EqualizerWindow : Window
 
     private void RefreshAudioDevicesFromSystem()
     {
+        ClearAsioNoCallbackAutoStartSuppression();
         var inputDevices = MicrophoneSpectrumService.GetInputDevices();
         var equalizerInputDevices = GetEqualizerInputDevices(inputDevices);
         _isUpdatingMicChannelUi = true;
@@ -1815,8 +1832,97 @@ public partial class EqualizerWindow : Window
         PersistAppState();
     }
 
+    private void ApplyMidiEnabledState(bool refreshDevices, bool persist, bool updateStatus = true)
+    {
+        if (EnableMidiMenuItem is not null && EnableMidiMenuItem.IsChecked != _midiEnabled)
+        {
+            _isUpdatingMidiEnabledUi = true;
+            try
+            {
+                EnableMidiMenuItem.IsChecked = _midiEnabled;
+            }
+            finally
+            {
+                _isUpdatingMidiEnabledUi = false;
+            }
+        }
+
+        if (RefreshMidiDevicesMenuItem is not null)
+        {
+            RefreshMidiDevicesMenuItem.IsEnabled = _midiEnabled;
+        }
+
+        if (MidiHelpMenuItem is not null)
+        {
+            MidiHelpMenuItem.IsEnabled = _midiEnabled;
+        }
+
+        if (MidiTabItem is not null)
+        {
+            if (!_midiEnabled && MidiTabItem.IsSelected)
+            {
+                SelectFirstVisibleMainTab(except: MidiTabItem);
+            }
+
+            MidiTabItem.Visibility = _midiEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (_midiEnabled)
+        {
+            if (refreshDevices)
+            {
+                RefreshMidiDevicesFromSystem(updateStatus);
+            }
+        }
+        else
+        {
+            StopMidiSequencePlayback("MIDI disabled.", resetOutput: false, updateStatus: false);
+            _midiInputMonitor.Stop();
+            _midiOutputPort.Close();
+            MidiInputDeviceComboBox.ItemsSource = Array.Empty<MidiInputDevice>();
+            MidiOutputDeviceComboBox.ItemsSource = Array.Empty<MidiOutputDevice>();
+            UpdateMidiControlState();
+            if (updateStatus && MidiStatusText is not null)
+            {
+                MidiStatusText.Text = "MIDI disabled. Enable it from File when needed.";
+            }
+        }
+
+        if (persist)
+        {
+            PersistAppState();
+        }
+    }
+
+    private void SelectFirstVisibleMainTab(TabItem? except = null)
+    {
+        if (MainTabControl is null)
+        {
+            return;
+        }
+
+        foreach (var tab in MainTabControl.Items.OfType<TabItem>())
+        {
+            if (!ReferenceEquals(tab, except) && tab.Visibility == Visibility.Visible)
+            {
+                MainTabControl.SelectedItem = tab;
+                return;
+            }
+        }
+    }
+
     private void RefreshMidiDevicesFromSystem(bool updateStatus = true)
     {
+        if (!_midiEnabled)
+        {
+            if (updateStatus && MidiStatusText is not null)
+            {
+                MidiStatusText.Text = "MIDI disabled. Enable it from File when needed.";
+            }
+
+            return;
+        }
+
         _isRestoringMidiState = true;
         var selectedInputNumber = (MidiInputDeviceComboBox.SelectedItem as MidiInputDevice)?.DeviceNumber
             ?? _midiInputMonitor.DeviceNumber;
@@ -3059,7 +3165,19 @@ public partial class EqualizerWindow : Window
 
     private void AudioDeviceDiagnosticsMenuClicked(object sender, RoutedEventArgs e)
     {
+        var report = BuildAudioDeviceDiagnosticsReport();
+        ShowAudioDeviceDiagnosticsDialog(report);
+        StatusText.Text = "Audio device diagnostics opened.";
+    }
+
+    private string BuildAudioDeviceDiagnosticsReport(AudioInputDevice? selectedInputOverride = null)
+    {
         var selectedInput = _activeMicChannel?.SelectedDevice ?? _selectedDevice;
+        if (selectedInputOverride is not null)
+        {
+            selectedInput = selectedInputOverride;
+        }
+
         var selectedOutput = _selectedOutputDevice;
         var inputFormat = ReferenceEquals(selectedInput, _selectedDevice)
             ? _selectedDeviceFormat ?? GetSelectedDeviceFormat()
@@ -3077,10 +3195,55 @@ public partial class EqualizerWindow : Window
             inputFormat,
             outputFormat,
             inputDevices,
-            outputDevices);
+            outputDevices,
+            selectedInput?.IsAsio == true ? _spectrumService.ActiveAsioInputDiagnostics : null,
+            selectedInput?.IsAsio == true ? _spectrumService.ActiveInputFormatStatus : null);
+        return report;
+    }
 
-        ShowAudioDeviceDiagnosticsDialog(report);
-        StatusText.Text = "Audio device diagnostics opened.";
+    private void ShowAsioNoCallbackDiagnosticsOnce(AudioInputDevice selectedDevice)
+    {
+        var diagnosticKey = selectedDevice.EndpointId ?? selectedDevice.Name;
+        if (string.Equals(_lastShownAsioNoCallbackDiagnosticKey, diagnosticKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastShownAsioNoCallbackDiagnosticKey = diagnosticKey;
+        var report = BuildAudioDeviceDiagnosticsReport(selectedDevice);
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_isClosing)
+            {
+                return;
+            }
+
+            ShowAudioDeviceDiagnosticsDialog(report);
+        }, DispatcherPriority.Background);
+    }
+
+    private bool IsAsioNoCallbackAutoStartSuppressed(AudioInputDevice selectedDevice)
+    {
+        return selectedDevice.IsAsio
+            && string.Equals(
+                _asioNoCallbackAutoStartSuppressedDeviceKey,
+                CreateAsioNoCallbackSuppressionKey(selectedDevice),
+                StringComparison.Ordinal);
+    }
+
+    private void ClearAsioNoCallbackAutoStartSuppression()
+    {
+        _asioNoCallbackAutoStartSuppressedDeviceKey = null;
+    }
+
+    private static string CreateAsioNoCallbackSuppressionKey(AudioInputDevice selectedDevice)
+    {
+        return $"{selectedDevice.Backend}|{selectedDevice.EndpointId}|{selectedDevice.Name}";
+    }
+
+    private static string CreateAsioNoCallbackSuppressedStatus()
+    {
+        return "ASIO input stopped after no driver callbacks. Diagnostics are open; refresh or reselect the input to try again.";
     }
 
     private void ShowAudioDeviceDiagnosticsDialog(string report)
@@ -3182,6 +3345,17 @@ public partial class EqualizerWindow : Window
         RefreshMidiDevicesFromSystem();
     }
 
+    private void EnableMidiChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isClosing || _isUpdatingMidiEnabledUi || EnableMidiMenuItem is null)
+        {
+            return;
+        }
+
+        _midiEnabled = EnableMidiMenuItem.IsChecked;
+        ApplyMidiEnabledState(refreshDevices: _midiEnabled, persist: !_isRestoringAppState);
+    }
+
     private void RefreshMidiDevicesClicked(object sender, RoutedEventArgs e)
     {
         RefreshMidiDevicesFromSystem();
@@ -3200,6 +3374,63 @@ public partial class EqualizerWindow : Window
         if (opened && KaraokeMonitorStatusText is not null && _selectedOutputDevice?.IsAsio == true)
         {
             KaraokeMonitorStatusText.Text = status;
+        }
+    }
+
+    private async void AsioCallbackTestMenuClicked(object sender, RoutedEventArgs e)
+    {
+        var selectedInput = _activeMicChannel?.SelectedDevice ?? _selectedDevice;
+        var endpointId = selectedInput?.IsAsio == true
+            ? selectedInput.EndpointId
+            : ResolvePreferredAsioSettingsEndpointId();
+        if (!MicrophoneSpectrumService.TryGetAsioDriverName(endpointId, out var driverName))
+        {
+            const string status = "Select an ASIO input or output before running the callback test.";
+            StatusText.Text = status;
+            MessageBox.Show(this, status, "ASIO Callback Test", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var activeAsioDiagnostics = _spectrumService.ActiveAsioInputDiagnostics;
+        var sampleRate = activeAsioDiagnostics?.RequestedSampleRate
+            ?? _selectedDeviceFormat?.SampleRate
+            ?? 48_000;
+        var shouldRestartSelectedInput = selectedInput?.IsAsio == true;
+        if (selectedInput?.IsAsio == true && activeAsioDiagnostics is not null)
+        {
+            _asioNoCallbackAutoStartSuppressedDeviceKey = CreateAsioNoCallbackSuppressionKey(selectedInput);
+            _spectrumService.Stop();
+            ClearLiveSpectrumDisplay();
+        }
+
+        StatusText.Text = $"Running ASIO callback test for {driverName}...";
+        try
+        {
+            var report = await Task.Run(() => AsioCallbackProbe.BuildReport(
+                driverName,
+                sampleRate,
+                TimeSpan.FromMilliseconds(900)));
+            if (_isClosing)
+            {
+                return;
+            }
+
+            ShowAudioDeviceDiagnosticsDialog(report);
+            ClearAsioNoCallbackAutoStartSuppression();
+            _lastShownAsioNoCallbackDiagnosticKey = null;
+            if (shouldRestartSelectedInput)
+            {
+                StartSelectedDevice();
+            }
+
+            StatusText.Text = $"ASIO callback test finished for {driverName}.";
+        }
+        catch (Exception ex)
+        {
+            var report = $"ASIO Callback Test\r\nGenerated: {DateTime.Now:G}\r\n\r\nDriver: {driverName}\r\nError: {ex.Message}";
+            ShowAudioDeviceDiagnosticsDialog(report);
+            ClearAsioNoCallbackAutoStartSuppression();
+            StatusText.Text = $"ASIO callback test failed: {ex.Message}";
         }
     }
 
@@ -3241,19 +3472,29 @@ public partial class EqualizerWindow : Window
         dialog.ShowDialog();
     }
 
-    private void EqualizerHelpMenuClicked(object sender, RoutedEventArgs e)
+    private void PodcastHelpMenuClicked(object sender, RoutedEventArgs e)
     {
-        OpenHelpPdf("Equalizer Help", "jericho-down-equalizer-guide.pdf");
+        OpenHelpPdf("Podcast Help", "jericho-down-podcast-guide.pdf");
     }
 
-    private void MixerHelpMenuClicked(object sender, RoutedEventArgs e)
+    private void KaraokeHelpMenuClicked(object sender, RoutedEventArgs e)
     {
-        OpenHelpPdf("Mixer Help", "jericho-down-mixer-guide.pdf");
+        OpenHelpPdf("Karaoke Help", "jericho-down-karaoke-guide.pdf");
     }
 
-    private void TabsHelpMenuClicked(object sender, RoutedEventArgs e)
+    private void MicDspHelpMenuClicked(object sender, RoutedEventArgs e)
     {
-        OpenHelpPdf("Tabs and Features Help", "jericho-down-tabs-guide.pdf");
+        OpenHelpPdf("Mic / DSP Help", "jericho-down-mic-dsp-guide.pdf");
+    }
+
+    private void MixingHelpMenuClicked(object sender, RoutedEventArgs e)
+    {
+        OpenHelpPdf("Mixing Help", "jericho-down-mixing-guide.pdf");
+    }
+
+    private void MidiHelpMenuClicked(object sender, RoutedEventArgs e)
+    {
+        OpenHelpPdf("MIDI Help", "jericho-down-midi-guide.pdf");
     }
 
     private void OpenHelpPdf(string title, string fileName)
@@ -4593,17 +4834,18 @@ public partial class EqualizerWindow : Window
             && selectedHeader.Equals(header, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ConfigureMediaFoundationPreview(bool denoiseEnabled)
+    private void ConfigureMediaFoundationPreview(bool denoiseEnabled, bool denoiseHandledByPreviewRenderer = false)
     {
         _cameraPreviewService.DenoiseEnabled = denoiseEnabled;
         _cameraPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
-        _cameraPreviewService.DenoiseHandledByPreviewRenderer = _dx12Camera?.IsReady == true;
+        _cameraPreviewService.DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true;
         _cameraPreviewService.ColorSettings = _pendingVideoColorSettings;
     }
 
-    private void ConfigureDirectShowPreview(bool denoiseEnabled)
+    private void ConfigureDirectShowPreview(bool denoiseEnabled, bool denoiseHandledByPreviewRenderer = false)
     {
         _directShowPreviewService.DenoiseEnabled = denoiseEnabled;
+        _directShowPreviewService.DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true;
         _directShowPreviewService.DenoiseStrength = _pendingVideoDenoiseStrength;
         _directShowPreviewService.ColorSettings = _pendingVideoColorSettings;
     }
@@ -4619,13 +4861,17 @@ public partial class EqualizerWindow : Window
         CameraVideoMode mode,
         bool denoiseEnabled)
     {
-        ConfigureMediaFoundationPreview(denoiseEnabled);
+        ConfigureMediaFoundationPreview(
+            denoiseEnabled,
+            denoiseHandledByPreviewRenderer: denoiseEnabled);
         return await Task.Run(() => _cameraPreviewService.Start(camera, mode));
     }
 
     private async Task<bool> TryStartDirectShowPreviewServiceAsync(CameraDevice directShowCamera, CameraVideoMode mode)
     {
-        ConfigureDirectShowPreview(_pendingVideoDenoiseEnabled);
+        ConfigureDirectShowPreview(
+            _pendingVideoDenoiseEnabled,
+            denoiseHandledByPreviewRenderer: _pendingVideoDenoiseEnabled);
         return await Task.Run(() =>
         {
             _cameraPreviewService.Stop();
@@ -6501,6 +6747,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        ClearAsioNoCallbackAutoStartSuppression();
         _selectedDevice = MicrophoneComboBox.SelectedItem as AudioInputDevice;
         if (_selectedDevice is not null && !IsEqualizerInputDevice(_selectedDevice))
         {
@@ -7613,11 +7860,20 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (IsAsioNoCallbackAutoStartSuppressed(selectedDevice))
+        {
+            StatusText.Text = CreateAsioNoCallbackSuppressedStatus();
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
         var previousSelectedDevice = _selectedDevice;
         _selectedDevice = selectedDevice;
         if (!Equals(previousSelectedDevice, selectedDevice))
         {
             _selectedDeviceFormat = null;
+            _lastShownAsioNoCallbackDiagnosticKey = null;
+            ClearAsioNoCallbackAutoStartSuppression();
         }
 
         if (primaryCaptureChannel is not null)
@@ -7627,13 +7883,16 @@ public partial class EqualizerWindow : Window
 
         try
         {
+            ClearLiveSpectrumDisplay();
             ConfigureLiveMixFromChannels();
             _spectrumService.Start(
                 selectedDevice,
                 primaryCaptureChannel?.ProcessorSettings ?? Settings,
                 _selectedInputChannelMode);
             ResetAudioStreamRestartBackoff();
-            StatusText.Text = "Listening";
+            StatusText.Text = selectedDevice.IsAsio
+                ? CreateWaitingForAudioCallbacksStatus(selectedDevice)
+                : "Listening";
             _selectedDeviceFormat ??= GetSelectedDeviceFormat();
             RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             UpdateAudioFormatRouteText();
@@ -7676,15 +7935,48 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (IsAsioNoCallbackAutoStartSuppressed(selectedDevice))
+        {
+            ClearLiveSpectrumDisplay();
+            StatusText.Text = CreateAsioNoCallbackSuppressedStatus();
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
         if (!_spectrumService.IsRunning)
         {
             await RestartSelectedAudioStreamAsync("Audio stream stopped; reopened mic stream.");
             return;
         }
 
-        if (_spectrumService.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)))
+        if (_spectrumService.IsWaitingForFirstAudioCallback(AudioCallbackStartupGrace))
+        {
+            ClearLiveSpectrumDisplay();
+            if (!StatusText.Text.Contains("no audio callbacks", StringComparison.OrdinalIgnoreCase))
+            {
+                StatusText.Text = CreateWaitingForAudioCallbacksStatus(selectedDevice);
+            }
+
+            UpdateAudioFormatRouteText();
+            return;
+        }
+
+        if (_spectrumService.AreAudioCallbacksStale(AudioCallbackStartupGrace, AudioCallbackStaleDuration))
         {
             var preferWaveInFallback = _spectrumService.IsWasapiCaptureActive;
+            var asioNoCallbacks = !_spectrumService.HasReceivedAudioCallbacks && selectedDevice.IsAsio;
+            if (asioNoCallbacks)
+            {
+                ShowAsioNoCallbackDiagnosticsOnce(selectedDevice);
+                _asioNoCallbackAutoStartSuppressedDeviceKey = CreateAsioNoCallbackSuppressionKey(selectedDevice);
+                _spectrumService.Stop();
+                ClearLiveSpectrumDisplay();
+                StatusText.Text = CreateAsioNoCallbackSuppressedStatus();
+                UpdateAudioFormatRouteText();
+                return;
+            }
+
+            ClearLiveSpectrumDisplay();
             await RestartSelectedAudioStreamAsync(
                 preferWaveInFallback
                     ? "Audio callback stopped on WASAPI; reopened mic stream with WaveIn fallback."
@@ -7810,6 +8102,7 @@ public partial class EqualizerWindow : Window
         if (!Equals(previousSelectedDevice, selectedDevice))
         {
             _selectedDeviceFormat = null;
+            _lastShownAsioNoCallbackDiagnosticKey = null;
         }
 
         var operationVersion = ++_audioStreamOperationVersion;
@@ -7818,6 +8111,7 @@ public partial class EqualizerWindow : Window
         _selectedInputChannelMode = inputChannelMode;
         _isRestartingAudioStream = true;
         StatusText.Text = "Reopening audio stream...";
+        ClearLiveSpectrumDisplay();
         UpdateAudioFormatRouteText();
         try
         {
@@ -7837,7 +8131,11 @@ public partial class EqualizerWindow : Window
             }
 
             ResetAudioStreamRestartBackoff();
-            StatusText.Text = statusMessage;
+            StatusText.Text = selectedDevice.IsAsio
+                && !_spectrumService.HasReceivedAudioCallbacks
+                && !statusMessage.Contains("no audio callbacks", StringComparison.OrdinalIgnoreCase)
+                ? CreateWaitingForAudioCallbacksStatus(selectedDevice)
+                : statusMessage;
             _selectedDeviceFormat ??= await GetDeviceFormatAsync(selectedDevice);
             RefreshInputChannelOptionsWithoutSelectionEvents(_selectedDeviceFormat);
             UpdateAudioFormatRouteText();
@@ -7900,6 +8198,53 @@ public partial class EqualizerWindow : Window
     private void AcceptSpectrumFrame(SpectrumFrame frame)
     {
         _latestFrame = frame;
+    }
+
+    private void ClearLiveSpectrumDisplay()
+    {
+        var emptyFrame = CreateEmptySpectrumFrame();
+        _latestFrame = emptyFrame;
+        _silentFrameCount = 0;
+
+        ClearDirect3D12GraphHosts();
+
+        var selectedMicFrame = CreateSelectedMicFrame(emptyFrame);
+        _selectedMicSpectrumGraphHost?.AcceptFrame(selectedMicFrame);
+        _waveform3DGraphHost?.AcceptFrame(selectedMicFrame);
+        _podcastSpectrumWaterfallGraphHost?.AcceptFrame(emptyFrame);
+        _karaokeSpectrumWaterfallGraphHost?.AcceptFrame(emptyFrame);
+        _mixingMicSpectrumGraphHost?.AcceptFrame(CreateMixerOutputFrame(emptyFrame));
+        _mixingOutputWaveform3DGraphHost?.AcceptFrame(CreateProgramOutputFrame(emptyFrame));
+    }
+
+    private void ClearDirect3D12GraphHosts()
+    {
+        _selectedMicSpectrumGraphHost?.ClearFrame();
+        _waveform3DGraphHost?.ClearFrame();
+        _podcastSpectrumWaterfallGraphHost?.ClearFrame();
+        _karaokeSpectrumWaterfallGraphHost?.ClearFrame();
+        _mixingMicSpectrumGraphHost?.ClearFrame();
+        _mixingOutputWaveform3DGraphHost?.ClearFrame();
+    }
+
+    private SpectrumFrame CreateEmptySpectrumFrame()
+    {
+        return new SpectrumFrame(
+            [],
+            [],
+            [],
+            [],
+            0d,
+            0d,
+            new VoiceProcessingTelemetry(),
+            _selectedDeviceFormat?.SampleRate ?? 44100);
+    }
+
+    private static string CreateWaitingForAudioCallbacksStatus(AudioInputDevice selectedDevice)
+    {
+        return selectedDevice.IsAsio
+            ? "ASIO input opened; waiting for driver audio callbacks."
+            : "Listening; waiting for audio callbacks.";
     }
 
     private SpectrumFrame CreateSelectedMicFrame(SpectrumFrame frame)
@@ -12754,21 +13099,39 @@ public partial class EqualizerWindow : Window
         try
         {
             StopSessionPlayback();
-            SessionPlaybackElement.Source = new Uri(path);
-            SessionPlaybackElement.Visibility = Visibility.Visible;
+            if (_isCameraEnabled)
+            {
+                _isCameraEnabled = false;
+                UpdateCameraEnabledState();
+            }
+
+            StopTextureNativeCameraStream();
+            StopPreviewServices();
+            _isDirectShowPreviewActive = false;
+            CameraPreviewImage.Visibility = Visibility.Collapsed;
             CameraPlaceholder.Visibility = Visibility.Collapsed;
             SessionPlaybackBar.Visibility = Visibility.Visible;
             ResetSessionPlaybackProgress();
             _sessionPlaybackPath = path;
             _lastSessionRecordingPath = path;
-            _startSessionPlaybackFromBeginning = true;
-            SessionPlaybackElement.Play();
-            _isSessionPlaybackPlaying = true;
-            _isSessionPlaybackEnded = false;
-            _sessionPlaybackPositionTimer.Start();
-            PersistAppState();
-
-            RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)}.";
+            if (TryStartDx12SessionPlayback(path, out var dx12Failure))
+            {
+                _isSessionDx12PlaybackActive = true;
+                _isSessionMediaElementFallbackActive = false;
+                _isSessionPlaybackPlaying = true;
+                _isSessionPlaybackEnded = false;
+                _sessionPlaybackPositionTimer.Start();
+                PersistAppState();
+                RecordingStatusText.Text = FormatSessionPlaybackStatus(path, "through DX12 session playback");
+            }
+            else
+            {
+                StartSessionMediaElementFallbackPlayback(path);
+                if (!string.IsNullOrWhiteSpace(dx12Failure))
+                {
+                    RecordingStatusText.Text = $"Playing {System.IO.Path.GetFileName(path)} with Windows media fallback; DX12 unavailable: {dx12Failure}";
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -12779,6 +13142,153 @@ public partial class EqualizerWindow : Window
         UpdateSessionPlaybackTransportControls();
     }
 
+    private bool TryStartDx12SessionPlayback(string path, out string? failure)
+    {
+        failure = null;
+        try
+        {
+            var host = new Direct3D12PreviewHost
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch
+            };
+            host.StatusChanged += SessionDx12PlaybackHostStatusChanged;
+            _sessionDx12PlaybackHost = host;
+            SessionDx12PlaybackHostPanel.Children.Clear();
+            SessionDx12PlaybackHostPanel.Children.Add(host);
+            SessionDx12PlaybackHostPanel.Visibility = Visibility.Visible;
+
+            var service = new MediaFoundationFilePlaybackService();
+            service.FrameAvailable += SessionVideoPlaybackFrameAvailable;
+            service.PlaybackEnded += SessionVideoPlaybackEnded;
+            service.PlaybackFailed += SessionVideoPlaybackFailed;
+            service.StatusChanged += SessionVideoPlaybackStatusChanged;
+            _sessionVideoPlaybackService = service;
+
+            if (!service.Start(path))
+            {
+                failure = "Media Foundation video reader did not start";
+                StopSessionDx12Playback();
+                return false;
+            }
+
+            if (!TryStartSessionAudioPlayback(path, out var audioFailure))
+            {
+                failure = $"audio reader did not start ({audioFailure})";
+                StopSessionDx12Playback();
+                return false;
+            }
+
+            SessionPlaybackElement.Stop();
+            SessionPlaybackElement.Source = null;
+            SessionPlaybackElement.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex.Message;
+            StopSessionDx12Playback();
+            return false;
+        }
+    }
+
+    private bool TryStartSessionAudioPlayback(string path, out string? failure)
+    {
+        failure = null;
+        try
+        {
+            var audioPath = ResolveSessionAudioPlaybackPath(path);
+            var reader = new AudioFileReader(audioPath);
+            var output = CreateSelectedPlaybackOutput(reader.ToWaveProvider(), desiredLatency: 90);
+            output.PlaybackStopped += SessionAudioPlaybackStopped;
+            _sessionAudioPlaybackReader = reader;
+            _sessionAudioPlaybackPath = audioPath;
+            _sessionAudioPlaybackOutput = output;
+            _isStoppingSessionAudioPlayback = false;
+            output.Play();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex.Message;
+            StopSessionAudioPlayback();
+            return false;
+        }
+    }
+
+    private static string ResolveSessionAudioPlaybackPath(string path)
+    {
+        var directory = System.IO.Path.GetDirectoryName(path);
+        var fileName = System.IO.Path.GetFileName(path);
+        if (!string.IsNullOrWhiteSpace(directory)
+            && fileName.StartsWith("video_", StringComparison.OrdinalIgnoreCase)
+            && fileName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+        {
+            var number = fileName.Substring(
+                "video_".Length,
+                fileName.Length - "video_".Length - ".mp4".Length);
+            if (number.Length > 0 && number.All(char.IsDigit))
+            {
+                foreach (var audioFileName in new[] { $"mix_{number}.wav", $"raw_backup_{number}.wav" })
+                {
+                    var audioPath = System.IO.Path.Combine(directory, audioFileName);
+                    if (File.Exists(audioPath))
+                    {
+                        return audioPath;
+                    }
+                }
+            }
+        }
+
+        return path;
+    }
+
+    private string FormatSessionPlaybackStatus(string videoPath, string route)
+    {
+        var videoName = System.IO.Path.GetFileName(videoPath);
+        if (!string.IsNullOrWhiteSpace(_sessionAudioPlaybackPath)
+            && !string.Equals(_sessionAudioPlaybackPath, videoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Playing {videoName} {route} with {System.IO.Path.GetFileName(_sessionAudioPlaybackPath)}.";
+        }
+
+        return $"Playing {videoName} {route}.";
+    }
+
+    private void StartSessionMediaElementFallbackPlayback(string path)
+    {
+        StopSessionDx12Playback();
+        StopSessionAudioPlayback();
+        SessionDx12PlaybackHostPanel.Visibility = Visibility.Collapsed;
+        SessionPlaybackElement.Opacity = 1d;
+        SessionPlaybackElement.Source = new Uri(path);
+        SessionPlaybackElement.Visibility = Visibility.Visible;
+        CameraPlaceholder.Visibility = Visibility.Collapsed;
+        SessionPlaybackBar.Visibility = Visibility.Visible;
+        _startSessionPlaybackFromBeginning = true;
+        _isSessionDx12PlaybackActive = false;
+        _isSessionMediaElementFallbackActive = true;
+        SessionPlaybackElement.Play();
+        _ = TryStartSessionSidecarAudioPlayback(path, out _);
+        _isSessionPlaybackPlaying = true;
+        _isSessionPlaybackEnded = false;
+        _sessionPlaybackPositionTimer.Start();
+        PersistAppState();
+        RecordingStatusText.Text = FormatSessionPlaybackStatus(path, "with Windows media fallback");
+    }
+
+    private bool TryStartSessionSidecarAudioPlayback(string path, out string? failure)
+    {
+        var audioPath = ResolveSessionAudioPlaybackPath(path);
+        if (string.Equals(audioPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            failure = "no session sidecar audio file was found";
+            return false;
+        }
+
+        return TryStartSessionAudioPlayback(path, out failure);
+    }
+
     private void StopSessionPlayback()
     {
         _sessionPlaybackPositionTimer.Stop();
@@ -12786,15 +13296,21 @@ public partial class EqualizerWindow : Window
         _isSessionPlaybackPlaying = false;
         _isSessionPlaybackEnded = false;
         _startSessionPlaybackFromBeginning = false;
+        _isSessionDx12PlaybackActive = false;
+        _isSessionMediaElementFallbackActive = false;
         if (SessionPlaybackSeekSlider is not null && SessionPlaybackSeekSlider.IsMouseCaptured)
         {
             SessionPlaybackSeekSlider.ReleaseMouseCapture();
         }
 
+        StopSessionDx12Playback();
+        StopSessionAudioPlayback();
+
         try
         {
             SessionPlaybackElement.Stop();
             SessionPlaybackElement.Source = null;
+            SessionPlaybackElement.Opacity = 1d;
             SessionPlaybackElement.Visibility = Visibility.Collapsed;
         }
         catch
@@ -12814,8 +13330,203 @@ public partial class EqualizerWindow : Window
         }
     }
 
+    private void StopSessionDx12Playback()
+    {
+        var service = _sessionVideoPlaybackService;
+        _sessionVideoPlaybackService = null;
+        if (service is not null)
+        {
+            service.FrameAvailable -= SessionVideoPlaybackFrameAvailable;
+            service.PlaybackEnded -= SessionVideoPlaybackEnded;
+            service.PlaybackFailed -= SessionVideoPlaybackFailed;
+            service.StatusChanged -= SessionVideoPlaybackStatusChanged;
+            service.Dispose();
+        }
+
+        var host = _sessionDx12PlaybackHost;
+        _sessionDx12PlaybackHost = null;
+        if (host is not null)
+        {
+            host.StatusChanged -= SessionDx12PlaybackHostStatusChanged;
+            SessionDx12PlaybackHostPanel.Children.Remove(host);
+            host.Dispose();
+        }
+
+        if (SessionDx12PlaybackHostPanel is not null)
+        {
+            SessionDx12PlaybackHostPanel.Children.Clear();
+            SessionDx12PlaybackHostPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void StopSessionAudioPlayback()
+    {
+        var output = _sessionAudioPlaybackOutput;
+        var reader = _sessionAudioPlaybackReader;
+        _sessionAudioPlaybackOutput = null;
+        _sessionAudioPlaybackReader = null;
+        _sessionAudioPlaybackPath = null;
+
+        if (output is not null)
+        {
+            _isStoppingSessionAudioPlayback = true;
+            try
+            {
+                output.PlaybackStopped -= SessionAudioPlaybackStopped;
+                output.Stop();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                output.Dispose();
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            reader?.Dispose();
+        }
+        catch
+        {
+        }
+
+        _isStoppingSessionAudioPlayback = false;
+    }
+
+    private void SessionVideoPlaybackFrameAvailable(object? sender, CameraFrame frame)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            if (!_isSessionDx12PlaybackActive || _sessionDx12PlaybackHost is null)
+            {
+                return;
+            }
+
+            if (frame.HasNv12)
+            {
+                _sessionDx12PlaybackHost.RenderBgraFrame(frame, DateTime.UtcNow.Ticks);
+                return;
+            }
+
+            if (frame.HasBgra)
+            {
+                _sessionDx12PlaybackHost.RenderBgraFrame(frame, DateTime.UtcNow.Ticks);
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void SessionVideoPlaybackEnded(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            var path = _sessionPlaybackPath;
+            _sessionPlaybackPositionTimer.Stop();
+            StopSessionAudioPlayback();
+            _isScrubbingSessionPlayback = false;
+            _isSessionPlaybackPlaying = false;
+            _isSessionPlaybackEnded = true;
+            UpdateSessionPlaybackProgress();
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                RecordingStatusText.Text = $"Finished {System.IO.Path.GetFileName(path)}.";
+            }
+
+            UpdateSessionPlaybackTransportControls();
+        }), DispatcherPriority.Normal);
+    }
+
+    private void SessionVideoPlaybackFailed(object? sender, string message)
+    {
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            var path = _sessionPlaybackPath;
+            StopSessionPlayback();
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                _sessionPlaybackPath = path;
+                _lastSessionRecordingPath = path;
+                ResetSessionPlaybackProgress();
+                StartSessionMediaElementFallbackPlayback(path);
+                RecordingStatusText.Text = $"DX12 session playback failed; using Windows media fallback: {message}";
+            }
+            else
+            {
+                RecordingStatusText.Text = $"Session playback failed: {message}";
+            }
+
+            UpdateSessionPlaybackTransportControls();
+        }), DispatcherPriority.Normal);
+    }
+
+    private void SessionVideoPlaybackStatusChanged(object? sender, string message)
+    {
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            if (_isSessionDx12PlaybackActive && !string.IsNullOrWhiteSpace(message))
+            {
+                CameraPreviewStatusText.Text = message;
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void SessionDx12PlaybackHostStatusChanged(object? sender, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            if (_isSessionDx12PlaybackActive)
+            {
+                CameraPreviewStatusText.Text = message;
+            }
+        }), DispatcherPriority.Background);
+    }
+
+    private void SessionAudioPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            if (_isStoppingSessionAudioPlayback)
+            {
+                return;
+            }
+
+            if (e.Exception is not null)
+            {
+                var path = _sessionPlaybackPath;
+                var canUseMediaFallback = _isSessionDx12PlaybackActive;
+                StopSessionPlayback();
+                RecordingStatusText.Text = $"Session audio playback failed: {e.Exception.Message}";
+                if (canUseMediaFallback && !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    StartSessionMediaElementFallbackPlayback(path);
+                    RecordingStatusText.Text = $"Session audio playback failed; using Windows media fallback: {e.Exception.Message}";
+                }
+            }
+        }), DispatcherPriority.Normal);
+    }
+
     private void SessionPlaybackOpened(object sender, RoutedEventArgs e)
     {
+        if (!_isSessionMediaElementFallbackActive)
+        {
+            return;
+        }
+
         if (_startSessionPlaybackFromBeginning)
         {
             _startSessionPlaybackFromBeginning = false;
@@ -12854,6 +13565,34 @@ public partial class EqualizerWindow : Window
         }
 
         var duration = GetSessionPlaybackDuration();
+        if (_isSessionDx12PlaybackActive)
+        {
+            if (_isSessionPlaybackEnded)
+            {
+                var path = _sessionPlaybackPath;
+                StartSessionPlayback(path);
+                return;
+            }
+
+            if (restartIfAtEnd
+                && duration > TimeSpan.Zero
+                && GetSessionPlaybackPosition() >= duration - TimeSpan.FromMilliseconds(250))
+            {
+                SeekSessionPlaybackTo(TimeSpan.Zero);
+            }
+
+            _sessionVideoPlaybackService?.Play();
+            _sessionAudioPlaybackOutput?.Play();
+            SessionDx12PlaybackHostPanel.Visibility = Visibility.Visible;
+            CameraPlaceholder.Visibility = Visibility.Collapsed;
+            SessionPlaybackBar.Visibility = Visibility.Visible;
+            _isSessionPlaybackPlaying = true;
+            _isSessionPlaybackEnded = false;
+            _sessionPlaybackPositionTimer.Start();
+            UpdateSessionPlaybackBarControls();
+            return;
+        }
+
         if (restartIfAtEnd
             && duration > TimeSpan.Zero
             && SessionPlaybackElement.Position >= duration - TimeSpan.FromMilliseconds(250))
@@ -12865,6 +13604,7 @@ public partial class EqualizerWindow : Window
         CameraPlaceholder.Visibility = Visibility.Collapsed;
         SessionPlaybackBar.Visibility = Visibility.Visible;
         SessionPlaybackElement.Play();
+        _sessionAudioPlaybackOutput?.Play();
         _isSessionPlaybackPlaying = true;
         _isSessionPlaybackEnded = false;
         _sessionPlaybackPositionTimer.Start();
@@ -12878,7 +13618,20 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        if (_isSessionDx12PlaybackActive)
+        {
+            _sessionVideoPlaybackService?.Pause();
+            _sessionAudioPlaybackOutput?.Pause();
+            _isSessionPlaybackPlaying = false;
+            _isSessionPlaybackEnded = false;
+            _sessionPlaybackPositionTimer.Stop();
+            UpdateSessionPlaybackProgress();
+            UpdateSessionPlaybackBarControls();
+            return;
+        }
+
         SessionPlaybackElement.Pause();
+        _sessionAudioPlaybackOutput?.Pause();
         _isSessionPlaybackPlaying = false;
         _isSessionPlaybackEnded = false;
         _sessionPlaybackPositionTimer.Stop();
@@ -12907,7 +13660,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        var position = SessionPlaybackElement.Position;
+        var position = GetSessionPlaybackPosition();
         var duration = GetSessionPlaybackDuration();
         var maxSeconds = Math.Max(1d, duration.TotalSeconds);
         var positionSeconds = Math.Clamp(position.TotalSeconds, 0d, maxSeconds);
@@ -12971,16 +13724,48 @@ public partial class EqualizerWindow : Window
 
     private TimeSpan GetSessionPlaybackDuration()
     {
+        if (_isSessionDx12PlaybackActive)
+        {
+            var serviceDuration = _sessionVideoPlaybackService?.Duration ?? TimeSpan.Zero;
+            if (serviceDuration > TimeSpan.Zero)
+            {
+                return serviceDuration;
+            }
+
+            var audioDuration = _sessionAudioPlaybackReader?.TotalTime ?? TimeSpan.Zero;
+            if (audioDuration > TimeSpan.Zero)
+            {
+                return audioDuration;
+            }
+        }
+
         return SessionPlaybackElement.NaturalDuration.HasTimeSpan
             ? SessionPlaybackElement.NaturalDuration.TimeSpan
-            : TimeSpan.Zero;
+            : _sessionAudioPlaybackReader?.TotalTime ?? TimeSpan.Zero;
+    }
+
+    private TimeSpan GetSessionPlaybackPosition()
+    {
+        if (_isSessionDx12PlaybackActive)
+        {
+            var videoPosition = _sessionVideoPlaybackService?.Position ?? TimeSpan.Zero;
+            if (videoPosition > TimeSpan.Zero || _sessionAudioPlaybackReader is null)
+            {
+                return videoPosition;
+            }
+
+            return _sessionAudioPlaybackReader.CurrentTime;
+        }
+
+        return SessionPlaybackElement.Position > TimeSpan.Zero || _sessionAudioPlaybackReader is null
+            ? SessionPlaybackElement.Position
+            : _sessionAudioPlaybackReader.CurrentTime;
     }
 
     private bool CanSeekSessionPlayback()
     {
         return !string.IsNullOrWhiteSpace(_sessionPlaybackPath)
-            && SessionPlaybackElement.NaturalDuration.HasTimeSpan
-            && SessionPlaybackElement.NaturalDuration.TimeSpan > TimeSpan.Zero;
+            && GetSessionPlaybackDuration() > TimeSpan.Zero;
     }
 
     private void SeekSessionPlaybackFromPoint(Point point)
@@ -13005,7 +13790,34 @@ public partial class EqualizerWindow : Window
         var duration = GetSessionPlaybackDuration();
         var clampedSeconds = Math.Clamp(position.TotalSeconds, 0d, duration.TotalSeconds);
         var clamped = TimeSpan.FromSeconds(clampedSeconds);
-        SessionPlaybackElement.Position = clamped;
+        if (_isSessionDx12PlaybackActive)
+        {
+            _sessionVideoPlaybackService?.Seek(clamped);
+            if (_sessionAudioPlaybackReader is not null)
+            {
+                try
+                {
+                    _sessionAudioPlaybackReader.CurrentTime = clamped;
+                }
+                catch
+                {
+                }
+            }
+        }
+        else
+        {
+            SessionPlaybackElement.Position = clamped;
+            if (_sessionAudioPlaybackReader is not null)
+            {
+                try
+                {
+                    _sessionAudioPlaybackReader.CurrentTime = clamped;
+                }
+                catch
+                {
+                }
+            }
+        }
 
         _isUpdatingSessionPlaybackPosition = true;
         try
@@ -13076,11 +13888,17 @@ public partial class EqualizerWindow : Window
 
     private void SessionPlaybackEnded(object sender, RoutedEventArgs e)
     {
+        if (!_isSessionMediaElementFallbackActive)
+        {
+            return;
+        }
+
         var path = _sessionPlaybackPath;
         _sessionPlaybackPositionTimer.Stop();
         _isScrubbingSessionPlayback = false;
         _isSessionPlaybackPlaying = false;
         _isSessionPlaybackEnded = true;
+        StopSessionAudioPlayback();
         var duration = GetSessionPlaybackDuration();
         if (duration > TimeSpan.Zero)
         {
@@ -13101,6 +13919,11 @@ public partial class EqualizerWindow : Window
 
     private void SessionPlaybackFailed(object sender, ExceptionRoutedEventArgs e)
     {
+        if (!_isSessionMediaElementFallbackActive)
+        {
+            return;
+        }
+
         StopSessionPlayback();
         RecordingStatusText.Text = $"Session playback failed: {e.ErrorException.Message}";
         UpdateSessionPlaybackTransportControls();
@@ -14080,6 +14903,21 @@ public partial class EqualizerWindow : Window
 
     private void UpdateSignalStatus(double peakLevel)
     {
+        if (_spectrumService.IsRunning && !_spectrumService.HasReceivedAudioCallbacks)
+        {
+            _silentFrameCount = 0;
+            var callbackStatusText = _selectedDevice is null
+                ? "Listening; waiting for audio callbacks."
+                : CreateWaitingForAudioCallbacksStatus(_selectedDevice);
+            if (!StatusText.Text.Contains("no audio callbacks", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(StatusText.Text, callbackStatusText, StringComparison.Ordinal))
+            {
+                StatusText.Text = callbackStatusText;
+            }
+
+            return;
+        }
+
         if (peakLevel < 0.001d)
         {
             _silentFrameCount++;

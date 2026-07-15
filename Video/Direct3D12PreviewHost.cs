@@ -157,7 +157,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                         frame.Width,
                         frame.Height,
                         frame.BgraPreviewStride,
-                        frame.FrameNumber);
+                        frame.FrameNumber,
+                        denoiseEnabled: denoiseEnabled,
+                        denoiseStrength: denoiseStrength);
                     ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", textureFailureReason));
                     return;
                 }
@@ -251,7 +253,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                                 frame.Height,
                                 frame.Stride,
                                 frame.FrameNumber,
-                                frame.ColorSettings);
+                                frame.ColorSettings,
+                                frame.DenoiseEnabled,
+                                frame.DenoiseStrength);
                         }
 
                         ReportPreviewPath("DX12 BGRA upload preview");
@@ -660,7 +664,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             int height,
             int stride,
             long frameNumber,
-            VideoFrameColorSettings colorSettings = default)
+            VideoFrameColorSettings colorSettings = default,
+            bool denoiseEnabled = false,
+            double denoiseStrength = 0d)
         {
             if (_disposed || bgraBytes.Length < stride * height)
             {
@@ -672,7 +678,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 Resize(width, height);
             }
 
-            if (TryRenderBgraFrameWithShader(bgraBytes, width, height, stride, colorSettings))
+            if (TryRenderBgraFrameWithShader(bgraBytes, width, height, stride, colorSettings, denoiseEnabled, denoiseStrength))
             {
                 return;
             }
@@ -1028,7 +1034,9 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             int width,
             int height,
             int stride,
-            VideoFrameColorSettings colorSettings)
+            VideoFrameColorSettings colorSettings,
+            bool denoiseEnabled,
+            double denoiseStrength)
         {
             if (_shaderPreviewUnavailable || _previewRootSignature is null || _previewPipelineState is null)
             {
@@ -1047,7 +1055,7 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 }
 
                 CopyBgraFrameToUploadBuffer(frameResource, bgraBytes, width, height, stride);
-                WriteBgraColorSettings(frameResource, colorSettings);
+                WriteBgraColorSettings(frameResource, colorSettings, denoiseEnabled, denoiseStrength, width, height);
 
                 var renderTarget = _renderTargets[frameIndex] ?? throw new InvalidOperationException("DX12 render target is not ready.");
 
@@ -1390,7 +1398,13 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             }
         }
 
-        private unsafe void WriteBgraColorSettings(FrameResource frameResource, VideoFrameColorSettings settings)
+        private unsafe void WriteBgraColorSettings(
+            FrameResource frameResource,
+            VideoFrameColorSettings settings,
+            bool denoiseEnabled,
+            double denoiseStrength,
+            int width,
+            int height)
         {
             var mappedData = (float*)frameResource.BgraColorSettingsPointer;
             if (mappedData == null)
@@ -1403,6 +1417,11 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
             mappedData[1] = hasColor ? (float)(1d + Math.Clamp(settings.Contrast, -40d, 40d) / 100d) : 1f;
             mappedData[2] = hasColor ? (float)(1d + Math.Clamp(settings.Saturation, -40d, 40d) / 100d) : 1f;
             mappedData[3] = hasColor ? (float)(Math.Clamp(settings.Warmth, -40d, 40d) * 0.9d) : 0f;
+            var strength = (float)Math.Clamp(denoiseStrength, 0.5d, 5d);
+            mappedData[4] = denoiseEnabled ? Math.Clamp(0.06f + strength * 0.08f, 0.10f, 0.42f) : 0f;
+            mappedData[5] = denoiseEnabled ? Math.Clamp(0.018f + strength * 0.006f, 0.024f, 0.052f) : 0f;
+            mappedData[6] = 1f / Math.Max(1, width);
+            mappedData[7] = 1f / Math.Max(1, height);
         }
 
         private unsafe void CopyNv12FrameToUploadBuffers(
@@ -1608,6 +1627,10 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 float Contrast;
                 float Saturation;
                 float Warmth;
+                float DenoiseAmount;
+                float DenoiseEdgeThreshold;
+                float TexelWidth;
+                float TexelHeight;
             };
 
             struct VertexOutput
@@ -1649,10 +1672,51 @@ public sealed class Direct3D12PreviewHost : HwndHost, IDisposable
                 return saturate(rgb255 / 255.0);
             }
 
+            float Luma(float3 rgb)
+            {
+                return dot(rgb, float3(0.2126, 0.7152, 0.0722));
+            }
+
+            float EdgeAwareWeight(float sampleY, float centerY)
+            {
+                return saturate(1.0 - abs(sampleY - centerY) / max(DenoiseEdgeThreshold, 0.0001));
+            }
+
+            float3 ApplyBgraDenoise(float3 centerRgb, float2 texCoord)
+            {
+                if (DenoiseAmount <= 0.001)
+                {
+                    return centerRgb;
+                }
+
+                float2 xOffset = float2(TexelWidth, 0.0);
+                float2 yOffset = float2(0.0, TexelHeight);
+                float3 leftRgb = CameraFrame.Sample(CameraSampler, texCoord - xOffset).rgb;
+                float3 rightRgb = CameraFrame.Sample(CameraSampler, texCoord + xOffset).rgb;
+                float3 upRgb = CameraFrame.Sample(CameraSampler, texCoord - yOffset).rgb;
+                float3 downRgb = CameraFrame.Sample(CameraSampler, texCoord + yOffset).rgb;
+
+                float centerY = Luma(centerRgb);
+                float centerWeight = 2.0;
+                float leftWeight = EdgeAwareWeight(Luma(leftRgb), centerY);
+                float rightWeight = EdgeAwareWeight(Luma(rightRgb), centerY);
+                float upWeight = EdgeAwareWeight(Luma(upRgb), centerY);
+                float downWeight = EdgeAwareWeight(Luma(downRgb), centerY);
+                float totalWeight = centerWeight + leftWeight + rightWeight + upWeight + downWeight;
+                float3 smoothedRgb = (
+                    centerRgb * centerWeight
+                    + leftRgb * leftWeight
+                    + rightRgb * rightWeight
+                    + upRgb * upWeight
+                    + downRgb * downWeight) / max(totalWeight, 0.0001);
+                return lerp(centerRgb, smoothedRgb, DenoiseAmount);
+            }
+
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
                 float4 color = CameraFrame.Sample(CameraSampler, input.TexCoord);
-                return float4(ApplyColorPolish(color.rgb), 1.0);
+                float3 denoised = ApplyBgraDenoise(color.rgb, input.TexCoord);
+                return float4(ApplyColorPolish(denoised), 1.0);
             }
             """;
 

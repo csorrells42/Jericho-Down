@@ -245,6 +245,8 @@ internal sealed class AppSettingsState
 
     public List<MidiControlMappingSettingsState> MidiControlMappings { get; set; } = [];
 
+    public bool MidiEnabled { get; set; }
+
     public string? MidiInputDeviceName { get; set; }
 
     public int? MidiInputDeviceProductId { get; set; }

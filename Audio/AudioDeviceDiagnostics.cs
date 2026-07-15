@@ -13,7 +13,9 @@ public static class AudioDeviceDiagnostics
         AudioDeviceFormat? inputFormat,
         AudioDeviceFormat? outputFormat,
         IReadOnlyList<AudioInputDevice> inputDevices,
-        IReadOnlyList<AudioOutputDevice> outputDevices)
+        IReadOnlyList<AudioOutputDevice> outputDevices,
+        AsioInputCaptureDiagnostics? asioInputDiagnostics = null,
+        string? activeInputStatus = null)
     {
         var report = new StringBuilder();
         report.AppendLine("Audio Device Diagnostics");
@@ -24,6 +26,7 @@ public static class AudioDeviceDiagnostics
         report.AppendLine();
 
         AppendInputSection(report, selectedInput, inputFormat);
+        AppendAsioRuntimeSection(report, selectedInput, asioInputDiagnostics, activeInputStatus);
         report.AppendLine();
         AppendOutputSection(report, selectedOutput, outputFormat);
         report.AppendLine();
@@ -102,6 +105,46 @@ public static class AudioDeviceDiagnostics
         else
         {
             AppendMatchingEndpointSummary(report, DataFlow.Render, selectedOutput.EndpointId, selectedOutput.Name, "Windows playback endpoint");
+        }
+    }
+
+    private static void AppendAsioRuntimeSection(
+        StringBuilder report,
+        AudioInputDevice? selectedInput,
+        AsioInputCaptureDiagnostics? diagnostics,
+        string? activeInputStatus)
+    {
+        if (selectedInput?.IsAsio != true || diagnostics is null)
+        {
+            return;
+        }
+
+        report.AppendLine();
+        report.AppendLine("ASIO Runtime Diagnostics");
+        report.AppendLine($"- Active stream: {FormatStatus(activeInputStatus)}");
+        report.AppendLine($"- Driver: {diagnostics.DriverName}");
+        report.AppendLine($"- Requested sample rate: {diagnostics.RequestedSampleRate} Hz");
+        report.AppendLine($"- Requested input channels: {diagnostics.RequestedChannelCount}");
+        report.AppendLine($"- Driver input channels: {diagnostics.DriverInputChannelCount}");
+        report.AppendLine($"- Driver output channels: {diagnostics.DriverOutputChannelCount}");
+        report.AppendLine($"- Effective input channels opened: {diagnostics.EffectiveInputChannelCount}");
+        report.AppendLine($"- Input channel offset: {diagnostics.InputChannelOffset}");
+        report.AppendLine($"- Silent output clock: {(diagnostics.UsesSilentOutputClock ? $"{diagnostics.OutputClockChannelCount} channel(s)" : "disabled (record-only input)")}");
+        report.AppendLine($"- ASIO thread: {diagnostics.ThreadApartmentState}, sync context {(diagnostics.HasSynchronizationContext ? "present" : "missing")}, managed id {diagnostics.ManagedThreadId}");
+        report.AppendLine($"- Init started UTC: {diagnostics.InitStartedUtc:O}");
+        report.AppendLine($"- Play started UTC: {(diagnostics.PlayStartedUtc.HasValue ? diagnostics.PlayStartedUtc.Value.ToString("O") : "not reached")}");
+        report.AppendLine($"- Audio callbacks received: {diagnostics.AudioCallbackCount}");
+        report.AppendLine($"- Last callback UTC: {(diagnostics.LastAudioCallbackUtc.HasValue ? diagnostics.LastAudioCallbackUtc.Value.ToString("O") : "none")}");
+
+        if (diagnostics.AudioCallbackCount == 0 && diagnostics.PlayStartedUtc.HasValue)
+        {
+            report.AppendLine();
+            report.AppendLine("No-callback diagnosis");
+            report.AppendLine("- Jericho Down successfully identified the Focusrite ASIO driver, opened input buffers, and called Play().");
+            report.AppendLine("- The failure is below the app's DSP, mixer, and graph code: NAudio did not receive any ASIO buffer-switch/audio callbacks from the driver.");
+            report.AppendLine("- Most likely causes are: Focusrite driver clock/sample-rate mismatch, another ASIO client holding the interface, Focusrite Control not routing hardware inputs to the ASIO lanes, or the driver refusing callbacks for the opened channel/rate combination.");
+            report.AppendLine("- Jericho Down has stopped automatic ASIO retries for this device so the Focusrite driver is not reopened repeatedly.");
+            report.AppendLine("- Use Refresh Audio Devices or reselect the ASIO input after changing Focusrite Control, clock source, sample rate, or closing another ASIO app.");
         }
     }
 
@@ -226,6 +269,11 @@ public static class AudioDeviceDiagnostics
     private static string Format(AudioDeviceFormat? format)
     {
         return format?.ToString() ?? "not available";
+    }
+
+    private static string FormatStatus(string? status)
+    {
+        return string.IsNullOrWhiteSpace(status) ? "not available" : status;
     }
 
     private static string FormatEndpointId(string? endpointId)

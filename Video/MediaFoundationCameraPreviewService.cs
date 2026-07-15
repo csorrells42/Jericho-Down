@@ -378,7 +378,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                             frame = CreateBgraFrameFromNv12(frame);
                         }
 
-                        if (frame.HasBgra && DenoiseEnabled)
+                        if (frame.HasBgra && DenoiseEnabled && !DenoiseHandledByPreviewRenderer)
                         {
                             _denoiser.Apply(frame.BgraBytes, DenoiseStrength);
                         }

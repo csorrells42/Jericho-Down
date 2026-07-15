@@ -7,6 +7,8 @@ internal static class MediaFoundationInterop
 {
     public const int MF_VERSION = 0x00020070;
     public const int MFSTARTUP_FULL = 0;
+    public const int MF_SOURCE_READER_ANY_STREAM = unchecked((int)0xfffffffe);
+    public const int MF_SOURCE_READER_MEDIASOURCE = unchecked((int)0xffffffff);
     public const int MF_SOURCE_READER_FIRST_VIDEO_STREAM = unchecked((int)0xfffffffc);
     public const int MF_SOURCE_READERF_ENDOFSTREAM = 0x00000002;
     public const int MF_E_NO_MORE_TYPES = unchecked((int)0xc00d36b9);
@@ -171,6 +173,12 @@ internal static class MediaFoundationInterop
     [DllImport("mfreadwrite.dll", ExactSpelling = true)]
     public static extern int MFCreateSourceReaderFromMediaSource(
         [MarshalAs(UnmanagedType.IUnknown)] object mediaSource,
+        IMFAttributes? attributes,
+        out IMFSourceReader reader);
+
+    [DllImport("mfreadwrite.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+    public static extern int MFCreateSourceReaderFromURL(
+        string sourceUrl,
         IMFAttributes? attributes,
         out IMFSourceReader reader);
 

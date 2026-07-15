@@ -57,6 +57,9 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
+    ("Podcast session playback prefers DX12 file renderer", PodcastSessionPlaybackPrefersDx12FileRenderer),
+    ("Camera denoise stays on DX12 preview paths", CameraDenoiseStaysOnDx12PreviewPaths),
+    ("MIDI tab is opt-in and ordered after Karaoke", MidiTabIsOptInAndOrderedAfterKaraoke),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
@@ -67,9 +70,15 @@ var tests = new (string Name, Action Test)[]
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
     ("ASIO control panel rejects non-ASIO endpoints", AsioControlPanelRejectsNonAsioEndpoints),
     ("ASIO settings menu prefers selected and installed drivers", AsioSettingsMenuPrefersSelectedAndInstalledDrivers),
+    ("ASIO callback test exposes driver modes", AsioCallbackTestExposesDriverModes),
     ("ASIO input devices carry endpoint identity", AsioInputDevicesCarryEndpointIdentity),
     ("ASIO input selections restore by endpoint", AsioInputSelectionsRestoreByEndpoint),
     ("ASIO restart path preserves endpoint identity", AsioRestartPathPreservesEndpointIdentity),
+    ("ASIO input startup avoids pre-open probe", AsioInputStartupAvoidsPreOpenProbe),
+    ("ASIO STA dispatcher pumps Windows messages", AsioStaDispatcherPumpsWindowsMessages),
+    ("ASIO no-callback state clears stale graphs", AsioNoCallbackStateClearsStaleGraphs),
+    ("ASIO input capture uses record-only live mode", AsioInputCaptureUsesRecordOnlyLiveMode),
+    ("ASIO primary capture holds auxiliary inputs", AsioPrimaryCaptureHoldsAuxiliaryInputs),
     ("ASIO input capture converts interleaved floats", AsioInputCaptureConvertsInterleavedFloats),
     ("CoreAudio session catalog skips ASIO outputs", CoreAudioSessionCatalogSkipsAsioOutputs),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
@@ -823,7 +832,7 @@ static void DspScreenSeparatesCustomAndNaudioFamilies()
     Assert(!customGroup.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "Jericho DSP group should not contain NAudio controls");
     Assert(Regex.Matches(customGroup, "StaticResource DspGroupedPanel").Count >= 10, "custom DSP controls should be nested inside the Jericho DSP bubble");
 
-    var naudioGroup = ExtractSourceBetween(xaml, "Text=\"NAudio DSP\"", "<TabItem Header=\"Mixing\">");
+    var naudioGroup = ExtractSourceBetween(xaml, "Text=\"NAudio DSP\"", "<TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
     foreach (var marker in new[]
     {
         "Text=\"NAudio BiQuad Filter Rack\"",
@@ -1229,6 +1238,10 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
     Assert(xaml.Contains("Header=\"Refresh Video Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Video Devices");
     Assert(xaml.Contains("Click=\"RefreshVideoDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Video Devices should be wired to a handler");
+    Assert(xaml.Contains("x:Name=\"EnableMidiMenuItem\"", StringComparison.Ordinal), "File menu should expose an Enable MIDI toggle");
+    Assert(xaml.Contains("Header=\"Enable MIDI\"", StringComparison.Ordinal), "Enable MIDI toggle should use the requested label");
+    Assert(xaml.Contains("IsCheckable=\"True\"", StringComparison.Ordinal), "Enable MIDI should be a checkbox-style menu item");
+    Assert(xaml.Contains("Checked=\"EnableMidiChanged\"", StringComparison.Ordinal), "Enable MIDI checked state should be wired to a handler");
     Assert(xaml.Contains("Header=\"Settings\"", StringComparison.Ordinal), "File menu should expose a Settings submenu");
     Assert(xaml.Contains("Header=\"Podcast Settings\"", StringComparison.Ordinal), "Settings submenu should expose Podcast Settings");
     Assert(xaml.Contains("Click=\"PodcastSettingsMenuClicked\"", StringComparison.Ordinal), "Podcast Settings should be wired to a handler");
@@ -1237,13 +1250,21 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"Audio Device Diagnostics\"", StringComparison.Ordinal), "Settings submenu should expose Audio Device Diagnostics");
     Assert(xaml.Contains("Click=\"AudioDeviceDiagnosticsMenuClicked\"", StringComparison.Ordinal), "Audio Device Diagnostics should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
+    Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose the ASIO callback test");
+    Assert(xaml.Contains("Click=\"AsioCallbackTestMenuClicked\"", StringComparison.Ordinal), "ASIO callback test should be wired to a handler");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
-    Assert(xaml.Contains("Header=\"Equalizer\"", StringComparison.Ordinal), "Help menu should expose the Equalizer guide");
-    Assert(xaml.Contains("Click=\"EqualizerHelpMenuClicked\"", StringComparison.Ordinal), "Equalizer guide should be wired to a handler");
-    Assert(xaml.Contains("Header=\"Mixer\"", StringComparison.Ordinal), "Help menu should expose the Mixer guide");
-    Assert(xaml.Contains("Click=\"MixerHelpMenuClicked\"", StringComparison.Ordinal), "Mixer guide should be wired to a handler");
-    Assert(xaml.Contains("Header=\"Tabs and Features\"", StringComparison.Ordinal), "Help menu should expose the tab guide");
-    Assert(xaml.Contains("Click=\"TabsHelpMenuClicked\"", StringComparison.Ordinal), "tab guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Podcast\"", StringComparison.Ordinal), "Help menu should expose the Podcast guide");
+    Assert(xaml.Contains("Click=\"PodcastHelpMenuClicked\"", StringComparison.Ordinal), "Podcast guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Karaoke\"", StringComparison.Ordinal), "Help menu should expose the Karaoke guide");
+    Assert(xaml.Contains("Click=\"KaraokeHelpMenuClicked\"", StringComparison.Ordinal), "Karaoke guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Mic / DSP\"", StringComparison.Ordinal), "Help menu should expose the Mic / DSP guide");
+    Assert(xaml.Contains("Click=\"MicDspHelpMenuClicked\"", StringComparison.Ordinal), "Mic / DSP guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Mixing\"", StringComparison.Ordinal), "Help menu should expose the Mixing guide");
+    Assert(xaml.Contains("Click=\"MixingHelpMenuClicked\"", StringComparison.Ordinal), "Mixing guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Help menu should expose the MIDI guide");
+    Assert(xaml.Contains("Click=\"MidiHelpMenuClicked\"", StringComparison.Ordinal), "MIDI guide should be wired to a handler");
+    Assert(!xaml.Contains("Header=\"Tabs and Features\"", StringComparison.Ordinal), "Help menu should not expose a grouped tab guide");
+    Assert(!xaml.Contains("TabsHelpMenuClicked", StringComparison.Ordinal), "grouped tab guide handler should not be wired");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
     Assert(xaml.Contains("Header=\"Verification\"", StringComparison.Ordinal), "About menu should expose DSP Verification");
     Assert(xaml.Contains("Click=\"VerificationMenuClicked\"", StringComparison.Ordinal), "DSP Verification should be wired to a handler");
@@ -1254,15 +1275,106 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
     Assert(!xaml.Contains("RecordRawBackupCheckBox", StringComparison.Ordinal), "Podcast recording UI should not expose a raw-backup checkbox unless it is wired to recording behavior");
     var project = File.ReadAllText(FindRepoFile("JerichoDown.csproj"));
-    Assert(project.Contains("Docs\\jericho-down-equalizer-guide.pdf", StringComparison.Ordinal), "Equalizer guide PDF should be copied to output");
-    Assert(project.Contains("Docs\\jericho-down-mixer-guide.pdf", StringComparison.Ordinal), "Mixer guide PDF should be copied to output");
-    Assert(project.Contains("Docs\\jericho-down-tabs-guide.pdf", StringComparison.Ordinal), "tab guide PDF should be copied to output");
-    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-equalizer-guide.pdf"))), "Equalizer guide PDF should exist");
-    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-mixer-guide.pdf"))), "Mixer guide PDF should exist");
-    Assert(File.Exists(FindRepoFile(Path.Combine("Docs", "jericho-down-tabs-guide.pdf"))), "tab guide PDF should exist");
+    string[] tabGuideFiles =
+    [
+        "jericho-down-podcast-guide.pdf",
+        "jericho-down-karaoke-guide.pdf",
+        "jericho-down-mic-dsp-guide.pdf",
+        "jericho-down-mixing-guide.pdf",
+        "jericho-down-midi-guide.pdf"
+    ];
+    foreach (var guideFile in tabGuideFiles)
+    {
+        Assert(project.Contains($"Docs\\{guideFile}", StringComparison.Ordinal), $"{guideFile} should be copied to output");
+        Assert(File.Exists(FindRepoFile(Path.Combine("Docs", guideFile))), $"{guideFile} should exist");
+    }
+
+    Assert(!project.Contains("Docs\\jericho-down-tabs-guide.pdf", StringComparison.Ordinal), "grouped tab guide PDF should not be copied to output");
     Assert(File.ReadAllText(FindRepoFile(".gitattributes")).Contains("*.pdf binary", StringComparison.Ordinal), "PDF guides should be treated as binary files");
     Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
     Assert(File.ReadAllText(FindRepoFile("VerificationView.xaml")).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
+}
+
+static void PodcastSessionPlaybackPrefersDx12FileRenderer()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationFilePlaybackService.cs")));
+    var interop = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationInterop.cs")));
+
+    Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
+    Assert(xaml.Contains("x:Name=\"SessionPlaybackElement\"", StringComparison.Ordinal), "legacy MediaElement fallback should remain available");
+    Assert(windowCode.Contains("new Direct3D12PreviewHost", StringComparison.Ordinal), "session playback should render through the existing DX12 swap-chain host");
+    Assert(windowCode.Contains("new MediaFoundationFilePlaybackService()", StringComparison.Ordinal), "session playback should use the Media Foundation file reader service");
+    Assert(windowCode.Contains("ResolveSessionAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio");
+    Assert(windowCode.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
+    Assert(windowCode.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
+    Assert(windowCode.Contains("new AudioFileReader(audioPath)", StringComparison.Ordinal), "DX12 video playback should keep resolved session audio routed through NAudio");
+    Assert(windowCode.Contains("CreateSelectedPlaybackOutput(reader.ToWaveProvider()", StringComparison.Ordinal), "session audio should use the selected Jericho output route");
+    Assert(windowCode.Contains("TryStartSessionSidecarAudioPlayback(path", StringComparison.Ordinal), "Windows media fallback should still play sidecar audio for podcast session videos");
+
+    var startMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void StartSessionPlayback(string path)",
+        "    private bool TryStartDx12SessionPlayback");
+    var dx12Index = startMethod.IndexOf("TryStartDx12SessionPlayback(path", StringComparison.Ordinal);
+    var fallbackIndex = startMethod.IndexOf("StartSessionMediaElementFallbackPlayback(path)", StringComparison.Ordinal);
+    Assert(dx12Index >= 0 && fallbackIndex > dx12Index, "session playback should try DX12 before Windows media fallback");
+    Assert(startMethod.Contains("_isCameraEnabled = false;", StringComparison.Ordinal), "session playback should not leave the webcam marked live while the file player owns the preview surface");
+
+    Assert(playbackService.Contains("MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS", StringComparison.Ordinal), "file playback should request Media Foundation hardware transforms");
+    Assert(playbackService.Contains("MFCreateSourceReaderFromURL(path, attributes", StringComparison.Ordinal), "file playback should open MP4 sessions with a source reader");
+    Assert(playbackService.Contains("MFVideoFormat_RGB32", StringComparison.Ordinal), "file playback should decode to a DX12-uploadable BGRA path");
+    Assert(playbackService.Contains("MFVideoFormat_NV12", StringComparison.Ordinal), "file playback should keep an NV12 fallback for efficient video frames");
+    Assert(playbackService.Contains("ResolvePresentationTicks(", StringComparison.Ordinal), "file playback should normalize or synthesize presentation timestamps");
+    Assert(playbackService.Contains("sourceDeltaTicks >= minimumSourceDeltaTicks", StringComparison.Ordinal), "file playback should reject implausibly tiny camera timestamps that make real-camera recordings race");
+    Assert(playbackService.Contains("syntheticPresentationTicks = syntheticTicks + frameDurationTicks", StringComparison.Ordinal), "file playback should pace bad-timestamp frames from the decoded frame rate");
+    Assert(interop.Contains("MFCreateSourceReaderFromURL", StringComparison.Ordinal), "Media Foundation interop should expose file source readers");
+}
+
+static void CameraDenoiseStaysOnDx12PreviewPaths()
+{
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var mediaFoundationPreview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationCameraPreviewService.cs")));
+    var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "DirectShowCameraPreviewService.cs")));
+    var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Video", "Direct3D12PreviewHost.cs")));
+
+    Assert(windowCode.Contains("DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true", StringComparison.Ordinal), "CPU preview services should know when the DX12 preview renderer owns denoise");
+    Assert(windowCode.Contains("denoiseHandledByPreviewRenderer: denoiseEnabled", StringComparison.Ordinal), "Media Foundation denoise startup should avoid capture-thread denoise when DX12 will render the preview");
+    Assert(windowCode.Contains("denoiseHandledByPreviewRenderer: _pendingVideoDenoiseEnabled", StringComparison.Ordinal), "DirectShow fallback denoise startup should avoid capture-thread denoise when DX12 will render the preview");
+    Assert(mediaFoundationPreview.Contains("DenoiseEnabled && !DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "Media Foundation preview should not denoise BGRA frames on CPU when DX12 owns denoise");
+    Assert(mediaFoundationPreview.Contains("if (DenoiseEnabled && !DenoiseHandledByPreviewRenderer)", StringComparison.Ordinal), "Media Foundation preview should only force BGRA conversion for CPU denoise");
+    Assert(directShowPreview.Contains("DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "DirectShow preview should expose the same renderer-owned denoise switch");
+    Assert(directShowPreview.Contains("DenoiseEnabled && !DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "DirectShow preview should not denoise on CPU when DX12 owns denoise");
+    Assert(dx12Preview.Contains("ApplyBgraDenoise", StringComparison.Ordinal), "DX12 BGRA preview shader should perform GPU denoise for non-NV12 fallback frames");
+    Assert(dx12Preview.Contains("SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength)", StringComparison.Ordinal), "DX12 NV12 preview shader should keep the existing GPU denoise path");
+}
+
+static void MidiTabIsOptInAndOrderedAfterKaraoke()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var stateCode = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+
+    Assert(xaml.Contains("x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\"", StringComparison.Ordinal), "MIDI tab should be hidden by default");
+    Assert(xaml.Contains("x:Name=\"RefreshMidiDevicesMenuItem\"", StringComparison.Ordinal), "MIDI refresh menu item should be addressable");
+    Assert(xaml.Contains("x:Name=\"MidiHelpMenuItem\"", StringComparison.Ordinal), "MIDI help menu item should be addressable");
+
+    var orderMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void OrderMainTabs()",
+        "    public ObservableCollection<EqualizerBand> Bands");
+    var karaokeIndex = orderMethod.IndexOf("\"Karaoke\"", StringComparison.Ordinal);
+    var midiIndex = orderMethod.IndexOf("\"MIDI\"", StringComparison.Ordinal);
+    Assert(karaokeIndex >= 0 && midiIndex > karaokeIndex, "MIDI tab should be ordered after Karaoke when enabled");
+
+    Assert(windowCode.Contains("_midiEnabled = _appSettings.MidiEnabled;", StringComparison.Ordinal), "MIDI enabled state should restore from app settings");
+    Assert(windowCode.Contains("ApplyMidiEnabledState(refreshDevices: _midiEnabled", StringComparison.Ordinal), "MIDI enable state should drive tab visibility and refresh behavior");
+    Assert(windowCode.Contains("MidiTabItem.Visibility = _midiEnabled ? Visibility.Visible : Visibility.Collapsed;", StringComparison.Ordinal), "MIDI tab visibility should follow the File menu toggle");
+    Assert(windowCode.Contains("RefreshMidiDevicesMenuItem.IsEnabled = _midiEnabled;", StringComparison.Ordinal), "MIDI refresh command should follow the File menu toggle");
+    Assert(windowCode.Contains("MidiHelpMenuItem.IsEnabled = _midiEnabled;", StringComparison.Ordinal), "MIDI help command should follow the File menu toggle");
+    Assert(windowCode.Contains("MidiEnabled = _midiEnabled,", StringComparison.Ordinal), "MIDI enabled state should be saved");
+    Assert(stateCode.Contains("public bool MidiEnabled { get; set; }", StringComparison.Ordinal), "app settings should persist the MIDI enabled state");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()
@@ -1327,6 +1439,46 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(report.Contains("sample rates differ", StringComparison.OrdinalIgnoreCase), "diagnostics report should warn when output resampling will be used");
     Assert(report.Contains("refresh audio devices", StringComparison.OrdinalIgnoreCase), "diagnostics report should explain app-loopback refresh behavior");
 
+    var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Focusrite USB ASIO");
+    var asioInput = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Focusrite USB ASIO",
+        10,
+        asioEndpoint,
+        AudioInputBackend.Asio);
+    var asioDiagnostics = new AsioInputCaptureDiagnostics(
+        "Focusrite USB ASIO",
+        48_000,
+        10,
+        0,
+        10,
+        2,
+        10,
+        2,
+        true,
+        "STA",
+        true,
+        37,
+        DateTimeOffset.UtcNow,
+        DateTimeOffset.UtcNow,
+        0,
+        null);
+    var asioReport = AudioDeviceDiagnostics.BuildReport(
+        asioInput,
+        output,
+        new AudioDeviceFormat(48_000, 10, 32),
+        new AudioDeviceFormat(48_000, 2, 32),
+        [asioInput],
+        [output],
+        asioDiagnostics,
+        "48 kHz, 10 ch, 32-bit float via ASIO input Focusrite USB ASIO");
+    Assert(asioReport.Contains("ASIO Runtime Diagnostics", StringComparison.Ordinal), "diagnostics report should include ASIO runtime details when a live ASIO capture exists");
+    Assert(asioReport.Contains("Audio callbacks received: 0", StringComparison.Ordinal), "ASIO diagnostics should report callback count");
+    Assert(asioReport.Contains("Silent output clock: 2 channel", StringComparison.Ordinal), "ASIO diagnostics should report the silent output clock path");
+    Assert(asioReport.Contains("No-callback diagnosis", StringComparison.Ordinal), "ASIO diagnostics should explain the no-callback failure mode");
+    Assert(asioReport.Contains("Focusrite Control", StringComparison.Ordinal), "ASIO diagnostics should name Focusrite routing/clock checks");
+    Assert(asioReport.Contains("stopped automatic ASIO retries", StringComparison.Ordinal), "ASIO diagnostics should explain that automatic driver reopen loops are stopped");
+
     var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
     Assert(diagnosticsSource.Contains("AudioEndpointVolume", StringComparison.Ordinal), "diagnostics should inspect Windows endpoint volume/mute state");
     Assert(diagnosticsSource.Contains("AudioMeterInformation", StringComparison.Ordinal), "diagnostics should inspect current endpoint meter state");
@@ -1334,6 +1486,17 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
     Assert(windowSource.Contains("AudioDeviceDiagnostics.BuildReport", StringComparison.Ordinal), "diagnostics menu should build a device report");
     Assert(windowSource.Contains("ShowAudioDeviceDiagnosticsDialog", StringComparison.Ordinal), "diagnostics menu should open a popup window");
+    Assert(windowSource.Contains("ShowAsioNoCallbackDiagnosticsOnce(selectedDevice)", StringComparison.Ordinal), "ASIO no-callback failures should open the diagnostic report once");
+    Assert(windowSource.Contains("_asioNoCallbackAutoStartSuppressedDeviceKey", StringComparison.Ordinal), "ASIO no-callback failures should suppress automatic reopen loops for the same driver");
+    Assert(windowSource.Contains("CreateAsioNoCallbackSuppressedStatus()", StringComparison.Ordinal), "ASIO no-callback suppression should give the user a clear stable status");
+    Assert(!windowSource.Contains("RotateAsioInputSampleRateAfterNoCallbacks", StringComparison.Ordinal), "ASIO no-callback failures should not rotate sample rates automatically");
+
+    var loadMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void WindowLoaded(object sender, RoutedEventArgs e)",
+        "    private bool HasPersistedAppState()");
+    Assert(loadMethod.Contains("_isCameraEnabled = false;", StringComparison.Ordinal), "camera preview should not auto-start from persisted state on app launch");
+    Assert(!loadMethod.Contains("_isCameraEnabled = hasPersistedState && _appSettings.CameraEnabled", StringComparison.Ordinal), "persisted camera state should not power the webcam during startup");
 }
 
 static void AudioStreamRestartFailuresBackOff()
@@ -1485,6 +1648,25 @@ static void AsioSettingsMenuPrefersSelectedAndInstalledDrivers()
     Assert(missingResult is null, "ASIO settings should report no endpoint when no ASIO driver is available");
 }
 
+static void AsioCallbackTestExposesDriverModes()
+{
+    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var probeSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AsioCallbackProbe.cs")));
+
+    Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose an ASIO callback test");
+    Assert(windowCode.Contains("AsioCallbackTestMenuClicked", StringComparison.Ordinal), "ASIO callback test menu item should have a handler");
+    Assert(windowCode.Contains("_spectrumService.Stop();", StringComparison.Ordinal), "ASIO callback test should stop the live ASIO stream before probing the same driver");
+    Assert(windowCode.Contains("AsioCallbackProbe.BuildReport", StringComparison.Ordinal), "ASIO callback test should open a focused probe report");
+    Assert(windowCode.Contains("ClearAsioNoCallbackAutoStartSuppression();", StringComparison.Ordinal), "ASIO callback test should clear no-callback suppression after probing");
+    Assert(windowCode.Contains("StartSelectedDevice();", StringComparison.Ordinal), "ASIO callback test should restart the selected input after probing");
+    Assert(probeSource.Contains("Output-only silent callback test", StringComparison.Ordinal), "ASIO callback probe should test output-only callback clocking");
+    Assert(probeSource.Contains("Record-only input callback test", StringComparison.Ordinal), "ASIO callback probe should test NAudio record-only callbacks");
+    Assert(probeSource.Contains("Full-duplex input plus silent output callback test", StringComparison.Ordinal), "ASIO callback probe should test full-duplex input with silent output");
+    Assert(probeSource.Contains("AudioAvailable callbacks", StringComparison.Ordinal), "ASIO callback probe should report input callback counts");
+    Assert(probeSource.Contains("Silent output reads", StringComparison.Ordinal), "ASIO callback probe should report output provider reads");
+}
+
 static void AsioInputDevicesCarryEndpointIdentity()
 {
     var endpointId = MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver");
@@ -1546,6 +1728,166 @@ static void AsioRestartPathPreservesEndpointIdentity()
     Assert(
         !windowCode.Contains("_spectrumService.RestartCapture(selectedDevice.DeviceNumber", StringComparison.Ordinal),
         "UI audio stream restart should not use the Windows-only DeviceNumber overload for selected devices");
+}
+
+static void AsioInputStartupAvoidsPreOpenProbe()
+{
+    var serviceCode = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    Assert(!serviceCode.Contains("TryGetAsioInputChannelCount", StringComparison.Ordinal), "ASIO input startup should not pre-open drivers just to count channels");
+
+    var inputEnumeration = ExtractSourceBetween(
+        serviceCode,
+        "    private static void AddAsioInputDevices(List<AudioInputDevice> devices)",
+        "    private static AudioDeviceFormat? TryGetAsioInputDeviceFormat(AudioInputDevice device)");
+    Assert(!inputEnumeration.Contains("new AsioOut(driverName)", StringComparison.Ordinal), "ASIO input enumeration should trust registered driver names and avoid opening drivers");
+    Assert(inputEnumeration.Contains("MaximumAsioInputChannels", StringComparison.Ordinal), "ASIO input enumeration should expose safe channel options without probing the driver");
+
+    var formatMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private static AudioDeviceFormat? TryGetAsioInputDeviceFormat(AudioInputDevice device)",
+        "    private static string CreateInputDeviceKey");
+    Assert(!formatMethod.Contains("new AsioOut(driverName)", StringComparison.Ordinal), "ASIO format display should not open the driver");
+
+    var startMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private IWaveIn StartAsioInputCapture(",
+        "    private bool TryStartWasapiCapture");
+    Assert(startMethod.Contains("new AsioInputCapture(", StringComparison.Ordinal), "ASIO capture should let the real capture open clamp to available channels");
+    Assert(startMethod.Contains("useSilentOutputClock: false", StringComparison.Ordinal), "live ASIO capture should use the record-only input mode that the callback probe verifies");
+}
+
+static void AsioStaDispatcherPumpsWindowsMessages()
+{
+    var dispatcherSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "StaThreadDispatcher.cs")));
+    Assert(dispatcherSource.Contains("using System.Windows.Threading;", StringComparison.Ordinal), "ASIO STA helper should use WPF Dispatcher infrastructure");
+    Assert(dispatcherSource.Contains("Dispatcher.CurrentDispatcher", StringComparison.Ordinal), "ASIO STA helper should create a dispatcher on its dedicated thread");
+    Assert(dispatcherSource.Contains("new DispatcherSynchronizationContext(dispatcher)", StringComparison.Ordinal), "ASIO STA helper should install a synchronization context before creating NAudio ASIO objects");
+    Assert(dispatcherSource.Contains("Dispatcher.Run();", StringComparison.Ordinal), "ASIO STA helper should pump Windows messages for hardware drivers that depend on a message loop");
+    Assert(dispatcherSource.Contains("BeginInvokeShutdown", StringComparison.Ordinal), "ASIO STA helper should shut down the dispatcher cleanly");
+    Assert(!dispatcherSource.Contains("BlockingCollection", StringComparison.Ordinal), "ASIO STA helper should not block the thread in a non-pumping work loop");
+}
+
+static void AsioNoCallbackStateClearsStaleGraphs()
+{
+    using var service = new MicrophoneSpectrumService();
+    SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+
+    var now = System.Diagnostics.Stopwatch.GetTimestamp();
+    SetPrivateField(service, "_audioStreamStartedTimestamp", now);
+    SetPrivateField(service, "_lastAudioCallbackTimestamp", 0L);
+
+    Assert(!service.HasReceivedAudioCallbacks, "service should expose that an opened capture has not delivered callbacks yet");
+    Assert(service.IsWaitingForFirstAudioCallback(TimeSpan.FromSeconds(3)), "fresh ASIO opens should be reported as waiting for the first callback");
+    Assert(!service.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)), "fresh ASIO opens should not be stale during the startup grace period");
+
+    var oldStart = now - (long)(System.Diagnostics.Stopwatch.Frequency * 5d);
+    SetPrivateField(service, "_audioStreamStartedTimestamp", oldStart);
+    Assert(!service.IsWaitingForFirstAudioCallback(TimeSpan.FromSeconds(3)), "ASIO opens should stop waiting after the startup grace period");
+    Assert(service.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)), "an ASIO open with no callbacks after grace should be stale");
+
+    SetPrivateField(service, "_lastAudioCallbackTimestamp", now);
+    Assert(service.HasReceivedAudioCallbacks, "service should report true after any real audio callback arrives");
+
+    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var clearMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ClearLiveSpectrumDisplay()",
+        "    private SpectrumFrame CreateEmptySpectrumFrame()");
+    Assert(clearMethod.Contains("_latestFrame = emptyFrame;", StringComparison.Ordinal), "clearing live audio should replace the cached frame so old graphs cannot freeze in place");
+    Assert(clearMethod.Contains("_silentFrameCount = 0;", StringComparison.Ordinal), "clearing live audio should reset silent-frame state while waiting for callbacks");
+    Assert(clearMethod.Contains("ClearDirect3D12GraphHosts();", StringComparison.Ordinal), "clearing live audio should wipe DX12 graph history before pushing empty frames");
+    Assert(clearMethod.Contains("_waveform3DGraphHost?.AcceptFrame(selectedMicFrame);", StringComparison.Ordinal), "clearing live audio should blank the 3D selected-mic graph");
+    Assert(clearMethod.Contains("_podcastSpectrumWaterfallGraphHost?.AcceptFrame(emptyFrame);", StringComparison.Ordinal), "clearing live audio should blank waterfall graphs too");
+
+    var graphHostCode = File.ReadAllText(FindRepoFile(Path.Combine("Visualization", "Direct3D12AudioGraphHost.cs")));
+    Assert(graphHostCode.Contains("public void ClearFrame()", StringComparison.Ordinal), "DX12 graph hosts should expose an explicit visual clear");
+    Assert(graphHostCode.Contains("public void ClearHistory()", StringComparison.Ordinal), "DX12 graph renderer should clear retained waterfall and trace history");
+    Assert(graphHostCode.Contains("Array.Clear(_history);", StringComparison.Ordinal), "DX12 graph clear should remove waterfall history instead of waiting for quiet frames to age it out");
+
+    var timerMethod = ExtractSourceBetween(
+        windowCode,
+        "    private async void AudioDeviceFormatTimerTick",
+        "    private AudioDeviceFormat? GetSelectedDeviceFormat");
+    Assert(timerMethod.Contains("IsWaitingForFirstAudioCallback(AudioCallbackStartupGrace)", StringComparison.Ordinal), "format timer should report the first-callback wait separately from silence");
+    Assert(timerMethod.Contains("CreateWaitingForAudioCallbacksStatus(selectedDevice)", StringComparison.Ordinal), "format timer should show callback-waiting text while ASIO opens");
+    Assert(timerMethod.Contains("!StatusText.Text.Contains(\"no audio callbacks\"", StringComparison.Ordinal), "format timer should keep an explicit no-callback diagnosis visible");
+    Assert(timerMethod.Contains("!_spectrumService.HasReceivedAudioCallbacks && selectedDevice.IsAsio", StringComparison.Ordinal), "stale ASIO opens should be identified as no-callback failures");
+    Assert(timerMethod.Contains("_spectrumService.Stop();", StringComparison.Ordinal), "stale ASIO no-callback streams should be stopped instead of reopened repeatedly");
+    Assert(timerMethod.Contains("_asioNoCallbackAutoStartSuppressedDeviceKey = CreateAsioNoCallbackSuppressionKey(selectedDevice);", StringComparison.Ordinal), "stale ASIO no-callback streams should suppress automatic restarts for the same device");
+    Assert(timerMethod.Contains("CreateAsioNoCallbackSuppressedStatus()", StringComparison.Ordinal), "stale ASIO no-callback streams should show a stable stopped status");
+    Assert(!timerMethod.Contains("RotateAsioInputSampleRateAfterNoCallbacks", StringComparison.Ordinal), "stale ASIO no-callback streams should not rotate sample rates automatically");
+
+    var signalStatusMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void UpdateSignalStatus(double peakLevel)",
+        "    private void EnsureGraphGrid");
+    var callbackGuardIndex = signalStatusMethod.IndexOf("!_spectrumService.HasReceivedAudioCallbacks", StringComparison.Ordinal);
+    var silentMessageIndex = signalStatusMethod.IndexOf("Listening, but this input is silent", StringComparison.Ordinal);
+    Assert(callbackGuardIndex >= 0 && silentMessageIndex > callbackGuardIndex, "silent-input warning should only be possible after audio callbacks arrive");
+    Assert(signalStatusMethod.Contains("!StatusText.Text.Contains(\"no audio callbacks\"", StringComparison.Ordinal), "signal status should preserve a no-callback diagnosis while empty reset frames render");
+}
+
+static void AsioInputCaptureUsesRecordOnlyLiveMode()
+{
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AsioInputCapture.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
+
+    Assert(serviceSource.Contains("useSilentOutputClock: false", StringComparison.Ordinal), "live ASIO input should use record-only startup by default");
+    Assert(captureSource.Contains("useSilentOutputClock = false", StringComparison.Ordinal), "ASIO input capture should default to record-only mode");
+    Assert(captureSource.Contains("asio.InitRecordAndPlayback(outputClockProvider, channelCount, _requestedSampleRate)", StringComparison.Ordinal), "ASIO input capture should initialize record plus silent playback when outputs are available");
+    Assert(captureSource.Contains("_useSilentOutputClock", StringComparison.Ordinal), "ASIO input capture should keep silent output clocking optional");
+    Assert(captureSource.Contains("asio.DriverOutputChannelCount", StringComparison.Ordinal), "ASIO input capture should only create output buffers when the driver exposes outputs");
+    Assert(captureSource.Contains("if (InputChannelOffset > 0)", StringComparison.Ordinal), "ASIO input capture should leave the driver's default zero input offset alone");
+    Assert(!captureSource.Contains("PlaybackStopped += AsioPlaybackStopped", StringComparison.Ordinal), "ASIO input startup should not let playback-stopped edges abort the driver before input callbacks arrive");
+    Assert(!captureSource.Contains("DriverResetRequest += AsioDriverResetRequested", StringComparison.Ordinal), "ASIO input startup should match the callback probe and avoid reset hooks before input callbacks arrive");
+    Assert(diagnosticsSource.Contains("disabled (record-only input)", StringComparison.Ordinal), "ASIO diagnostics should make record-only live input mode explicit");
+
+    var providerType = typeof(AsioInputCapture).GetNestedType("SilentAsioOutputProvider", BindingFlags.NonPublic);
+    Assert(providerType is not null, "silent ASIO output provider should be nested inside the input capture wrapper");
+    var provider = (IWaveProvider)Activator.CreateInstance(
+        providerType!,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        args: [48_000, 2],
+        culture: null)!;
+
+    Assert(provider.WaveFormat.SampleRate == 48_000, "silent ASIO output clock should use the requested sample rate");
+    Assert(provider.WaveFormat.Channels == 2, "silent ASIO output clock should use the selected output channel count");
+
+    var buffer = Enumerable.Repeat((byte)0x7F, 48).ToArray();
+    var read = provider.Read(buffer, 8, 24);
+    Assert(read == 24, "silent ASIO output provider should return a full buffer so ASIO playback never auto-stops");
+    Assert(buffer.Take(8).All(value => value == 0x7F), "silent ASIO output provider should not touch bytes before the requested range");
+    Assert(buffer.Skip(8).Take(24).All(value => value == 0), "silent ASIO output provider should clear the requested playback range");
+    Assert(buffer.Skip(32).All(value => value == 0x7F), "silent ASIO output provider should not touch bytes after the requested range");
+}
+
+static void AsioPrimaryCaptureHoldsAuxiliaryInputs()
+{
+    var serviceCode = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var startAdditionalMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private void StartAdditionalCaptures()",
+        "    private static string DescribeInputDevice");
+
+    Assert(
+        startAdditionalMethod.Contains("currentBackend != AudioInputBackend.Asio", StringComparison.Ordinal),
+        "auxiliary capture startup should not open extra inputs while ASIO is the primary capture");
+    Assert(
+        startAdditionalMethod.Contains("channel.Backend != AudioInputBackend.Asio", StringComparison.Ordinal),
+        "auxiliary capture startup should never open ASIO as a secondary client");
+    Assert(
+        startAdditionalMethod.Contains("_suppressedAdditionalCaptureCount", StringComparison.Ordinal),
+        "held auxiliary inputs should be counted so diagnostics explain why aux streams are absent");
+
+    var summaryMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private string GetAdditionalCaptureSummary()",
+        "    private void SetProcessedOutputEnabled");
+    Assert(
+        summaryMethod.Contains("aux held while ASIO is primary", StringComparison.Ordinal),
+        "active stream diagnostics should say when aux inputs are held for ASIO stability");
 }
 
 static void AsioInputCaptureConvertsInterleavedFloats()
@@ -1653,8 +1995,8 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
 
     var mixingTab = ExtractSourceBetween(
         windowXaml,
-        "      <TabItem Header=\"Mixing\">",
-        "      <TabItem Header=\"MIDI\">");
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">",
+        "      <TabItem x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\">");
     var recordingIndex = mixingTab.IndexOf("Text=\"Recording\"", StringComparison.Ordinal);
     var coreAudioIndex = mixingTab.IndexOf("Text=\"CoreAudio App Mix\"", StringComparison.Ordinal);
     Assert(recordingIndex >= 0, "Mixing tab should include the recording section");
@@ -3523,8 +3865,8 @@ static void MixerVolumeControlsMarkAndSnapUnity()
 
     var mixingTab = ExtractSourceBetween(
         xaml,
-        "      <TabItem Header=\"Mixing\">",
-        "      <TabItem Header=\"MIDI\">");
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">",
+        "      <TabItem x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\">");
     Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\"", StringComparison.Ordinal), "mixer tab should expose the master volume slider");
     Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\" Width=\"128\" Minimum=\"0\" Maximum=\"150\" Value=\"100\" Ticks=\"100\"", StringComparison.Ordinal), "master volume should mark unity at 100 percent");
     Assert(mixingTab.Contains("Style=\"{StaticResource MixerFaderSlider}\" Minimum=\"0\" Maximum=\"150\"", StringComparison.Ordinal)
