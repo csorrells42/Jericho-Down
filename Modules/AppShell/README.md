@@ -19,5 +19,6 @@ Responsibilities:
 - Atomic writes for settings, profile, cache, metadata, and report files.
 - Path-bounded delete/open-location helpers for recording and session browsers.
 - Recording/session folder watcher refresh policy.
+- Main window menu, tab, and command orchestration while feature behavior continues moving into focused modules.
 
 Do not put camera frame processing, DSP math, ASIO driver handling, or DX12 rendering here. AppShell may coordinate those modules, but module code should own the behavior and diagnostics.

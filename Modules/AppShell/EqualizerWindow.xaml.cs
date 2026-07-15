@@ -45,7 +45,7 @@ using JerichoDown.Modules.Visualization;
 using JerichoDown.Modules.Visualization.Dx12;
 using ShapePath = System.Windows.Shapes.Path;
 
-namespace JerichoDown;
+namespace JerichoDown.Modules.AppShell;
 
 public partial class EqualizerWindow : Window
 {

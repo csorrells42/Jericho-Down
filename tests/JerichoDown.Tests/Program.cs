@@ -350,7 +350,7 @@ static void AppGeneratedFilesUseAtomicWrites()
     var cameraSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfileStore.cs")));
     Assert(cameraSource.Contains("AtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use atomic writes");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("AtomicFile.WriteAllText(metadataPath", StringComparison.Ordinal), "podcast session metadata should use atomic writes");
     Assert(windowSource.Contains("AtomicFile.WriteAllText(cachePath", StringComparison.Ordinal), "karaoke lyric cache should use atomic writes");
     Assert(windowSource.Contains("AtomicFile.WriteAllText(GetUserPresetPath", StringComparison.Ordinal), "user presets should use atomic writes");
@@ -364,7 +364,7 @@ static void RecordingDeletesArePathBounded()
     Assert(pathSafetySource.Contains("FileAttributes.ReparsePoint", StringComparison.Ordinal), "path safety should reject reparse points before destructive operations");
     Assert(pathSafetySource.Contains("ArgumentList.Add", StringComparison.Ordinal), "explorer launch should use structured argument passing");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var audioDelete = ExtractSourceBetween(windowSource, "    private void DeleteSelectedAudioRecording()", "    private void SessionFilesSelectionChanged");
     Assert(audioDelete.Contains("PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder", StringComparison.Ordinal), "audio recording deletes should be bounded to the recording folder");
     Assert(audioDelete.Contains("Delete blocked", StringComparison.Ordinal), "audio recording deletes should fail closed when path checks fail");
@@ -382,7 +382,7 @@ static void RecordingDeletesArePathBounded()
 
 static void KaraokeAiToolsUseStructuredProcessArguments()
 {
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("CreateKaraokeAiWorkFolder", StringComparison.Ordinal), "AI lyric detection should create isolated work folders per run");
     Assert(windowSource.Contains("detect_{DateTime.UtcNow", StringComparison.Ordinal) && windowSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "AI lyric detection work folders should be unique");
     Assert(windowSource.Contains("PathSafety.IsDirectoryUnderFolder(workFolder, KaraokeAiWorkFolder, allowRoot: false)", StringComparison.Ordinal), "AI work-folder cleanup should stay under the app work root");
@@ -650,7 +650,7 @@ static void NAudioBiQuadRackExposesEveryEqShape()
         Assert(rackSource.Contains($"BiQuadFilter.{factory}", StringComparison.Ordinal), $"NAudio BiQuad rack should expose {factory}");
     }
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
     Assert(xaml.Contains("BiQuad family", StringComparison.Ordinal), "BiQuad controls should show the shared BiQuad family frame label");
     var biQuadGroup = ExtractSourceBetween(
@@ -697,7 +697,7 @@ static void NAudioPitchShiftMovesToneFrequency()
     var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs")));
     Assert(processor.Contains("SmbPitchShifter", StringComparison.Ordinal), "NAudio pitch shift should use SmbPitchShifter");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio Special Effects", StringComparison.Ordinal), "NAudio special effects controls should be labeled as one family");
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
@@ -739,7 +739,7 @@ static void NAudioConvolutionAddsGeneratedImpulseTail()
     Assert(processor.Contains(".Convolve(", StringComparison.Ordinal), "NAudio convolution should call Convolve");
     Assert(processor.Contains(".Normalize(", StringComparison.Ordinal), "NAudio convolution should normalize generated impulses");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
         "Text=\"NAudio Special Effects\"",
@@ -770,7 +770,7 @@ static void NAudioEnvelopeGeneratorShapesAttack()
     var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs")));
     Assert(processor.Contains("EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope should use EnvelopeGenerator");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
         "Text=\"NAudio Special Effects\"",
@@ -800,7 +800,7 @@ static void NAudioDmoEffectChainExposesDirectSoundEffects()
     Assert(processor.Contains("MediaObjectInPlace.Process", StringComparison.Ordinal), "NAudio DMO chain should process blocks through MediaObjectInPlace");
     Assert(processor.Contains("SupportsInputWaveFormat", StringComparison.Ordinal), "NAudio DMO chain should check DMO format compatibility");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio DMO Effects", StringComparison.Ordinal), "NAudio DMO controls should be labeled as one family");
     Assert(xaml.Contains("DMO I3DL2 Reverb", StringComparison.Ordinal), "NAudio DMO controls should include I3DL2 reverb");
     Assert(xaml.Contains("DMO Waves Reverb", StringComparison.Ordinal), "NAudio DMO controls should include Waves reverb");
@@ -808,7 +808,7 @@ static void NAudioDmoEffectChainExposesDirectSoundEffects()
 
 static void DspScreenSeparatesCustomAndNaudioFamilies()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
 
     Assert(xaml.Contains("Text=\"Jericho DSP\"", StringComparison.Ordinal), "custom DSP controls should have a Jericho DSP family bubble");
     Assert(xaml.Contains("Text=\"Custom chain\"", StringComparison.Ordinal), "custom DSP bubble should be labeled as the custom chain");
@@ -924,7 +924,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(soundFontLibrary.Contains("CreateSamplePreviewStream", StringComparison.Ordinal), "SoundFont library should create sample preview streams");
     Assert(soundFontLibrary.Contains("RawSourceWaveStream", StringComparison.Ordinal), "SoundFont sample preview should use NAudio wave playback primitives");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
     Assert(xaml.Contains("MIDI Utility", StringComparison.Ordinal), "MIDI tab should present itself as a utility surface");
     Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
@@ -965,7 +965,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
 
     Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("RestoreMidiWorkflowState", StringComparison.Ordinal), "MIDI workflow should restore persisted state");
     Assert(windowSource.Contains("SelectMidiInputDevice", StringComparison.Ordinal), "MIDI input selection should restore by saved device identity");
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
@@ -1235,7 +1235,7 @@ static void EqualizerBandRaisesNotifications()
 
 static void EqScreenBindsEveryVoiceProcessorSetting()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !HasDirectBinding(xaml, property.Name))
         .Select(property => property.Name)
@@ -1246,7 +1246,7 @@ static void EqScreenBindsEveryVoiceProcessorSetting()
 
 static void MainMenuExposesGlobalDeviceAndHelpActions()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("Header=\"_File\"", StringComparison.Ordinal), "main window should expose a File menu");
     Assert(xaml.Contains("Header=\"Refresh Audio Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Audio Devices");
     Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
@@ -1311,8 +1311,8 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
 
 static void PodcastSessionPlaybackPrefersDx12FileRenderer()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
     var interop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
 
@@ -1375,7 +1375,7 @@ static void ModuleReadmesDefineOwnership()
 
     Assert(rootReadme.Contains("[Modules](Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map");
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
-    Assert(moduleIndex.Contains("AppShell` owns `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell infrastructure ownership");
+    Assert(moduleIndex.Contains("AppShell` owns `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell ownership");
     Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
@@ -1409,16 +1409,22 @@ static void ModuleReadmesDefineOwnership()
     }
 
     var appShellReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "README.md")));
+    var equalizerWindowXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
+    var equalizerWindowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var appStateStore = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
     var appStoragePaths = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStoragePaths.cs")));
     var atomicFile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AtomicFile.cs")));
     var pathSafety = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "PathSafety.cs")));
     var fileBrowserWatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "FileBrowserWatcher.cs")));
+    Assert(appShellReadme.Contains("EqualizerWindow.xaml", StringComparison.Ordinal), "AppShell docs should name migrated main window ownership");
     Assert(appShellReadme.Contains("AppStateStore.cs", StringComparison.Ordinal), "AppShell docs should name migrated app state ownership");
     Assert(appShellReadme.Contains("AppStoragePaths.cs", StringComparison.Ordinal), "AppShell docs should name migrated storage-path ownership");
     Assert(appShellReadme.Contains("AtomicFile.cs", StringComparison.Ordinal), "AppShell docs should name migrated atomic-write ownership");
     Assert(appShellReadme.Contains("PathSafety.cs", StringComparison.Ordinal), "AppShell docs should name migrated path safety ownership");
     Assert(appShellReadme.Contains("FileBrowserWatcher.cs", StringComparison.Ordinal), "AppShell docs should name migrated browser watcher ownership");
+    Assert(equalizerWindowXaml.Contains("x:Class=\"JerichoDown.Modules.AppShell.EqualizerWindow\"", StringComparison.Ordinal), "main window XAML should live in the AppShell module namespace");
+    Assert(equalizerWindowXaml.Contains("Icon=\"/Assets/jericho-down-icon.ico\"", StringComparison.Ordinal), "main window icon path should remain rooted after moving XAML into AppShell");
+    Assert(equalizerWindowCode.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "main window code-behind should live in the AppShell module namespace");
     Assert(appStateStore.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "app state store should live in the AppShell module namespace");
     Assert(appStoragePaths.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "app storage paths should live in the AppShell module namespace");
     Assert(atomicFile.Contains("namespace JerichoDown.Modules.AppShell;", StringComparison.Ordinal), "atomic file helper should live in the AppShell module namespace");
@@ -1769,7 +1775,7 @@ static void ModuleReadmesDefineOwnership()
 
 static void CameraDenoiseStaysOnDx12PreviewPaths()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var mediaFoundationPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
     var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
     var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
@@ -1787,8 +1793,8 @@ static void CameraDenoiseStaysOnDx12PreviewPaths()
 
 static void MidiTabIsOptInAndOrderedAfterKaraoke()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var stateCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "AppStateStore.cs")));
 
     Assert(xaml.Contains("x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\"", StringComparison.Ordinal), "MIDI tab should be hidden by default");
@@ -1918,7 +1924,7 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(diagnosticsSource.Contains("AudioEndpointVolume", StringComparison.Ordinal), "diagnostics should inspect Windows endpoint volume/mute state");
     Assert(diagnosticsSource.Contains("AudioMeterInformation", StringComparison.Ordinal), "diagnostics should inspect current endpoint meter state");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("AudioDeviceDiagnostics.BuildReport", StringComparison.Ordinal), "diagnostics menu should build a device report");
     Assert(windowSource.Contains("ShowAudioDeviceDiagnosticsDialog", StringComparison.Ordinal), "diagnostics menu should open a popup window");
     Assert(windowSource.Contains("ShowAsioNoCallbackDiagnosticsOnce(selectedDevice)", StringComparison.Ordinal), "ASIO no-callback failures should open the diagnostic report once");
@@ -1941,7 +1947,7 @@ static void AudioStreamRestartFailuresBackOff()
     Assert(baseBackoff >= TimeSpan.FromSeconds(5), "audio restart retries should not hammer the driver immediately after a failure");
     Assert(maximumBackoff >= baseBackoff && maximumBackoff <= TimeSpan.FromSeconds(60), "audio restart backoff should be bounded and user-visible");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("_nextAudioStreamRestartAttemptUtc", StringComparison.Ordinal), "window should track the next allowed automatic audio restart");
     Assert(windowSource.Contains("_audioStreamRestartFailureCount", StringComparison.Ordinal), "window should track repeated audio restart failures");
     Assert(windowSource.Contains("Auto-retry in", StringComparison.Ordinal), "failed audio restarts should tell the user when the app will retry");
@@ -2085,8 +2091,8 @@ static void AsioSettingsMenuPrefersSelectedAndInstalledDrivers()
 
 static void AsioCallbackTestExposesDriverModes()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var probeSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioCallbackProbe.cs")));
 
     Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose an ASIO callback test");
@@ -2156,7 +2162,7 @@ static void AsioRestartPathPreservesEndpointIdentity()
         [typeof(AudioInputDevice), typeof(VoiceProcessorSettings), typeof(InputChannelMode), typeof(TimeSpan)]);
     Assert(restartOverload is not null, "audio stream restart should accept a full input device so ASIO endpoint/backend identity is preserved");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(
         windowCode.Contains("_spectrumService.RestartCapture(selectedDevice,", StringComparison.Ordinal),
         "UI audio stream restart must pass the selected AudioInputDevice instead of only DeviceNumber; ASIO uses endpoint/backend identity");
@@ -2223,7 +2229,7 @@ static void AsioNoCallbackStateClearsStaleGraphs()
     SetPrivateField(service, "_lastAudioCallbackTimestamp", now);
     Assert(service.HasReceivedAudioCallbacks, "service should report true after any real audio callback arrives");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var clearMethod = ExtractSourceBetween(
         windowCode,
         "    private void ClearLiveSpectrumDisplay()",
@@ -2410,14 +2416,14 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
     Assert(catalogSource.Contains("CollapseDuplicateSessions", StringComparison.Ordinal), "CoreAudio app controls should collapse duplicate Windows sessions");
     Assert(catalogSource.Contains("validTargets.Any", StringComparison.Ordinal), "CoreAudio grouped controls should apply to every hidden session target");
 
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(windowXaml.Contains("CoreAudio App Mix", StringComparison.Ordinal), "Mixing tab should expose CoreAudio app-session controls");
     Assert(windowXaml.Contains("CoreAudioSessionsItemsControl", StringComparison.Ordinal), "CoreAudio session controls should render as a controllable list");
     Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
     Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
     Assert(windowXaml.Contains("PeakLevelPercent", StringComparison.Ordinal), "CoreAudio app-session rows should expose live activity meters");
     Assert(windowXaml.Contains("Value=\"{Binding PeakLevelPercent, Mode=OneWay}\"", StringComparison.Ordinal), "CoreAudio peak meters should bind one-way so the read-only meter property cannot crash the Mixing tab template");
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("ProcessDisplayText", StringComparison.Ordinal), "CoreAudio app-session rows should include stable process identity details");
     var controlMethod = ExtractSourceBetween(
         windowCode,
@@ -2493,7 +2499,7 @@ static void InputChannelModeFallsBackForMonoDevices()
 
 static void AudioDeviceRefreshSuppressesMicSelectionChurn()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var method = ExtractSourceBetween(
         windowCode,
         "    private void RefreshAudioDevicesFromSystem()",
@@ -2532,7 +2538,7 @@ static void MicDspTabExcludesLoopbackInputs()
     Assert(!filtered.Any(device => device.IsProcessLoopback), "Mic/DSP input picker should hide app loopback inputs");
     Assert(!filtered.Any(device => device.IsStereoTestTone), "Mic/DSP input picker should hide mixer-only test tone inputs");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var refreshMethod = ExtractSourceBetween(
         windowCode,
         "    private void RefreshAudioDevicesFromSystem()",
@@ -2624,7 +2630,7 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
     Assert(serviceSource.Contains("&& !_isDisposing", StringComparison.Ordinal), "capture recovery should not restart streams while the service is disposing");
     Assert(serviceSource.Contains("capture.Dispose();", StringComparison.Ordinal), "released capture devices should be disposed");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var closingMethod = ExtractSourceBetween(
         windowSource,
         "    private void WindowClosing",
@@ -4125,7 +4131,7 @@ static void SpectrumLinesCarryNaudioMeteredPeaks()
 
 static void MixerStripMetersIgnoreMutedRawInput()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var meterMethod = ExtractSourceBetween(
         windowCode,
         "    private void UpdateMixerChannelMeters(SpectrumFrame frame)",
@@ -4217,8 +4223,8 @@ static void LiveMixAudibilityGatesMuteAndSolo()
 
 static void MixerStripClicksSelectChannelsCheaply()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var handler = ExtractSourceBetween(
         windowCode,
         "    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)",
@@ -4233,7 +4239,7 @@ static void MixerStripClicksSelectChannelsCheaply()
 
 static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var method = ExtractSourceBetween(
         windowCode,
         "    private void ApplyActiveMicChannelToUi()",
@@ -4264,7 +4270,7 @@ static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
 
 static void MixerChannelControlsDebounceStatePersistence()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("private readonly DispatcherTimer _appStatePersistTimer", StringComparison.Ordinal), "window should have a debounced app-state persistence timer");
     Assert(windowCode.Contains("private void ScheduleAppStatePersist()", StringComparison.Ordinal), "window should expose a debounced app-state persistence helper");
 
@@ -4289,7 +4295,7 @@ static void MixerChannelControlsDebounceStatePersistence()
 
 static void MixerVolumeControlsMarkAndSnapUnity()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     var mixerFaderStyle = ExtractSourceBetween(
         xaml,
         "    <Style x:Key=\"MixerFaderSlider\"",
@@ -4319,7 +4325,7 @@ static void MixerVolumeControlsMarkAndSnapUnity()
     Assert(Math.Abs(Snap(102.1d) - 102.1d) < 0.0001d, "mixer volume should remain free above the magnet zone");
     Assert(double.IsNaN(Snap(double.NaN)), "mixer volume snap should leave non-finite values for existing clamping paths");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var mixerSliderHandler = ExtractSourceBetween(
         windowCode,
         "    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
@@ -4514,7 +4520,7 @@ static void NAudioFileAnalyzerReportsRecordingQualityDetails()
         Assert(silentWindowAnalysis.IsPartial, "silent bounded windows should still report partial scan scope");
         Assert(silentWindowAnalysis.LeadingSilence <= TimeSpan.FromMilliseconds(85), "silent bounded windows should report silence for the scanned window, not the full file");
 
-        var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+        var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
         Assert(windowCode.Contains("CreateAudioRecordingFileItem", StringComparison.Ordinal), "recording browser should create analyzed file rows");
         Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis rows");
         Assert(windowCode.Contains("EagerRecordingAnalysisDuration", StringComparison.Ordinal), "recording browser should cap eager analysis duration");
@@ -4567,12 +4573,12 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     Assert(serviceSource.Contains("_wasapiOutputSettings.EffectiveLatencyMilliseconds", StringComparison.Ordinal), "WASAPI output should use the active latency profile");
     Assert(serviceSource.Contains("AudioClientShareMode.Exclusive", StringComparison.Ordinal), "WASAPI output should support expert exclusive mode");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("WasapiOutputProfile = _wasapiOutputSettings.Profile.ToString()", StringComparison.Ordinal), "WASAPI profile should be persisted by the window state capture");
     Assert(windowCode.Contains("_spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings)", StringComparison.Ordinal), "WASAPI settings should be applied before output routing starts");
     Assert(windowCode.Contains("WASAPI: {_spectrumService.WasapiOutputModeStatus}", StringComparison.Ordinal), "route status should show active WASAPI mode");
 
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml")));
     Assert(windowXaml.Contains("Advanced WASAPI", StringComparison.Ordinal), "advanced WASAPI controls should be present but tucked away");
     Assert(windowXaml.Contains("WasapiOutputProfileComboBox", StringComparison.Ordinal), "WASAPI profile dropdown should be wired");
     Assert(windowXaml.Contains("WasapiExclusiveModeCheckBox", StringComparison.Ordinal), "WASAPI exclusive-mode checkbox should be wired");
@@ -4764,7 +4770,7 @@ static void KaraokeSampleReaderFailuresUseMediaFallback()
 
 static void KaraokePlaybackStoppedCodecFailuresUseMediaFallback()
 {
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var fallbackMethod = ExtractSourceBetween(
         windowSource,
         "    private bool StartKaraokeMediaFallbackPlayback(string path, TimeSpan? startPosition = null)",
@@ -4795,7 +4801,7 @@ static void KaraokePlayRestartsAfterTrackEnd()
 
 static void KaraokeAddTracksLoadsIdleSelection()
 {
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
     var addTracksMethod = ExtractSourceBetween(
         windowSource,
         "    private int AddKaraokeTracksToQueue(IEnumerable<string> paths, bool selectFirstAdded)",
