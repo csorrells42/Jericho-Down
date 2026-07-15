@@ -39,10 +39,11 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam` owns `VideoFrameDenoiser` for CPU BGRA temporal denoise used by preview/recording fallbacks.
 - `Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`.
 - `Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`.
-- `Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`; they still call legacy `Video` providers until the provider modules migrate.
+- `Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`; they route camera choices and recording policy into the provider modules.
 - `Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`.
 - `Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`.
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
 - `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
 - `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
-- Legacy audio and visualization code still lives in the original `Audio` and `Visualization` folders until it is moved in verified passes; the former camera/video code now lives under `Webcam`.
+- `Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`.
+- Legacy audio code still lives in the original `Audio` folder until it is moved in verified passes; the former camera/video and visualization DX12 code now live under modules.

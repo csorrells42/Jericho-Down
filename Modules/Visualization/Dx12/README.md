@@ -2,8 +2,8 @@
 
 Owns DX12 rendering for audio graphs.
 
-Current legacy files:
-- `Visualization/Direct3D12AudioGraphHost.cs`
+Current entry points:
+- `Direct3D12AudioGraphHost.cs`
 
 Responsibilities:
 - Render spectrum, waveform, and waterfall graph modes.

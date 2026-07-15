@@ -10,7 +10,7 @@ using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
-using JerichoDown.Visualization;
+using JerichoDown.Modules.Visualization.Dx12;
 using NAudio.Midi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -1373,6 +1373,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
+    Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1383,6 +1384,11 @@ static void ModuleReadmesDefineOwnership()
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+
+    var visualizationDx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "README.md")));
+    var direct3D12AudioGraphHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
+    Assert(visualizationDx12Readme.Contains("Direct3D12AudioGraphHost.cs", StringComparison.Ordinal), "Visualization DX12 docs should name migrated audio graph host ownership");
+    Assert(direct3D12AudioGraphHost.Contains("namespace JerichoDown.Modules.Visualization.Dx12;", StringComparison.Ordinal), "DX12 audio graph host should live in the Visualization DX12 module namespace");
 
     var mediaFoundationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md")));
     var mediaFoundationCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraEnumerator.cs")));
@@ -1969,7 +1975,7 @@ static void AsioNoCallbackStateClearsStaleGraphs()
     Assert(clearMethod.Contains("_waveform3DGraphHost?.AcceptFrame(selectedMicFrame);", StringComparison.Ordinal), "clearing live audio should blank the 3D selected-mic graph");
     Assert(clearMethod.Contains("_podcastSpectrumWaterfallGraphHost?.AcceptFrame(emptyFrame);", StringComparison.Ordinal), "clearing live audio should blank waterfall graphs too");
 
-    var graphHostCode = File.ReadAllText(FindRepoFile(Path.Combine("Visualization", "Direct3D12AudioGraphHost.cs")));
+    var graphHostCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
     Assert(graphHostCode.Contains("public void ClearFrame()", StringComparison.Ordinal), "DX12 graph hosts should expose an explicit visual clear");
     Assert(graphHostCode.Contains("public void ClearHistory()", StringComparison.Ordinal), "DX12 graph renderer should clear retained waterfall and trace history");
     Assert(graphHostCode.Contains("Array.Clear(_history);", StringComparison.Ordinal), "DX12 graph clear should remove waterfall history instead of waiting for quiet frames to age it out");

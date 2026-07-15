@@ -13,7 +13,7 @@ using Vortice.Mathematics;
 using static Vortice.Direct3D12.D3D12;
 using static Vortice.DXGI.DXGI;
 
-namespace JerichoDown.Visualization;
+namespace JerichoDown.Modules.Visualization.Dx12;
 
 public enum Direct3D12AudioGraphMode
 {
