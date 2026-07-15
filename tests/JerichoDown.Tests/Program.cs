@@ -50,6 +50,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
+    ("Graphic EQ verification harness measures all bands and adjacent response", GraphicEqVerificationHarnessMeasuresAllBandsAndAdjacentResponse),
     ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
@@ -601,6 +602,31 @@ static void GraphicEqUpdatesWhileLiveProviderIsRunning()
     Assert(boosted.All(float.IsFinite), "live graphic EQ output should stay finite");
 }
 
+static void GraphicEqVerificationHarnessMeasuresAllBandsAndAdjacentResponse()
+{
+    var expectedBands = GraphicEqualizerVerificationHarness.BandFrequenciesHz.Count;
+    var boosts = GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.BoostGainDb);
+    var cuts = GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.CutGainDb);
+
+    Assert(boosts.Count == expectedBands, "boost measurements should cover every graphic EQ band");
+    Assert(cuts.Count == expectedBands, "cut measurements should cover every graphic EQ band");
+
+    foreach (var measurement in boosts.Concat(cuts))
+    {
+        var expectedAdjacentCount = measurement.BandIndex == 0 || measurement.BandIndex == expectedBands - 1 ? 1 : 2;
+        Assert(measurement.Passed, $"graphic EQ band {measurement.BandLabel} should track requested gain with measured adjacent response: {measurement.MeasurementSummary}; {measurement.Details}");
+        Assert(measurement.AdjacentResponses.Count == expectedAdjacentCount, $"graphic EQ band {measurement.BandLabel} should measure the available neighboring bands");
+        Assert(measurement.Center.IsFinite, $"graphic EQ band {measurement.BandLabel} center measurement should be finite");
+        Assert(measurement.AdjacentResponses.All(response => response.IsFinite), $"graphic EQ band {measurement.BandLabel} adjacent measurements should be finite");
+        Assert(measurement.MeasurementSummary.Contains("center", StringComparison.Ordinal), "graphic EQ measurement summary should include center response");
+        Assert(measurement.MeasurementSummary.Contains("lower", StringComparison.Ordinal), "graphic EQ measurement summary should include lower adjacent response");
+        Assert(measurement.MeasurementSummary.Contains("upper", StringComparison.Ordinal), "graphic EQ measurement summary should include upper adjacent response");
+    }
+
+    Assert(boosts.All(measurement => measurement.Center.DeltaDb > 4d), "graphic EQ boost measurements should show a clear positive center-band change");
+    Assert(cuts.All(measurement => measurement.Center.DeltaDb < -4d), "graphic EQ cut measurements should show a clear negative center-band change");
+}
+
 static void DspVerificationReportProvesCustomDspClaims()
 {
     var report = DspVerificationReportGenerator.Run();
@@ -610,6 +636,12 @@ static void DspVerificationReportProvesCustomDspClaims()
 
     Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks: " + string.Join("; ", failedChecks));
     Assert(report.Checks.Count >= 40, "DSP verification report should include the practical customer-facing custom DSP proof checks");
+    var graphicEqChecks = report.Checks.Where(check => check.Effect == "Graphic EQ").ToList();
+    Assert(graphicEqChecks.Count >= 40, "DSP verification report should include per-band boost and cut graphic EQ response measurements");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("+6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include boost measurements");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("-6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include cut measurements");
+    Assert(graphicEqChecks.All(check => check.Claim.Contains("adjacent", StringComparison.Ordinal)), "graphic EQ verification should explicitly measure adjacent-band response");
+    Assert(graphicEqChecks.All(check => check.Details.Contains("Center error", StringComparison.Ordinal)), "graphic EQ verification should report numeric center error");
     foreach (var effect in new[]
     {
         "Graphic EQ",
@@ -1448,7 +1480,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`", StringComparison.Ordinal), "module index should record migrated CoreAudio ownership");
     Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
     Assert(moduleIndex.Contains("Audio/Diagnostics` owns `AudioDeviceDiagnostics`", StringComparison.Ordinal), "module index should record migrated audio diagnostics ownership");
-    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
+    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `GraphicEqualizerVerificationHarness`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Live` owns `MicrophoneSpectrumService`", StringComparison.Ordinal), "module index should record migrated live audio service ownership");
     Assert(moduleIndex.Contains("Audio/Recording` owns `AudioRecordingCatalog`, `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
     Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
@@ -1661,6 +1693,7 @@ static void ModuleReadmesDefineOwnership()
 
     var audioDspReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "README.md")));
     var dspVerificationReportGenerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "DspVerificationReportGenerator.cs")));
+    var graphicEqualizerVerificationHarness = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "GraphicEqualizerVerificationHarness.cs")));
     var voiceProcessorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessorSettings.cs")));
     var builtInVoicePresetCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "BuiltInVoicePresetCatalog.cs")));
     var voiceProcessingTelemetry = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessingTelemetry.cs")));
@@ -1677,6 +1710,7 @@ static void ModuleReadmesDefineOwnership()
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs")))
     };
     Assert(audioDspReadme.Contains("DspVerificationReportGenerator.cs", StringComparison.Ordinal), "DSP docs should name migrated verification report ownership");
+    Assert(audioDspReadme.Contains("GraphicEqualizerVerificationHarness.cs", StringComparison.Ordinal), "DSP docs should name measured graphic EQ verification harness ownership");
     Assert(audioDspReadme.Contains("VoiceProcessorSettings.cs", StringComparison.Ordinal), "DSP docs should name migrated settings ownership");
     Assert(audioDspReadme.Contains("BuiltInVoicePresetCatalog.cs", StringComparison.Ordinal), "DSP docs should name migrated preset ownership");
     Assert(audioDspReadme.Contains("VoiceProcessingTelemetry.cs", StringComparison.Ordinal), "DSP docs should name migrated telemetry ownership");
@@ -1688,6 +1722,8 @@ static void ModuleReadmesDefineOwnership()
     Assert(audioDspReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "DSP docs should name the live audio service consumer");
     Assert(dspVerificationReportGenerator.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "DSP verification report generator should live in the Audio DSP module namespace");
     Assert(!dspVerificationReportGenerator.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "DSP verification report generator should not depend on the legacy audio namespace");
+    Assert(graphicEqualizerVerificationHarness.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "graphic EQ verification harness should live in the Audio DSP module namespace");
+    Assert(!graphicEqualizerVerificationHarness.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "graphic EQ verification harness should not depend on the legacy audio namespace");
     Assert(voiceProcessorSettings.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processor settings should live in the Audio DSP module namespace");
     Assert(builtInVoicePresetCatalog.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "built-in voice preset catalog should live in the Audio DSP module namespace");
     Assert(voiceProcessingTelemetry.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processing telemetry should live in the Audio DSP module namespace");

@@ -21,7 +21,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 
 - `Audio`: capture, output routing, recording, loopback, synchronization, and NAudio helpers.
 - `Audio/Asio`: ASIO capture, callback probing, STA dispatcher, and ASIO diagnostics.
-- `Audio/Dsp`: voice processing, EQ, presets, DSP verification, and signal analysis.
+- `Audio/Dsp`: voice processing, EQ, presets, measured DSP verification, and signal analysis.
 - `Audio/Live`: live microphone service orchestration, capture startup, processed monitoring, recording routing, spectrum publishing, and live output coordination.
 - `Mixer`: live program bus, channel strips, pan, gain, mute, solo, delay, and metering.
 - `Webcam`: reusable webcam facade, camera device vocabulary, controls, preview policy, recording policy, profiles, frame/color helpers, and camera status text.
@@ -65,7 +65,7 @@ Keep visual content and viewport plumbing inside the owning module: camera frame
 - `Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`.
 - `Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`.
 - `Audio/Diagnostics` owns `AudioDeviceDiagnostics`.
-- `Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.
+- `Audio/Dsp` owns `DspVerificationReportGenerator`, `GraphicEqualizerVerificationHarness`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.
 - `Audio/Live` owns `MicrophoneSpectrumService`.
 - `Audio/Recording` owns `AudioRecordingCatalog`, `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`.
 - `Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`.

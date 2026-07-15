@@ -37,11 +37,7 @@ public sealed record DspVerificationCheck(
 public static class DspVerificationReportGenerator
 {
     private const int VerificationSampleRate = 48_000;
-    private static readonly double[] EqualizerFrequenciesHz =
-    [
-        31d, 45d, 63d, 90d, 125d, 180d, 250d, 355d, 500d, 710d,
-        1000d, 1400d, 2000d, 2800d, 4000d, 5600d, 8000d, 11200d, 16000d, 20000d
-    ];
+    private static readonly double[] EqualizerFrequenciesHz = GraphicEqualizerVerificationHarness.BandFrequenciesHz.ToArray();
 
     public static DspVerificationReport Run()
     {
@@ -122,58 +118,29 @@ public static class DspVerificationReportGenerator
 
     private static void AddGraphicEqualizerChecks(ICollection<DspVerificationCheck> checks)
     {
-        var centerTone = GenerateSine(1_000d, 0.24d, 2.0d);
-        var lowMidTone = GenerateSine(500d, 0.24d, 2.0d);
-        var offBandTone = GenerateSine(4_000d, 0.24d, 2.0d);
-        var centerBypass = Process(centerTone, _ => { });
-        var centerBoosted = Process(centerTone, settings =>
-        {
-            var gains = new double[EqualizerFrequenciesHz.Length];
-            gains[10] = 6d;
-            settings.SetEqualizerGains(gains);
-        });
-        var lowMidBypass = Process(lowMidTone, _ => { });
-        var lowMidCut = Process(lowMidTone, settings =>
-        {
-            var gains = new double[EqualizerFrequenciesHz.Length];
-            gains[8] = -9d;
-            settings.SetEqualizerGains(gains);
-        });
-        var offBypass = Process(offBandTone, _ => { });
-        var offBoosted = Process(offBandTone, settings =>
-        {
-            var gains = new double[EqualizerFrequenciesHz.Length];
-            gains[10] = 6d;
-            settings.SetEqualizerGains(gains);
-        });
+        AddGraphicEqualizerResponseChecks(
+            checks,
+            GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.BoostGainDb));
+        AddGraphicEqualizerResponseChecks(
+            checks,
+            GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.CutGainDb));
+    }
 
-        const int start = VerificationSampleRate;
-        var centerBypassRms = CalculateTailRms(centerBypass, start);
-        var centerBoostedRms = CalculateTailRms(centerBoosted, start);
-        var lowMidBypassRms = CalculateTailRms(lowMidBypass, start);
-        var lowMidCutRms = CalculateTailRms(lowMidCut, start);
-        var offBypassRms = CalculateTailRms(offBypass, start);
-        var offBoostedRms = CalculateTailRms(offBoosted, start);
-
-        checks.Add(MinRatioCheck(
-            "Graphic EQ",
-            "+6 dB on the 1 kHz slider raises 1 kHz energy",
-            Ratio(centerBoostedRms, centerBypassRms),
-            1.45d,
-            RmsDetails(centerBypassRms, centerBoostedRms)));
-        checks.Add(MaxRatioCheck(
-            "Graphic EQ",
-            "-9 dB on the 500 Hz slider lowers 500 Hz energy",
-            Ratio(lowMidCutRms, lowMidBypassRms),
-            0.72d,
-            RmsDetails(lowMidBypassRms, lowMidCutRms)));
-        checks.Add(RangeRatioCheck(
-            "Graphic EQ",
-            "A 1 kHz slider boost leaves 4 kHz off-band content mostly stable",
-            Ratio(offBoostedRms, offBypassRms),
-            0.82d,
-            1.22d,
-            RmsDetails(offBypassRms, offBoostedRms)));
+    private static void AddGraphicEqualizerResponseChecks(
+        ICollection<DspVerificationCheck> checks,
+        IEnumerable<GraphicEqualizerBandResponse> measurements)
+    {
+        foreach (var measurement in measurements)
+        {
+            checks.Add(new DspVerificationCheck(
+                "Graphic EQ",
+                $"{GraphicEqualizerVerificationHarness.FormatDeltaDb(measurement.RequestedGainDb)} on the {measurement.BandLabel} slider measures center and adjacent response",
+                measurement.MeasurementSummary,
+                "center response within 2.0 dB of requested gain; adjacent responses measured and not stronger than center response",
+                measurement.Center.DeltaDb,
+                measurement.Passed,
+                measurement.Details));
+        }
     }
 
     private static void AddInputGainChecks(ICollection<DspVerificationCheck> checks)
