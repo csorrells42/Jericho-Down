@@ -1,7 +1,7 @@
 using System.IO;
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Recording;
 
 public sealed record AudioWaveformPeak(float Minimum, float Maximum);
 

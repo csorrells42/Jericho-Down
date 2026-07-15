@@ -2,7 +2,7 @@ using System.IO;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Recording;
 
 public enum AudioRecordingExportFormat
 {

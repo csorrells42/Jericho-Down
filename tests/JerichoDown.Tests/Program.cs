@@ -11,6 +11,7 @@ using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
+using JerichoDown.Modules.Audio.Recording;
 using JerichoDown.Modules.Audio.Sync;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Mixer;
@@ -1385,6 +1386,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
     Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
+    Assert(moduleIndex.Contains("Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
     Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
     Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
@@ -1433,6 +1435,21 @@ static void ModuleReadmesDefineOwnership()
     Assert(audioDevicesReadme.Contains("WasapiOutputSettings.cs", StringComparison.Ordinal), "Audio device docs should name migrated WASAPI settings ownership");
     Assert(audioDevicesReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio device docs should name the live audio service consumer");
     Assert(audioDeviceSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Devices;", StringComparison.Ordinal)), "Audio device vocabulary should live in the Audio Devices module namespace");
+
+    var audioRecordingReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "README.md")));
+    var audioRecordingSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedRecordingSource.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedAudioSampleConverter.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioFileAnalyzer.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingExporter.cs")))
+    };
+    Assert(audioRecordingReadme.Contains("ProcessedRecordingSource.cs", StringComparison.Ordinal), "Audio recording docs should name migrated recording source ownership");
+    Assert(audioRecordingReadme.Contains("ProcessedAudioSampleConverter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated sample converter ownership");
+    Assert(audioRecordingReadme.Contains("AudioFileAnalyzer.cs", StringComparison.Ordinal), "Audio recording docs should name migrated analyzer ownership");
+    Assert(audioRecordingReadme.Contains("AudioRecordingExporter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated exporter ownership");
+    Assert(audioRecordingReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio recording docs should name the live audio service consumer");
+    Assert(audioRecordingSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Recording;", StringComparison.Ordinal)), "Audio recording helpers should live in the Audio Recording module namespace");
 
     var mixerReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "README.md")));
     var mixerSources = new[]

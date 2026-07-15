@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Recording;
 
 public static class ProcessedAudioSampleConverter
 {

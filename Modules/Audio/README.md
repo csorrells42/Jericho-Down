@@ -8,6 +8,7 @@ Important submodules:
 - `Asio`: ASIO-specific driver startup, callback testing, and diagnostics.
 - `Devices`: input/output device vocabulary, selected-channel modes, and output route policy.
 - `Dsp`: voice processor, EQ, verification, and signal shaping.
+- `Recording`: recording source selection, audio-file analysis, sample conversion, and compressed export.
 - `Sync`: delay lines, auxiliary latency buffers, and NAudio-backed sample-rate conversion.
 
 Do not put camera preview, video recording, karaoke lyric display, or WPF tab orchestration here.
