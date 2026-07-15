@@ -17,6 +17,7 @@ using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Live;
 using JerichoDown.Modules.Audio.Recording;
 using JerichoDown.Modules.Audio.Sync;
+using JerichoDown.Modules.Karaoke;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Mixer;
 using JerichoDown.Modules.Webcam;
@@ -1377,6 +1378,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
     Assert(moduleIndex.Contains("AppShell` owns `App`, `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`", StringComparison.Ordinal), "module index should record migrated AppShell ownership");
     Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
+    Assert(moduleIndex.Contains("Karaoke` owns `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
     Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
     Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
@@ -1448,6 +1450,14 @@ static void ModuleReadmesDefineOwnership()
     Assert(aboutViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "About view code-behind should live in the Help module namespace");
     Assert(verificationViewXaml.Contains("x:Class=\"JerichoDown.Modules.Help.VerificationView\"", StringComparison.Ordinal), "Verification view XAML should live in the Help module namespace");
     Assert(verificationViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "Verification view code-behind should live in the Help module namespace");
+
+    var karaokeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "README.md")));
+    var karaokeTrackAudioReader = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "KaraokeTrackAudioReader.cs")));
+    Assert(karaokeReadme.Contains("KaraokeTrackAudioReader.cs", StringComparison.Ordinal), "Karaoke docs should name migrated track audio reader ownership");
+    Assert(karaokeTrackAudioReader.Contains("namespace JerichoDown.Modules.Karaoke;", StringComparison.Ordinal), "karaoke track audio reader should live in the Karaoke module namespace");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeTrackAudioReader", StringComparison.Ordinal), "karaoke sample-reader playback should be a module entry point");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeRateSampleProvider", StringComparison.Ordinal), "karaoke tempo provider should be a module entry point");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeVocalReductionSampleProvider", StringComparison.Ordinal), "karaoke vocal-reduction provider should be a module entry point");
 
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
@@ -4746,7 +4756,7 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".wma", ".flac", ".aiff", ".aif" })
     {
         var path = Path.Combine(Path.GetTempPath(), "track" + extension);
-        var isSupported = (bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", path);
+        var isSupported = KaraokeTrackAudioReader.CanUseSampleReader(path);
         var isVisible = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", path);
 
         Assert(isSupported, $"{extension} should use the NAudio sample reader path when the local codec can decode it");
@@ -4754,7 +4764,7 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     }
 
     var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
-    Assert(!(bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", m4pPath), "protected Apple Music M4P should not use the sample reader path");
+    Assert(!KaraokeTrackAudioReader.CanUseSampleReader(m4pPath), "protected Apple Music M4P should not use the sample reader path");
     Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
 }
 
@@ -5216,39 +5226,7 @@ static bool SaveCachedKaraokeLyricsForTrack(string trackPath, string lyrics)
 
 static bool TryReadKaraokeTrackDuration(string path, out TimeSpan duration)
 {
-    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
-    if (readerType is null)
-    {
-        throw new InvalidOperationException("karaoke track audio reader type was not found");
-    }
-
-    var args = new object?[] { path, TimeSpan.Zero };
-    var method = readerType.GetMethod("TryReadDuration", BindingFlags.Public | BindingFlags.Static);
-    if (method is null)
-    {
-        throw new InvalidOperationException("KaraokeTrackAudioReader.TryReadDuration was not found");
-    }
-
-    var result = (bool)method.Invoke(null, args)!;
-    duration = (TimeSpan)args[1]!;
-    return result;
-}
-
-static object InvokeKaraokeTrackAudioReaderPrivateStatic(string methodName, params object?[] args)
-{
-    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
-    if (readerType is null)
-    {
-        throw new InvalidOperationException("KaraokeTrackAudioReader type was not found");
-    }
-
-    var method = readerType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-    if (method is null)
-    {
-        throw new InvalidOperationException($"KaraokeTrackAudioReader.{methodName} was not found");
-    }
-
-    return method.Invoke(null, args) ?? throw new InvalidOperationException($"{methodName} returned null");
+    return KaraokeTrackAudioReader.TryReadDuration(path, out duration);
 }
 
 static byte[] CreateMinimalM4aWithDuration(uint timescale, uint duration)

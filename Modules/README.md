@@ -37,6 +37,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 
 - `AppShell` owns `App`, `EqualizerWindow`, `AppStateStore`, `AppStoragePaths`, `AtomicFile`, `PathSafety`, and `FileBrowserWatcher`.
 - `Help` owns `AboutView` and `VerificationView`.
+- `Karaoke` owns `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`.
 - `SessionPlayback` owns `MediaFoundationFilePlaybackService`.
 - `Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`, plus `VideoFrameColorSettings`.
 - `Webcam` owns `VideoFrameDenoiser` for CPU BGRA temporal denoise used by preview/recording fallbacks.
