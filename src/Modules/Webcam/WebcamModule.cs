@@ -63,6 +63,15 @@ public static class WebcamModule
 
     public static Dx12Camera StartDx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewPanel)
     {
-        return new Dx12Camera(camera, mode, previewPanel);
+        return Dx12Camera.Start(camera, mode, previewPanel);
+    }
+
+    public static Dx12Camera StartDx12Camera(
+        CameraDevice camera,
+        CameraVideoMode? mode,
+        Panel previewPanel,
+        Dx12CameraOptions? options)
+    {
+        return Dx12Camera.Start(camera, mode, previewPanel, options);
     }
 }

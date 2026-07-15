@@ -4522,7 +4522,7 @@ public partial class EqualizerWindow : Window
             {
                 return _dx12Camera.WriteMP4(
                     videoPath,
-                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled, _pendingVideoColorSettings.HasVisibleAdjustments),
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength);
             }
@@ -4559,9 +4559,10 @@ public partial class EqualizerWindow : Window
                 CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem),
                 videoPath,
                 new TextureNativeRecordingOptions(
-                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled),
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled, _pendingVideoColorSettings.HasVisibleAdjustments),
                     _pendingVideoDenoiseEnabled,
-                    _pendingVideoDenoiseStrength));
+                    _pendingVideoDenoiseStrength,
+                    _pendingVideoColorSettings));
             return true;
         }
         catch (Exception ex)
@@ -5323,6 +5324,10 @@ public partial class EqualizerWindow : Window
             }
 
             _isDirectShowPreviewActive = false;
+            _dx12Camera?.UpdateRenderSettings(
+                _pendingVideoDenoiseEnabled,
+                _pendingVideoDenoiseStrength,
+                _pendingVideoColorSettings);
             return true;
         }
         catch (Exception ex)
@@ -5668,7 +5673,7 @@ public partial class EqualizerWindow : Window
                     frame,
                     _pendingVideoDenoiseEnabled,
                     _pendingVideoDenoiseStrength,
-                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled));
+                    VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(_pendingVideoDenoiseEnabled, _pendingVideoColorSettings.HasVisibleAdjustments));
             }
         }
     }
@@ -6097,7 +6102,10 @@ public partial class EqualizerWindow : Window
         }
 
         _pendingVideoDenoiseStrength = strength;
-        _dx12Camera?.Denoise(_pendingVideoDenoiseEnabled, _pendingVideoDenoiseStrength);
+        _dx12Camera?.UpdateRenderSettings(
+            _pendingVideoDenoiseEnabled,
+            _pendingVideoDenoiseStrength,
+            _pendingVideoColorSettings);
         ConfigureCpuPreviewServices();
 
         UpdateVideoDenoiseValueText(strength);
@@ -6139,6 +6147,7 @@ public partial class EqualizerWindow : Window
             Math.Clamp(VideoContrastSlider.Value, VideoContrastSlider.Minimum, VideoContrastSlider.Maximum),
             Math.Clamp(VideoSaturationSlider.Value, VideoSaturationSlider.Minimum, VideoSaturationSlider.Maximum),
             Math.Clamp(VideoWarmthSlider.Value, VideoWarmthSlider.Minimum, VideoWarmthSlider.Maximum));
+        _dx12Camera?.ColorPolish(_pendingVideoColorSettings);
         ApplyVideoColorSettingsToCpuServices();
         UpdateVideoColorValueText();
 

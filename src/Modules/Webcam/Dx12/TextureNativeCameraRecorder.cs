@@ -17,12 +17,15 @@ public sealed record TextureNativeRecordingResult(
     string Status,
     string RecordingPipeline = "Media Foundation texture-native raw camera samples",
     bool RecordingDenoiseApplied = false,
-    bool RecordingMatchesPreviewDenoise = false);
+    bool RecordingMatchesPreviewDenoise = false,
+    bool RecordingColorPolishApplied = false,
+    bool RecordingMatchesPreviewColor = false);
 
 public sealed record TextureNativeRecordingOptions(
     bool ProcessedOutputEnabled,
     bool DenoiseEnabled,
-    double DenoiseStrength);
+    double DenoiseStrength,
+    VideoFrameColorSettings ColorSettings = default);
 
 public sealed record TextureNativeFrameInfo(
     int Width,
@@ -634,6 +637,9 @@ public sealed class TextureNativeCameraStream : IDisposable
     private string? _recordingPath;
     private string _recordingPipeline = "Media Foundation texture-native raw camera samples";
     private bool _recordingMatchesPreviewDenoise;
+    private bool _recordingColorPolishApplied;
+    private bool _recordingMatchesPreviewColor;
+    private VideoFrameColorSettings _processedRecordingColorSettings = VideoFrameColorSettings.Off;
     private bool _processedRecordingDenoiseEnabled;
     private double _processedRecordingDenoiseStrength = 2d;
     private bool _isPaused;
@@ -731,9 +737,12 @@ public sealed class TextureNativeCameraStream : IDisposable
                     d3dManager: null);
                 _processedRecordingDenoiseEnabled = options.DenoiseEnabled;
                 _processedRecordingDenoiseStrength = options.DenoiseStrength;
+                _processedRecordingColorSettings = options.ColorSettings;
                 ResetProcessedDenoiseHistory();
                 _recordingPipeline = "Texture-native processed BGRA bridge";
                 _recordingMatchesPreviewDenoise = true;
+                _recordingColorPolishApplied = options.ColorSettings.HasVisibleAdjustments;
+                _recordingMatchesPreviewColor = true;
             }
             else
             {
@@ -745,9 +754,12 @@ public sealed class TextureNativeCameraStream : IDisposable
                     _subtype,
                     deviceManager.Manager);
                 _processedRecordingDenoiseEnabled = false;
+                _processedRecordingColorSettings = VideoFrameColorSettings.Off;
                 ResetProcessedDenoiseHistory();
                 _recordingPipeline = "Media Foundation texture-native raw camera samples";
                 _recordingMatchesPreviewDenoise = options?.DenoiseEnabled != true;
+                _recordingColorPolishApplied = false;
+                _recordingMatchesPreviewColor = options?.ColorSettings.HasVisibleAdjustments != true;
             }
 
             _recordingPath = path;
@@ -790,6 +802,8 @@ public sealed class TextureNativeCameraStream : IDisposable
         string recordingPipeline;
         bool processedDenoiseEnabled;
         bool recordingMatchesPreviewDenoise;
+        bool recordingColorPolishApplied;
+        bool recordingMatchesPreviewColor;
         lock (_stateLock)
         {
             recorder = _recorder;
@@ -799,13 +813,18 @@ public sealed class TextureNativeCameraStream : IDisposable
             recordingPipeline = _recordingPipeline;
             processedDenoiseEnabled = _processedRecordingDenoiseEnabled;
             recordingMatchesPreviewDenoise = _recordingMatchesPreviewDenoise;
+            recordingColorPolishApplied = _recordingColorPolishApplied;
+            recordingMatchesPreviewColor = _recordingMatchesPreviewColor;
             _recorder = null;
             _processedRecorder = null;
             _recordingPath = null;
             _isPaused = false;
             ResetProcessedDenoiseHistory();
             _processedRecordingDenoiseEnabled = false;
+            _processedRecordingColorSettings = VideoFrameColorSettings.Off;
             _recordingMatchesPreviewDenoise = false;
+            _recordingColorPolishApplied = false;
+            _recordingMatchesPreviewColor = false;
             _recordingPipeline = "Media Foundation texture-native raw camera samples";
         }
 
@@ -839,7 +858,9 @@ public sealed class TextureNativeCameraStream : IDisposable
                 status,
                 recordingPipeline,
                 processedDenoiseEnabled,
-                recordingMatchesPreviewDenoise);
+                recordingMatchesPreviewDenoise,
+                recordingColorPolishApplied,
+                recordingMatchesPreviewColor);
         }
         finally
         {
@@ -990,6 +1011,7 @@ public sealed class TextureNativeCameraStream : IDisposable
         bool isPaused;
         bool processedDenoiseEnabled;
         double processedDenoiseStrength;
+        VideoFrameColorSettings processedColorSettings;
         lock (_stateLock)
         {
             recorder = _recorder;
@@ -997,6 +1019,7 @@ public sealed class TextureNativeCameraStream : IDisposable
             isPaused = _isPaused;
             processedDenoiseEnabled = _processedRecordingDenoiseEnabled;
             processedDenoiseStrength = _processedRecordingDenoiseStrength;
+            processedColorSettings = _processedRecordingColorSettings;
         }
 
         if (isPaused || (recorder is null && processedRecorder is null))
@@ -1021,6 +1044,11 @@ public sealed class TextureNativeCameraStream : IDisposable
             else
             {
                 ResetProcessedDenoiseHistory();
+            }
+
+            if (processedColorSettings.HasVisibleAdjustments)
+            {
+                VideoFrameColorProcessor.Apply(bgraBytes, processedColorSettings);
             }
 
             processedRecorder.WriteFrame(bgraBytes);
@@ -1359,6 +1387,9 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
     private readonly bool _recordingDenoiseApplied;
     private readonly bool _recordingMatchesPreviewDenoise;
     private readonly double _recordingDenoiseStrength;
+    private readonly bool _recordingColorPolishApplied;
+    private readonly bool _recordingMatchesPreviewColor;
+    private readonly VideoFrameColorSettings _recordingColorSettings;
     private byte[]? _previousProcessedDenoiseFrame;
     private bool _isPaused;
     private bool _isStopping;
@@ -1388,6 +1419,9 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
             _recordingDenoiseApplied = options.DenoiseEnabled;
             _recordingMatchesPreviewDenoise = true;
             _recordingDenoiseStrength = options.DenoiseStrength;
+            _recordingColorSettings = options.ColorSettings;
+            _recordingColorPolishApplied = options.ColorSettings.HasVisibleAdjustments;
+            _recordingMatchesPreviewColor = true;
         }
         else
         {
@@ -1402,6 +1436,9 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
             _recordingDenoiseApplied = false;
             _recordingMatchesPreviewDenoise = options?.DenoiseEnabled != true;
             _recordingDenoiseStrength = options?.DenoiseStrength ?? 2d;
+            _recordingColorSettings = VideoFrameColorSettings.Off;
+            _recordingColorPolishApplied = false;
+            _recordingMatchesPreviewColor = options?.ColorSettings.HasVisibleAdjustments != true;
         }
 
         _recordingTask = Task.Run(() => CaptureLoop(_cancellation.Token));
@@ -1574,6 +1611,11 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
                 }
             }
 
+            if (_recordingColorSettings.HasVisibleAdjustments)
+            {
+                VideoFrameColorProcessor.Apply(bgraBytes, _recordingColorSettings);
+            }
+
             _processedRecorder.WriteFrame(bgraBytes);
         }
         else if (_recorder is not null)
@@ -1647,7 +1689,9 @@ public sealed class TextureNativeCameraRecordingSession : IDisposable
             status,
             _recordingPipeline,
             _recordingDenoiseApplied,
-            _recordingMatchesPreviewDenoise);
+            _recordingMatchesPreviewDenoise,
+            _recordingColorPolishApplied,
+            _recordingMatchesPreviewColor);
     }
 
     private static (int Width, int Height, double Fps, Guid Subtype) ReadCurrentFormat(

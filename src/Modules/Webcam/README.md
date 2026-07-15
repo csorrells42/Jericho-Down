@@ -4,11 +4,12 @@ Owns reusable webcam discovery, preview startup policy, camera controls, recordi
 
 Standalone entry point:
 - `WebcamModule.cs` is the facade another WPF program should start from. It exposes camera discovery, mode/control services, Media Foundation and DirectShow preview services, the DX12 preview host, and the high-level `Dx12Camera` starter.
+- `tools/CameraPreviewProbe --module-sample` is the small drop-in proof: it uses `WebcamModule.GetCameras()` and `WebcamModule.StartDx12Camera(...)` with a plain WPF panel, then prints DX12 preview diagnostics.
 
 Important submodules:
 - `MediaFoundation`: Windows Media Foundation camera source readers and video writing.
 - `DirectShow`: DirectShow fallback camera preview and controls.
-- `Dx12`: GPU preview, texture-native stream, and GPU denoise.
+- `Dx12`: GPU preview, texture-native stream, GPU denoise, GPU color polish, preview presenter contracts, and diagnostics.
 - `Dx11Bridge`: bridge path for shared D3D11/D3D12 texture interop.
 
 Current entry points:

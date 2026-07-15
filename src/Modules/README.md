@@ -27,7 +27,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam`: reusable webcam facade, camera device vocabulary, controls, preview policy, recording policy, profiles, frame/color helpers, and camera status text.
 - `Webcam/MediaFoundation`: Media Foundation camera enumeration, modes, source readers, and video writing.
 - `Webcam/DirectShow`: DirectShow camera enumeration, controls, and fallback preview capture.
-- `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise, and GPU preview diagnostics.
+- `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise/color polish, preview presenter contract, and GPU preview diagnostics.
 - `Webcam/Dx11Bridge`: D3D11 bridge code used when camera frames need to cross into DX12 rendering.
 - `DirectX12Viewport`: reusable WPF child-window viewport plumbing for DX12 swap-chain renderers.
 - `SessionPlayback`: playback and cataloging of saved podcast sessions, including MP4 video pacing, sidecar WAV audio selection, session folder naming, and recording set numbering.
@@ -59,7 +59,7 @@ Keep visual content separate from the reusable viewport: camera frames and audio
 - `Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`.
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
 - `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
-- `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
+- `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Direct3D12PreviewDiagnostics`, `ICameraPreviewPresenter`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
 - `DirectX12Viewport` owns `DirectX12ViewportHost`, the reusable WPF child-window host used by DX12 renderers.
 - `Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`.
 - `Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`.

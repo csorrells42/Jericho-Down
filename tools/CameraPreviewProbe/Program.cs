@@ -4,6 +4,8 @@ using JerichoDown.Modules.Webcam.DirectShow;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Webcam.MediaFoundation;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 var options = ProbeOptions.Parse(args);
@@ -16,16 +18,12 @@ if (options.ShowHelp)
 var textureProbe = options.HasFlag("--texture");
 var dx12PreviewProbe = options.HasFlag("--dx12-preview");
 var mediaFoundationPreviewProbe = options.HasFlag("--mf-preview");
+var moduleSampleProbe = options.HasFlag("--module-sample") || options.StressCount > 1;
+var needsMediaFoundationCameraSource = textureProbe || mediaFoundationPreviewProbe || moduleSampleProbe;
 var mode = options.Mode ?? CameraVideoMode.Auto;
 var requested = options.CameraName ?? string.Join(' ', options.SearchTerms);
 
-var cameras = MediaFoundationCameraEnumerator.GetVideoInputDevices()
-    .Concat(DirectShowCameraEnumerator.GetVideoInputDevices())
-    .GroupBy(camera => string.IsNullOrWhiteSpace(camera.DevicePath)
-        ? $"name:{camera.Name}|source:{camera.Source}"
-        : $"path:{camera.DevicePath}", StringComparer.OrdinalIgnoreCase)
-    .Select(group => group.First())
-    .ToList();
+var cameras = WebcamModule.GetCameras().ToList();
 
 Console.WriteLine("Detected cameras:");
 foreach (var camera in cameras)
@@ -38,14 +36,14 @@ if (options.ListOnly)
     return 0;
 }
 
-var candidates = SelectSourceCandidates(cameras, options.Source, textureProbe, mediaFoundationPreviewProbe);
+var candidates = SelectSourceCandidates(cameras, options.Source, textureProbe || moduleSampleProbe, mediaFoundationPreviewProbe);
 var target = candidates
-    .OrderByDescending(camera => ShouldPreferVirtualCamera(options.Source, textureProbe, mediaFoundationPreviewProbe)
+    .OrderByDescending(camera => ShouldPreferVirtualCamera(options.Source, textureProbe || moduleSampleProbe, mediaFoundationPreviewProbe)
         ? GetVirtualCameraPriority(camera)
         : 0)
     .ThenBy(camera => camera.Name, StringComparer.OrdinalIgnoreCase)
     .FirstOrDefault(camera => string.IsNullOrWhiteSpace(requested)
-        ? textureProbe || mediaFoundationPreviewProbe || IsLikelyVirtualCamera(camera)
+        ? needsMediaFoundationCameraSource || IsLikelyVirtualCamera(camera)
         : camera.Name.Contains(requested, StringComparison.OrdinalIgnoreCase))
     ?? candidates.FirstOrDefault();
 
@@ -58,6 +56,11 @@ if (target is null)
         _ => "No camera found to probe."
     });
     return 2;
+}
+
+if (moduleSampleProbe)
+{
+    return await RunWebcamModuleSampleStressProbeAsync(target, mode, options.Duration, options.Visible, options.StressCount);
 }
 
 if (mediaFoundationPreviewProbe)
@@ -252,6 +255,120 @@ static Task<int> RunDx12DirectShowPreviewProbeAsync(CameraDevice camera, CameraV
     return result.Task;
 }
 
+static async Task<int> RunWebcamModuleSampleStressProbeAsync(
+    CameraDevice camera,
+    CameraVideoMode mode,
+    TimeSpan duration,
+    bool visible,
+    int stressCount)
+{
+    var cycles = Math.Max(1, stressCount);
+    for (var cycle = 1; cycle <= cycles; cycle++)
+    {
+        var result = await RunWebcamModuleSampleProbeAsync(camera, mode, duration, visible, cycle, cycles);
+        if (result != 0)
+        {
+            Console.WriteLine($"WebcamModule sample stress probe failed on cycle {cycle} of {cycles}.");
+            return result;
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        await Task.Delay(200);
+    }
+
+    Console.WriteLine($"WebcamModule sample stress probe passed: {cycles} cycle(s).");
+    return 0;
+}
+
+static Task<int> RunWebcamModuleSampleProbeAsync(
+    CameraDevice camera,
+    CameraVideoMode mode,
+    TimeSpan duration,
+    bool visible,
+    int cycle,
+    int cycles)
+{
+    var result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var thread = new Thread(() =>
+    {
+        Dx12Camera? moduleCamera = null;
+        Window? window = null;
+        var infoFrames = 0;
+        var textureFrames = 0;
+        var diagnosticsFrames = 0;
+        var finalReady = false;
+        Direct3D12PreviewDiagnostics lastDiagnostics = Direct3D12PreviewDiagnostics.Empty;
+
+        try
+        {
+            window = CreateProbeWindow($"WebcamModule DX12 Sample Probe {cycle}/{cycles}", visible);
+            var surface = CreateProbeSurface(out var previewPanel, out var statusOverlay);
+            window.Content = surface;
+            window.Show();
+            var probeWindow = window;
+
+            var startupOptions = new Dx12CameraOptions
+            {
+                Mode = mode,
+                FrameAvailable = (_, _) => Interlocked.Increment(ref infoFrames),
+                TextureFrameAvailable = (_, _) => Interlocked.Increment(ref textureFrames),
+                DiagnosticsChanged = (_, diagnostics) =>
+                {
+                    lastDiagnostics = diagnostics;
+                    Interlocked.Increment(ref diagnosticsFrames);
+                    probeWindow.Dispatcher.BeginInvoke(() => statusOverlay.Text = diagnostics.FormatStatusLine());
+                },
+                StatusChanged = (_, status) =>
+                {
+                    Console.WriteLine(status);
+                    probeWindow.Dispatcher.BeginInvoke(() => statusOverlay.Text = status);
+                }
+            };
+
+            moduleCamera = WebcamModule.StartDx12Camera(camera, mode, previewPanel, startupOptions);
+
+            var timer = new DispatcherTimer { Interval = duration };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                finalReady = moduleCamera?.IsReady == true;
+                var diagnostics = moduleCamera?.PreviewDiagnostics ?? lastDiagnostics;
+                Console.WriteLine(
+                    $"WebcamModule sample probe {cycle}/{cycles}: info {infoFrames}, texture {textureFrames}, diagnostics {diagnosticsFrames}, ready {finalReady}, {diagnostics.FormatStatusLine()}.");
+                result.TrySetResult(
+                    infoFrames > 0
+                    && textureFrames > 0
+                    && diagnostics.RenderedFrames > 0
+                    && diagnosticsFrames > 0
+                    && finalReady
+                        ? 0
+                        : 14);
+                moduleCamera?.Close(collectGarbage: false);
+                probeWindow.Close();
+                probeWindow.Dispatcher.BeginInvokeShutdown(DispatcherPriority.Background);
+            };
+            timer.Start();
+            Dispatcher.Run();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"WebcamModule sample probe failed: {ex}");
+            result.TrySetResult(15);
+        }
+        finally
+        {
+            moduleCamera?.Dispose();
+            window?.Close();
+        }
+    });
+
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    return result.Task;
+}
+
 static Task<int> RunDx12TexturePreviewProbeAsync(CameraDevice camera, CameraVideoMode mode, TimeSpan duration, bool visible)
 {
     var result = new TaskCompletionSource<int>();
@@ -424,6 +541,34 @@ static Window CreateProbeWindow(string title, bool visible)
     };
 }
 
+static Grid CreateProbeSurface(out Grid previewPanel, out TextBlock statusOverlay)
+{
+    var root = new Grid
+    {
+        Background = Brushes.Black
+    };
+    previewPanel = new Grid
+    {
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Stretch
+    };
+    statusOverlay = new TextBlock
+    {
+        Text = "DX12 webcam module sample starting",
+        Foreground = Brushes.White,
+        Background = new SolidColorBrush(Color.FromArgb(190, 0, 0, 0)),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Top,
+        Margin = new Thickness(8),
+        Padding = new Thickness(8, 5, 8, 5),
+        TextWrapping = TextWrapping.Wrap,
+        MaxWidth = 760
+    };
+    root.Children.Add(previewPanel);
+    root.Children.Add(statusOverlay);
+    return root;
+}
+
 internal sealed record ProbeOptions(
     HashSet<string> Flags,
     string? CameraName,
@@ -432,6 +577,7 @@ internal sealed record ProbeOptions(
     CameraVideoMode? Mode,
     TimeSpan Duration,
     int RequestedSamples,
+    int StressCount,
     bool Visible,
     bool ListOnly,
     bool ShowHelp)
@@ -450,6 +596,7 @@ internal sealed record ProbeOptions(
         CameraVideoMode? mode = null;
         var duration = TimeSpan.FromSeconds(6);
         var requestedSamples = 30;
+        var stressCount = 1;
         var visible = false;
         var listOnly = false;
         var showHelp = false;
@@ -485,6 +632,14 @@ internal sealed record ProbeOptions(
                 case "--samples":
                     requestedSamples = ParsePositiveInt(ReadOptionValue(args, ref i, inlineValue, name), name);
                     break;
+                case "--stress":
+                    stressCount = string.IsNullOrWhiteSpace(inlineValue)
+                        ? 5
+                        : ParsePositiveInt(inlineValue, name);
+                    break;
+                case "--stress-count":
+                    stressCount = ParsePositiveInt(ReadOptionValue(args, ref i, inlineValue, name), name);
+                    break;
                 case "--visible":
                     visible = true;
                     break;
@@ -506,6 +661,7 @@ internal sealed record ProbeOptions(
             mode,
             duration,
             requestedSamples,
+            stressCount,
             visible,
             listOnly,
             showHelp);
@@ -526,6 +682,8 @@ CameraPreviewProbe options:
   --texture                      Use texture-native capture.
   --dx12-preview                 Render through the DX12 preview host.
   --mf-preview                   Use Media Foundation CPU preview through DX12.
+  --module-sample                Run the drop-in WebcamModule + DX12 camera sample.
+  --stress, --stress-count <n>   Repeat the module sample. --stress defaults to 5 cycles.
 """);
     }
 

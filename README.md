@@ -54,6 +54,8 @@ Jericho Down is released under the MIT License. See [LICENSE](LICENSE).
 
 ```powershell
 dotnet run --project tools\CameraPreviewProbe\CameraPreviewProbe.csproj -- --list
+dotnet run --project tools\CameraPreviewProbe\CameraPreviewProbe.csproj -- --module-sample --camera "your camera"
+dotnet run --project tools\CameraPreviewProbe\CameraPreviewProbe.csproj -- --module-sample --stress-count 5 --camera "your camera"
 dotnet run --project tools\CameraPreviewProbe\CameraPreviewProbe.csproj -- --texture --dx12-preview --source mf --mode 3840x2160@24 --camera "your camera"
 dotnet run --project tools\CameraPreviewProbe\CameraPreviewProbe.csproj -- --dx12-preview --source directshow --camera "virtual"
 ```

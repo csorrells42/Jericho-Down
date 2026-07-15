@@ -12,9 +12,13 @@ public sealed class Dx12CameraOptions
 
     public double DenoiseStrength { get; init; } = 2d;
 
+    public VideoFrameColorSettings ColorSettings { get; init; } = VideoFrameColorSettings.Off;
+
     public EventHandler<TextureNativeFrameInfo>? FrameAvailable { get; init; }
 
     public EventHandler<TextureNativeFrameLease>? TextureFrameAvailable { get; init; }
+
+    public EventHandler<Direct3D12PreviewDiagnostics>? DiagnosticsChanged { get; init; }
 
     public EventHandler<string>? StatusChanged { get; init; }
 }

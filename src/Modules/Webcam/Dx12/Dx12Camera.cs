@@ -30,6 +30,8 @@ public sealed class Dx12Camera : IDisposable
     private bool _textureFrameLeaseActive;
     private bool _denoiseEnabled;
     private double _denoiseStrength = 2d;
+    private VideoFrameColorSettings _colorSettings = VideoFrameColorSettings.Off;
+    private string _recordingMode = "not recording";
     private bool _disposed;
 
     // Drop-in path:
@@ -68,6 +70,12 @@ public sealed class Dx12Camera : IDisposable
     public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewWindow)
         : this(camera, mode, new PreviewTarget(previewWindow))
     {
+    }
+
+    public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, Panel previewWindow, Dx12CameraOptions? options)
+        : this(camera, mode ?? options?.Mode ?? CameraVideoMode.Auto, new PreviewTarget(previewWindow))
+    {
+        ApplyStartupOptions(options);
     }
 
     public Dx12Camera(CameraDevice camera, PreviewTarget target)
@@ -138,6 +146,7 @@ public sealed class Dx12Camera : IDisposable
 
     public event EventHandler<TextureNativeFrameInfo>? FrameAvailable;
     public event EventHandler<TextureNativeFrameLease>? TextureFrameAvailable;
+    public event EventHandler<Direct3D12PreviewDiagnostics>? DiagnosticsChanged;
     public event EventHandler<string>? StatusChanged;
 
     public static IReadOnlyList<CameraDevice> GetCameras()
@@ -235,6 +244,7 @@ public sealed class Dx12Camera : IDisposable
             target,
             options?.DenoiseEnabled == true,
             options?.DenoiseStrength ?? 2d);
+        dx12Camera.ColorPolish(options?.ColorSettings ?? VideoFrameColorSettings.Off);
         dx12Camera.AttachStartupHandlers(options);
         return dx12Camera;
     }
@@ -261,6 +271,7 @@ public sealed class Dx12Camera : IDisposable
             new PreviewTarget(previewWindow),
             options?.DenoiseEnabled == true,
             options?.DenoiseStrength ?? 2d);
+        dx12Camera.ColorPolish(options?.ColorSettings ?? VideoFrameColorSettings.Off);
         dx12Camera.AttachStartupHandlers(options);
         return dx12Camera;
     }
@@ -385,6 +396,8 @@ public sealed class Dx12Camera : IDisposable
 
     public bool IsRecording => _stream?.IsRecording == true;
 
+    public string RecordingMode => _recordingMode;
+
     public bool IsTextureNative => _kind == Dx12CameraKind.TextureNative;
 
     public bool IsFallback => _kind is Dx12CameraKind.MediaFoundationFallback or Dx12CameraKind.DirectShowFallback;
@@ -409,6 +422,10 @@ public sealed class Dx12Camera : IDisposable
     public int SamplesWritten => _stream?.SamplesWritten ?? 0;
 
     public bool IsReady => _previewHost?.IsReady == true;
+
+    public Direct3D12PreviewDiagnostics PreviewDiagnostics => _previewHost?.Diagnostics ?? Direct3D12PreviewDiagnostics.Empty;
+
+    public VideoFrameColorSettings ColorSettings => _colorSettings;
 
     internal static void CollectReleasedCamera()
     {
@@ -545,6 +562,7 @@ public sealed class Dx12Camera : IDisposable
         }
 
         Denoise(options.DenoiseEnabled, options.DenoiseStrength);
+        ColorPolish(options.ColorSettings);
         AttachStartupHandlers(options);
     }
 
@@ -558,6 +576,11 @@ public sealed class Dx12Camera : IDisposable
         if (options?.TextureFrameAvailable is not null)
         {
             TextureFrameAvailable += options.TextureFrameAvailable;
+        }
+
+        if (options?.DiagnosticsChanged is not null)
+        {
+            DiagnosticsChanged += options.DiagnosticsChanged;
         }
 
         if (options?.StatusChanged is not null)
@@ -587,6 +610,20 @@ public sealed class Dx12Camera : IDisposable
         Denoise(denoiseEnabled, denoiseStrength);
     }
 
+    public void UpdateRenderSettings(
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings)
+    {
+        Denoise(denoiseEnabled, denoiseStrength);
+        ColorPolish(colorSettings);
+    }
+
+    public void ColorPolish(VideoFrameColorSettings settings)
+    {
+        _colorSettings = settings;
+    }
+
     public bool WriteMP4(string path)
     {
         return WriteMP4(
@@ -607,7 +644,8 @@ public sealed class Dx12Camera : IDisposable
             new TextureNativeRecordingOptions(
                 processedOutputEnabled,
                 denoiseEnabled,
-                denoiseStrength));
+                denoiseStrength,
+                _colorSettings));
     }
 
     public bool WriteMP4(string path, TextureNativeRecordingOptions options)
@@ -631,18 +669,29 @@ public sealed class Dx12Camera : IDisposable
             new TextureNativeRecordingOptions(
                 processedOutputEnabled,
                 denoiseEnabled,
-                denoiseStrength));
+                denoiseStrength,
+                _colorSettings));
     }
 
     public bool StartRecording(string path, TextureNativeRecordingOptions options)
     {
         var stream = _stream ?? throw new InvalidOperationException("DX12 camera stream is not initialized.");
-        return stream.StartRecording(path, options);
+        var started = stream.StartRecording(path, options);
+        if (started)
+        {
+            SetPreviewRecordingMode(FormatTextureRecordingMode(options));
+        }
+
+        return started;
     }
 
     public void PauseRecording()
     {
         _stream?.PauseRecording();
+        if (IsRecording)
+        {
+            _previewHost?.SetRecordingMode("recording paused");
+        }
     }
 
     public void PauseMP4()
@@ -653,6 +702,10 @@ public sealed class Dx12Camera : IDisposable
     public void ResumeRecording()
     {
         _stream?.ResumeRecording();
+        if (IsRecording)
+        {
+            _previewHost?.SetRecordingMode(_recordingMode);
+        }
     }
 
     public void ResumeMP4()
@@ -662,7 +715,9 @@ public sealed class Dx12Camera : IDisposable
 
     public TextureNativeRecordingResult? StopRecording()
     {
-        return _stream?.StopRecording();
+        var result = _stream?.StopRecording();
+        SetPreviewRecordingMode("not recording");
+        return result;
     }
 
     public TextureNativeRecordingResult? StopRecordingIfActive()
@@ -852,6 +907,8 @@ public sealed class Dx12Camera : IDisposable
             };
             nativeD3D12Device = IntPtr.Zero;
             host.StatusChanged += PreviewHostStatusChanged;
+            host.DiagnosticsChanged += PreviewHostDiagnosticsChanged;
+            host.SetRecordingMode(_recordingMode);
             _previewHost = host;
             var insertIndex = Math.Min(_target.HostInsertIndex, _target.PreviewWindow.Children.Count);
             _target.PreviewWindow.Children.Insert(insertIndex, host);
@@ -876,6 +933,7 @@ public sealed class Dx12Camera : IDisposable
 
         _previewHost = null;
         host.StatusChanged -= PreviewHostStatusChanged;
+        host.DiagnosticsChanged -= PreviewHostDiagnosticsChanged;
         _target.PreviewWindow.Children.Remove(host);
         host.Dispose();
     }
@@ -914,7 +972,7 @@ public sealed class Dx12Camera : IDisposable
             {
                 if (!_disposed)
                 {
-                    _previewHost?.RenderTextureFrame(frame, _denoiseEnabled, _denoiseStrength);
+                    _previewHost?.RenderTextureFrame(frame, _denoiseEnabled, _denoiseStrength, _colorSettings);
                 }
             }
             finally
@@ -939,6 +997,29 @@ public sealed class Dx12Camera : IDisposable
     private void PreviewHostStatusChanged(object? sender, string status)
     {
         StatusChanged?.Invoke(this, status);
+    }
+
+    private void PreviewHostDiagnosticsChanged(object? sender, Direct3D12PreviewDiagnostics diagnostics)
+    {
+        DiagnosticsChanged?.Invoke(this, diagnostics);
+    }
+
+    private void SetPreviewRecordingMode(string recordingMode)
+    {
+        _recordingMode = string.IsNullOrWhiteSpace(recordingMode) ? "not recording" : recordingMode;
+        _previewHost?.SetRecordingMode(_recordingMode);
+    }
+
+    private static string FormatTextureRecordingMode(TextureNativeRecordingOptions options)
+    {
+        if (options.ProcessedOutputEnabled)
+        {
+            return options.ColorSettings.HasVisibleAdjustments || options.DenoiseEnabled
+                ? "recording processed texture output"
+                : "recording processed texture bridge";
+        }
+
+        return "recording raw texture-native samples";
     }
 
     private void Dispose(bool disposing)

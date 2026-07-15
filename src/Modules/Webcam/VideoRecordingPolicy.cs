@@ -8,9 +8,9 @@ public static class VideoRecordingPolicy
         return IsEnabledEnvironmentValue(value);
     }
 
-    public static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled)
+    public static bool ShouldRecordProcessedTextureOutput(bool denoiseEnabled, bool colorPolishEnabled = false)
     {
-        return denoiseEnabled;
+        return denoiseEnabled || colorPolishEnabled;
     }
 
     private static bool IsEnabledEnvironmentValue(string? value)

@@ -67,7 +67,7 @@ public static class CameraStatusText
         if (isTextureNative)
         {
             return settings.HasVisibleAdjustments
-                ? "Color polish is armed for CPU fallback/recording. The current DX12 texture preview remains raw."
+                ? "Color polish is live on the DX12 texture preview and processed texture-native recording path."
                 : "Color polish is neutral.";
         }
 
@@ -95,20 +95,18 @@ public static class CameraStatusText
                 previewDenoiseApplied = denoiseEnabled,
                 previewDenoiseSliderStrength = denoiseSliderStrength,
                 previewDenoiseStrength = denoiseStrength,
-                previewColorPolishApplied = false,
+                previewColorPolishApplied = colorSettings.HasVisibleAdjustments,
                 previewColorPolish = CreateVideoColorMetadata(colorSettings),
                 recordingPipeline = textureResult.RecordingPipeline,
                 recordingDenoiseApplied = textureResult.RecordingDenoiseApplied,
                 recordingMatchesPreviewDenoise = textureResult.RecordingMatchesPreviewDenoise,
-                recordingColorPolishApplied = false,
-                recordingMatchesPreviewColor = !colorSettings.HasVisibleAdjustments,
-                note = colorSettings.HasVisibleAdjustments
-                    ? "Color polish is CPU-only in this build; the saved texture-native video is raw color output."
-                    : textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
-                        ? "Texture-native recording matched the preview denoise setting through the processed bridge."
-                        : denoiseEnabled
-                            ? "DX12 denoise was visible in preview only; the saved texture-native video is raw camera output."
-                            : "DX12 preview denoise was off; the saved texture-native video is raw camera output."
+                recordingColorPolishApplied = textureResult.RecordingColorPolishApplied,
+                recordingMatchesPreviewColor = textureResult.RecordingMatchesPreviewColor,
+                note = textureResult.RecordingPipeline.Contains("processed", StringComparison.OrdinalIgnoreCase)
+                    ? "Texture-native recording matched the preview processing through the processed bridge."
+                    : denoiseEnabled || colorSettings.HasVisibleAdjustments
+                        ? "DX12 preview processing was visible in preview only; the saved texture-native video is raw camera output."
+                        : "DX12 preview processing was off; the saved texture-native video is raw camera output."
             };
         }
 
@@ -162,7 +160,7 @@ public static class CameraStatusText
         var denoiseStatus = denoiseEnabled
             ? $"DX12 denoise {denoiseStrength:0.0}"
             : "DX12 denoise off";
-        var recordingStatus = recordProcessedTextureOutput ? "recording follows denoise" : "raw recording";
+        var recordingStatus = recordProcessedTextureOutput ? "recording follows processing" : "raw recording";
         return $"{state}: {camera.Name} at {frame.Width}x{frame.Height} {frame.FramesPerSecond:0.#} fps {frame.MediaSubtype} ({frame.DeviceMode}, {textureStatus}, {presenterStatus}, {previewPathStatus}, {denoiseStatus}, {recordingStatus}, frame {frame.FrameNumber})";
     }
 
@@ -190,15 +188,13 @@ public static class CameraStatusText
 
         if (activeCamera?.IsTextureNative == true)
         {
-            if (hasVisibleColorAdjustments)
-            {
-                isGood = false;
-                return "DX12 texture preview color is raw";
-            }
-
             isGood = true;
-            return VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(denoiseEnabled)
-                ? "recording includes grain reduction"
+            return VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(denoiseEnabled, hasVisibleColorAdjustments)
+                ? denoiseEnabled && hasVisibleColorAdjustments
+                    ? "recording includes grain reduction + color"
+                    : denoiseEnabled
+                        ? "recording includes grain reduction"
+                        : "recording includes color"
                 : "preview = raw texture recording";
         }
 
@@ -241,8 +237,14 @@ public static class CameraStatusText
         if (activeCamera?.IsTextureNative == true)
         {
             var previewPath = activeCamera.PreviewPathDescription;
-            var colorStatus = hasVisibleColorAdjustments ? "; texture preview color raw" : string.Empty;
-            return $"{previewPath}; recording {(VideoRecordingPolicy.ShouldRecordProcessedTextureOutput(denoiseEnabled) ? "grain reduction bridge" : "raw texture-native")}{colorStatus}";
+            var processing = denoiseEnabled && hasVisibleColorAdjustments
+                ? "grain reduction + color bridge"
+                : denoiseEnabled
+                    ? "grain reduction bridge"
+                    : hasVisibleColorAdjustments
+                        ? "color bridge"
+                        : "raw texture-native";
+            return $"{previewPath}; recording {processing}";
         }
 
         if (isSelectedDirectShowCamera)

@@ -14,7 +14,7 @@ using static Vortice.DXGI.DXGI;
 
 namespace JerichoDown.Modules.Webcam.Dx12;
 
-public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
+public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, ICameraPreviewPresenter
 {
     private static readonly TimeSpan RendererDisposeLockTimeout = TimeSpan.FromMilliseconds(250);
 
@@ -26,6 +26,15 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
     private Thread? _renderThread;
     private QueuedCameraFrame? _pendingCameraFrame;
     private string _previewPathDescription = "DX12 preview path pending";
+    private readonly object _diagnosticsLock = new();
+    private Direct3D12PreviewDiagnostics _diagnostics = Direct3D12PreviewDiagnostics.Empty;
+    private DateTimeOffset _diagnosticsFpsWindowStartUtc = DateTimeOffset.UtcNow;
+    private long _diagnosticsFpsWindowStartRenderedFrames;
+    private long _submittedFrames;
+    private long _renderedFrames;
+    private long _droppedFrames;
+    private double _renderFramesPerSecond;
+    private string _recordingMode = "not recording";
     private bool _renderWorkerStopping;
     private bool _disposed;
 
@@ -43,11 +52,33 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
 
     public event EventHandler<string>? StatusChanged;
 
+    public event EventHandler<Direct3D12PreviewDiagnostics>? DiagnosticsChanged;
+
     public bool IsReady => _renderer is not null;
 
     public string DeviceDescription => _renderer?.DeviceDescription ?? "DX12 preview not initialized";
 
     public string PreviewPathDescription => _previewPathDescription;
+
+    public string RecordingMode => Volatile.Read(ref _recordingMode);
+
+    public Direct3D12PreviewDiagnostics Diagnostics
+    {
+        get
+        {
+            lock (_diagnosticsLock)
+            {
+                return _diagnostics;
+            }
+        }
+    }
+
+    public void SetRecordingMode(string recordingMode)
+    {
+        Volatile.Write(
+            ref _recordingMode,
+            string.IsNullOrWhiteSpace(recordingMode) ? "not recording" : recordingMode.Trim());
+    }
 
     public void RenderBgraFrame(
         CameraFrame frame,
@@ -61,8 +92,14 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             return;
         }
 
+        RecordSubmittedFrame();
         lock (_renderWorkerLock)
         {
+            if (_pendingCameraFrame is not null)
+            {
+                RecordDroppedFrame();
+            }
+
             _pendingCameraFrame = new QueuedCameraFrame(
                 frame.BgraBytes,
                 frame.Width,
@@ -70,6 +107,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 frame.Stride,
                 frame.Nv12Bytes,
                 frame.Nv12Stride,
+                frame.Format,
                 colorSettings,
                 denoiseEnabled,
                 denoiseStrength,
@@ -99,10 +137,16 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
         }
     }
 
-    public void RenderTextureFrame(TextureNativeFrameLease frame, bool denoiseEnabled, double denoiseStrength)
+    public void RenderTextureFrame(
+        TextureNativeFrameLease frame,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings = default)
     {
+        RecordSubmittedFrame();
         if (_renderer is null)
         {
+            RecordDroppedFrame();
             return;
         }
 
@@ -113,17 +157,19 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 string? directTextureFailureReason = null;
                 if (frame.IsValid
                     && string.Equals(frame.DeviceMode, "D3D12", StringComparison.OrdinalIgnoreCase)
-                    && _renderer.RenderNativeTextureFrame(frame, denoiseEnabled, denoiseStrength, out directTextureFailureReason))
+                    && _renderer.RenderNativeTextureFrame(frame, colorSettings, denoiseEnabled, denoiseStrength, out directTextureFailureReason))
                 {
                     ReportPreviewPath("direct DX12 texture");
+                    RecordRenderedFrame("direct DX12 texture", frame.MediaSubtype, frame.Width, frame.Height, frame.FramesPerSecond, denoiseEnabled, denoiseStrength, colorSettings, RecordingMode, null, frame.FrameNumber);
                     return;
                 }
 
                 string? sharedBridgeFailureReason = null;
                 if (frame.D3D12SharedTextureHandle != IntPtr.Zero
-                    && _renderer.RenderSharedD3D11BridgeFrame(frame, denoiseEnabled, denoiseStrength, out sharedBridgeFailureReason))
+                    && _renderer.RenderSharedD3D11BridgeFrame(frame, colorSettings, denoiseEnabled, denoiseStrength, out sharedBridgeFailureReason))
                 {
                     ReportPreviewPath("DX12 D3D11 bridge texture preview");
+                    RecordRenderedFrame("DX12 D3D11 bridge texture preview", frame.MediaSubtype, frame.Width, frame.Height, frame.FramesPerSecond, denoiseEnabled, denoiseStrength, colorSettings, RecordingMode, directTextureFailureReason, frame.FrameNumber);
                     return;
                 }
 
@@ -136,10 +182,13 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                         frame.Height,
                         frame.Nv12PreviewStride,
                         frame.FrameNumber,
+                        colorSettings,
                         denoiseEnabled,
                         denoiseStrength))
                     {
-                        ReportPreviewPath(FormatUploadFallbackPath("DX12 NV12 upload fallback", textureFailureReason));
+                        var path = FormatUploadFallbackPath("DX12 NV12 upload fallback", textureFailureReason);
+                        ReportPreviewPath(path);
+                        RecordRenderedFrame(path, "NV12 upload fallback", frame.Width, frame.Height, frame.FramesPerSecond, denoiseEnabled, denoiseStrength, colorSettings, RecordingMode, textureFailureReason, frame.FrameNumber);
                         return;
                     }
                 }
@@ -152,18 +201,24 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                         frame.Height,
                         frame.BgraPreviewStride,
                         frame.FrameNumber,
+                        colorSettings,
                         denoiseEnabled: denoiseEnabled,
                         denoiseStrength: denoiseStrength);
-                    ReportPreviewPath(FormatUploadFallbackPath("DX12 BGRA upload fallback", textureFailureReason));
+                    var path = FormatUploadFallbackPath("DX12 BGRA upload fallback", textureFailureReason);
+                    ReportPreviewPath(path);
+                    RecordRenderedFrame(path, "BGRA upload fallback", frame.Width, frame.Height, frame.FramesPerSecond, denoiseEnabled, denoiseStrength, colorSettings, RecordingMode, textureFailureReason, frame.FrameNumber);
                     return;
                 }
 
                 _renderer.RenderProofFrame(frame.FrameNumber);
-                ReportPreviewPath(FormatUploadFallbackPath("DX12 proof-frame fallback", textureFailureReason));
+                var proofPath = FormatUploadFallbackPath("DX12 proof-frame fallback", textureFailureReason);
+                ReportPreviewPath(proofPath);
+                RecordDroppedFrame();
             }
         }
         catch (Exception ex)
         {
+            RecordDroppedFrame();
             StatusChanged?.Invoke(this, $"DX12 camera frame upload failed: {ex.Message}");
         }
     }
@@ -223,10 +278,23 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                                     frame.Height,
                                     frame.Nv12Stride,
                                     frame.FrameNumber,
+                                    frame.ColorSettings,
                                     frame.DenoiseEnabled,
                                     frame.DenoiseStrength))
                                 {
                                     ReportPreviewPath("DX12 NV12 upload preview");
+                                    RecordRenderedFrame(
+                                        "DX12 NV12 upload preview",
+                                        frame.FrameFormat,
+                                        frame.Width,
+                                        frame.Height,
+                                        0d,
+                                        frame.DenoiseEnabled,
+                                        frame.DenoiseStrength,
+                                        frame.ColorSettings,
+                                        RecordingMode,
+                                        null,
+                                        frame.FrameNumber);
                                     continue;
                                 }
 
@@ -253,9 +321,22 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                         }
 
                         ReportPreviewPath("DX12 BGRA upload preview");
+                        RecordRenderedFrame(
+                            "DX12 BGRA upload preview",
+                            frame.FrameFormat,
+                            frame.Width,
+                            frame.Height,
+                            0d,
+                            frame.DenoiseEnabled,
+                            frame.DenoiseStrength,
+                            frame.ColorSettings,
+                            RecordingMode,
+                            null,
+                            frame.FrameNumber);
                     }
                     catch (Exception ex)
                     {
+                        RecordDroppedFrame();
                         StatusChanged?.Invoke(this, $"DX12 BGRA preview upload failed: {ex.Message}");
                     }
                 }
@@ -289,10 +370,74 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
         int Stride,
         byte[]? Nv12Bytes,
         int Nv12Stride,
+        string FrameFormat,
         VideoFrameColorSettings ColorSettings,
         bool DenoiseEnabled,
         double DenoiseStrength,
         long FrameNumber);
+
+    private void RecordSubmittedFrame()
+    {
+        Interlocked.Increment(ref _submittedFrames);
+    }
+
+    private void RecordDroppedFrame()
+    {
+        Interlocked.Increment(ref _droppedFrames);
+    }
+
+    private void RecordRenderedFrame(
+        string previewPath,
+        string frameFormat,
+        int width,
+        int height,
+        double sourceFramesPerSecond,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        VideoFrameColorSettings colorSettings,
+        string recordingMode,
+        string? fallbackReason,
+        long frameNumber)
+    {
+        var rendered = Interlocked.Increment(ref _renderedFrames);
+        var submitted = Interlocked.Read(ref _submittedFrames);
+        var dropped = Interlocked.Read(ref _droppedFrames);
+        var now = DateTimeOffset.UtcNow;
+        Direct3D12PreviewDiagnostics snapshot;
+        lock (_diagnosticsLock)
+        {
+            var elapsed = now - _diagnosticsFpsWindowStartUtc;
+            if (elapsed.TotalSeconds >= 1d)
+            {
+                var framesSinceWindowStart = Math.Max(0, rendered - _diagnosticsFpsWindowStartRenderedFrames);
+                _renderFramesPerSecond = framesSinceWindowStart / Math.Max(0.001d, elapsed.TotalSeconds);
+                _diagnosticsFpsWindowStartUtc = now;
+                _diagnosticsFpsWindowStartRenderedFrames = rendered;
+            }
+
+            snapshot = new Direct3D12PreviewDiagnostics(
+                previewPath,
+                DeviceDescription,
+                string.IsNullOrWhiteSpace(frameFormat) ? "unknown" : frameFormat,
+                width,
+                height,
+                sourceFramesPerSecond,
+                submitted,
+                rendered,
+                dropped,
+                _renderFramesPerSecond,
+                denoiseEnabled,
+                denoiseStrength,
+                colorSettings.HasVisibleAdjustments,
+                recordingMode,
+                fallbackReason,
+                frameNumber,
+                now);
+            _diagnostics = snapshot;
+        }
+
+        DiagnosticsChanged?.Invoke(this, snapshot);
+    }
 
     private static string FormatUploadFallbackPath(string path, string? directTextureFailureReason)
     {
@@ -616,6 +761,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             int height,
             int stride,
             long frameNumber,
+            VideoFrameColorSettings colorSettings,
             bool denoiseEnabled,
             double denoiseStrength)
         {
@@ -633,7 +779,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 Resize(width, height);
             }
 
-            var rendered = TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, denoiseEnabled, denoiseStrength);
+            var rendered = TryRenderNv12FrameWithShader(nv12Bytes, width, height, stride, colorSettings, denoiseEnabled, denoiseStrength);
             if (rendered)
             {
                 _nv12PreviewFailureReason = null;
@@ -644,6 +790,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
 
         public bool RenderNativeTextureFrame(
             TextureNativeFrameLease frame,
+            VideoFrameColorSettings colorSettings,
             bool denoiseEnabled,
             double denoiseStrength,
             out string? failureReason)
@@ -694,7 +841,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             {
                 Marshal.AddRef(frame.Resource);
                 using var nativeResource = new ID3D12Resource(frame.Resource);
-                RenderNativeNv12Resource(nativeResource, frame.Width, frame.Height, denoiseEnabled, denoiseStrength);
+                RenderNativeNv12Resource(nativeResource, frame.Width, frame.Height, colorSettings, denoiseEnabled, denoiseStrength);
                 _nativeTexturePreviewFailureReason = null;
                 return true;
             }
@@ -709,6 +856,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
 
         public bool RenderSharedD3D11BridgeFrame(
             TextureNativeFrameLease frame,
+            VideoFrameColorSettings colorSettings,
             bool denoiseEnabled,
             double denoiseStrength,
             out string? failureReason)
@@ -752,7 +900,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             try
             {
                 using var sharedResource = _device.OpenSharedHandle<ID3D12Resource>(frame.D3D12SharedTextureHandle);
-                RenderNativeNv12Resource(sharedResource, frame.Width, frame.Height, denoiseEnabled, denoiseStrength);
+                RenderNativeNv12Resource(sharedResource, frame.Width, frame.Height, colorSettings, denoiseEnabled, denoiseStrength);
                 WaitForGpu();
                 _sharedD3D11BridgePreviewFailureReason = null;
                 return true;
@@ -770,6 +918,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             ID3D12Resource cameraResource,
             int width,
             int height,
+            VideoFrameColorSettings colorSettings,
             bool denoiseEnabled,
             double denoiseStrength)
         {
@@ -816,7 +965,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             _commandList.SetPipelineState(_nv12PreviewPipelineState);
             _commandList.SetDescriptorHeaps([_srvHeap]);
             _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
-            SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
+            SetNv12ShaderConstants(width, height, colorSettings, denoiseEnabled, denoiseStrength);
             var viewport = new Viewport(0, 0, _width, _height);
             var scissor = new RawRect(0, 0, _width, _height);
             _commandList.RSSetViewports(viewport);
@@ -842,6 +991,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             int width,
             int height,
             int stride,
+            VideoFrameColorSettings colorSettings,
             bool denoiseEnabled,
             double denoiseStrength)
         {
@@ -928,7 +1078,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 _commandList.SetPipelineState(_nv12PreviewPipelineState);
                 _commandList.SetDescriptorHeaps([_srvHeap]);
                 _commandList.SetGraphicsRootDescriptorTable(0, GetSrvGpuHandle(1));
-                SetNv12DenoiseConstants(width, height, denoiseEnabled, denoiseStrength);
+                SetNv12ShaderConstants(width, height, colorSettings, denoiseEnabled, denoiseStrength);
                 var viewport = new Viewport(0, 0, _width, _height);
                 var scissor = new RawRect(0, 0, _width, _height);
                 _commandList.RSSetViewports(viewport);
@@ -1390,15 +1540,25 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             }
         }
 
-        private void SetNv12DenoiseConstants(int width, int height, bool denoiseEnabled, double denoiseStrength)
+        private void SetNv12ShaderConstants(
+            int width,
+            int height,
+            VideoFrameColorSettings colorSettings,
+            bool denoiseEnabled,
+            double denoiseStrength)
         {
+            var hasColor = colorSettings.HasVisibleAdjustments;
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(hasColor ? (float)(Math.Clamp(colorSettings.Exposure, -30d, 30d) * 2.2d) : 0f), 0);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(hasColor ? (float)(1d + Math.Clamp(colorSettings.Contrast, -40d, 40d) / 100d) : 1f), 1);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(hasColor ? (float)(1d + Math.Clamp(colorSettings.Saturation, -40d, 40d) / 100d) : 1f), 2);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(hasColor ? (float)(Math.Clamp(colorSettings.Warmth, -40d, 40d) * 0.9d) : 0f), 3);
             var strength = (float)Math.Clamp(denoiseStrength, 0.5d, 5d);
             var amount = denoiseEnabled ? Math.Clamp(0.08f + strength * 0.11f, 0.14f, 0.58f) : 0f;
             var edgeThreshold = denoiseEnabled ? Math.Clamp(0.018f + strength * 0.006f, 0.024f, 0.052f) : 0f;
-            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(amount), 0);
-            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(edgeThreshold), 1);
-            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(1f / Math.Max(1, width)), 2);
-            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(1f / Math.Max(1, height)), 3);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(amount), 4);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(edgeThreshold), 5);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(1f / Math.Max(1, width)), 6);
+            _commandList.SetGraphicsRoot32BitConstant(1, BitConverter.SingleToUInt32Bits(1f / Math.Max(1, height)), 7);
         }
 
         private void TryCreatePreviewShaderPipeline()
@@ -1477,7 +1637,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 var parameters = new[]
                 {
                     new RootParameter(new RootDescriptorTable(ranges), ShaderVisibility.Pixel),
-                    new RootParameter(new RootConstants(0, 0, 4), ShaderVisibility.Pixel)
+                    new RootParameter(new RootConstants(0, 0, 8), ShaderVisibility.Pixel)
                 };
                 var samplers = new[]
                 {
@@ -1649,8 +1809,12 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
             Texture2D<float2> CameraChroma : register(t1);
             SamplerState CameraSampler : register(s0);
 
-            cbuffer DenoiseSettings : register(b0)
+            cbuffer Nv12PreviewSettings : register(b0)
             {
+                float ExposureOffset;
+                float Contrast;
+                float Saturation;
+                float Warmth;
                 float DenoiseAmount;
                 float DenoiseEdgeThreshold;
                 float TexelWidth;
@@ -1728,6 +1892,18 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                 return lerp(centerY, smoothedY, DenoiseAmount);
             }
 
+            float3 ApplyColorPolish(float3 rgb)
+            {
+                float3 rgb255 = rgb * 255.0;
+                rgb255.r = ((rgb255.r + ExposureOffset + Warmth - 128.0) * Contrast) + 128.0;
+                rgb255.g = ((rgb255.g + ExposureOffset - 128.0) * Contrast) + 128.0;
+                rgb255.b = ((rgb255.b + ExposureOffset - Warmth - 128.0) * Contrast) + 128.0;
+
+                float luma = dot(rgb255, float3(0.2126, 0.7152, 0.0722));
+                rgb255 = luma + (rgb255 - luma) * Saturation;
+                return saturate(rgb255 / 255.0);
+            }
+
             float4 PSMain(VertexOutput input) : SV_TARGET
             {
                 float y = NormalizeLuma(CameraLuma.Sample(CameraSampler, input.TexCoord));
@@ -1737,7 +1913,7 @@ public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, IDisposable
                     y + 1.5748 * uv.y,
                     y - 0.1873 * uv.x - 0.4681 * uv.y,
                     y + 1.8556 * uv.x);
-                return float4(saturate(rgb), 1.0);
+                return float4(ApplyColorPolish(saturate(rgb)), 1.0);
             }
             """;
 
