@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Capture;
 
 public sealed class SignalGeneratorCapture : IWaveIn, IDisposable
 {

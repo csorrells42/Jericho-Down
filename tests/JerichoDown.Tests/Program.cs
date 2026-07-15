@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Capture;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Recording;
@@ -1384,6 +1385,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`", StringComparison.Ordinal), "module index should record migrated visualization data ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
+    Assert(moduleIndex.Contains("Audio/Capture` owns `ProcessLoopbackCapture` and `SignalGeneratorCapture`", StringComparison.Ordinal), "module index should record migrated audio capture source ownership");
     Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
@@ -1414,6 +1416,15 @@ static void ModuleReadmesDefineOwnership()
     Assert(spectrumFrame.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame should live in the Visualization module namespace");
     Assert(spectrumFrameRouter.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame router should live in the Visualization module namespace");
     Assert(feedbackDangerDetector.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "feedback detector should live in the Visualization module namespace");
+
+    var audioCaptureReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "README.md")));
+    var processLoopbackCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
+    var signalGeneratorCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "SignalGeneratorCapture.cs")));
+    Assert(audioCaptureReadme.Contains("ProcessLoopbackCapture.cs", StringComparison.Ordinal), "Audio capture docs should name migrated process-loopback capture ownership");
+    Assert(audioCaptureReadme.Contains("SignalGeneratorCapture.cs", StringComparison.Ordinal), "Audio capture docs should name migrated signal-generator capture ownership");
+    Assert(audioCaptureReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio capture docs should name the live audio service consumer");
+    Assert(processLoopbackCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "process-loopback capture should live in the Audio Capture module namespace");
+    Assert(signalGeneratorCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "signal-generator capture should live in the Audio Capture module namespace");
 
     var audioDevicesReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "README.md")));
     var audioDeviceSources = new[]
@@ -2517,7 +2528,7 @@ static void AppAudioLoopbackRoutesThroughMixerCapturePath()
     Assert(AudioInputDevice.TryGetProcessLoopbackTargetProcessId(appInput.DeviceNumber, appInput.EndpointId, out var processId), "app audio loopback should round-trip its target process ID");
     Assert(processId == 4242, "app audio loopback should preserve the selected target process ID");
 
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
     Assert(captureSource.Contains(@"VAD\Process_Loopback", StringComparison.Ordinal), "process loopback capture should activate the Windows virtual process-loopback device");
     Assert(captureSource.Contains("ActivateAudioInterfaceAsync", StringComparison.Ordinal), "process loopback capture should use the Windows async audio interface activation API");
     Assert(captureSource.Contains("IncludeTargetProcessTree", StringComparison.Ordinal), "process loopback capture should include the selected app process tree");
@@ -2530,7 +2541,7 @@ static void AppAudioLoopbackRoutesThroughMixerCapturePath()
 
 static void LoopbackCapturesShutDownWithoutZombieWorkers()
 {
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
     Assert(captureSource.Contains("IsBackground = true", StringComparison.Ordinal), "process loopback capture should not keep the app process alive if Windows audio is slow to stop");
     Assert(captureSource.Contains("captureThread.Join(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
     Assert(captureSource.Contains("ReleaseAudioClient();", StringComparison.Ordinal), "process loopback capture should release Windows audio clients on stop and dispose");
@@ -2669,7 +2680,7 @@ static void NAudioStereoTestToneRoutesThroughMixerInputs()
     SignalGeneratorCapture.ApplyAlternatingStereoGate(samples, channelCount: 2, sampleRate: 2, startingFrame: 0);
     AssertSequenceEqual([1f, 0f, 1f, 0f, 0f, 1f, 0f, 1f], samples, "stereo test tone should alternate between left and right channels");
 
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SignalGeneratorCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "SignalGeneratorCapture.cs")));
     Assert(captureSource.Contains("SignalGenerator", StringComparison.Ordinal), "stereo test tone should use NAudio SignalGenerator");
     Assert(captureSource.Contains("SignalGeneratorType.Sin", StringComparison.Ordinal), "stereo test tone should use a sine reference tone");
 

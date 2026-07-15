@@ -4,6 +4,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave.SampleProviders;
 using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Capture;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Audio.Recording;
