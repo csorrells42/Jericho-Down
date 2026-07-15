@@ -27,22 +27,20 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam`: reusable webcam facade, camera device vocabulary, controls, preview policy, recording policy, profiles, frame/color helpers, and camera status text.
 - `Webcam/MediaFoundation`: Media Foundation camera enumeration, modes, source readers, and video writing.
 - `Webcam/DirectShow`: DirectShow camera enumeration, controls, and fallback preview capture.
-- `Webcam/Dx12`: DX12 preview host, texture-native camera stream, GPU denoise/color polish, preview presenter contract, and GPU preview diagnostics.
+- `Webcam/Dx12`: DX12 preview host, webcam-local viewport host, texture-native camera stream, GPU denoise/color polish, preview presenter contract, and GPU preview diagnostics.
 - `Webcam/Dx11Bridge`: D3D11 bridge code used when camera frames need to cross into DX12 rendering.
-- `DirectX12Viewport`: reusable WPF child-window viewport plumbing for DX12 swap-chain renderers.
 - `SessionPlayback`: playback and cataloging of saved podcast sessions, including MP4 video pacing, sidecar WAV audio selection, session folder naming, and recording set numbering.
 - `Karaoke`: worship track playback, lyrics, queueing, vocal recording, and lyric generation support.
 - `Midi`: MIDI device catalog, file playback planning, monitoring, output, and control mappings.
 - `Help`: About, verification, and tab-specific guide assets.
 - `Visualization`: spectrum, waveform, waterfall, and non-camera graph ownership.
-- `Visualization/Dx12`: DX12 audio graph rendering and retained graph history.
+- `Visualization/Dx12`: DX12 audio graph rendering, visualization-local viewport host, and retained graph history.
 
 The DX12 code is currently split by use case:
-- `DirectX12Viewport` owns reusable WPF/DX12 viewport hosting.
-- `Webcam/Dx12` owns camera/video preview surfaces and GPU camera processing.
+- `Webcam/Dx12` owns camera/video preview surfaces, its local WPF/DX12 viewport host, and GPU camera processing.
 - `Visualization/Dx12` owns audio waveform, spectrum, waterfall, and retained graph rendering.
 
-Keep visual content separate from the reusable viewport: camera frames and audio graphs can use the same viewport host without sharing renderer logic.
+Keep visual content and viewport plumbing inside the owning module: camera frames travel with `Webcam/Dx12`, and audio graphs travel with `Visualization/Dx12`.
 
 ## Migration Status
 
@@ -59,10 +57,9 @@ Keep visual content separate from the reusable viewport: camera frames and audio
 - `Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`.
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
 - `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
-- `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Direct3D12PreviewDiagnostics`, `ICameraPreviewPresenter`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
-- `DirectX12Viewport` owns `DirectX12ViewportHost`, the reusable WPF child-window host used by DX12 renderers.
+- `Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Direct3D12PreviewDiagnostics`, `ICameraPreviewPresenter`, `WebcamDirectX12ViewportHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`.
 - `Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`.
-- `Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`.
+- `Visualization/Dx12` owns `Direct3D12AudioGraphHost`, `Direct3D12AudioGraphMode`, and `VisualizationDirectX12ViewportHost`.
 - `Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`.
 - `Audio/Capture` owns `ProcessLoopbackCapture` and `SignalGeneratorCapture`.
 - `Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`.

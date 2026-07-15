@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Threading;
-using JerichoDown.Modules.DirectX12Viewport;
 using JerichoDown.Modules.Visualization;
 using SharpGen.Runtime;
 using Vortice;
@@ -22,7 +21,7 @@ public enum Direct3D12AudioGraphMode
     MicrophoneSpectrumLines
 }
 
-public sealed class Direct3D12AudioGraphHost : DirectX12ViewportHost, IDisposable
+public sealed class Direct3D12AudioGraphHost : VisualizationDirectX12ViewportHost, IDisposable
 {
     public const int DefaultWaterfallLinesPerGap = 8;
     public const int MinimumWaterfallLinesPerGap = 0;

@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Threading;
-using JerichoDown.Modules.DirectX12Viewport;
 using JerichoDown.Modules.Webcam;
 using SharpGen.Runtime;
 using Vortice;
@@ -14,7 +13,7 @@ using static Vortice.DXGI.DXGI;
 
 namespace JerichoDown.Modules.Webcam.Dx12;
 
-public sealed class Direct3D12PreviewHost : DirectX12ViewportHost, ICameraPreviewPresenter
+public sealed class Direct3D12PreviewHost : WebcamDirectX12ViewportHost, ICameraPreviewPresenter
 {
     private static readonly TimeSpan RendererDisposeLockTimeout = TimeSpan.FromMilliseconds(250);
 

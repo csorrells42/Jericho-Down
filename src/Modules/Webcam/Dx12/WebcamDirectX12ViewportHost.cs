@@ -2,9 +2,9 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
-namespace JerichoDown.Modules.DirectX12Viewport;
+namespace JerichoDown.Modules.Webcam.Dx12;
 
-public abstract class DirectX12ViewportHost : HwndHost
+public abstract class WebcamDirectX12ViewportHost : HwndHost
 {
     private const int WsChild = 0x40000000;
     private const int WsVisible = 0x10000000;
@@ -17,12 +17,29 @@ public abstract class DirectX12ViewportHost : HwndHost
     private readonly string _childWindowFailureMessage;
     private readonly bool _useBlackBackground;
     private IntPtr _viewportHandle;
+    private int _viewportPixelWidth;
+    private int _viewportPixelHeight;
+    private DateTimeOffset? _viewportCreatedUtc;
 
-    protected DirectX12ViewportHost(string childWindowFailureMessage, bool useBlackBackground = false)
+    protected WebcamDirectX12ViewportHost(
+        string childWindowFailureMessage = "Could not create webcam DX12 preview child window.",
+        bool useBlackBackground = true)
     {
         _childWindowFailureMessage = childWindowFailureMessage;
         _useBlackBackground = useBlackBackground;
     }
+
+    public bool IsViewportCreated => _viewportHandle != IntPtr.Zero;
+
+    public int ViewportPixelWidth => _viewportPixelWidth;
+
+    public int ViewportPixelHeight => _viewportPixelHeight;
+
+    public DateTimeOffset? ViewportCreatedUtc => _viewportCreatedUtc;
+
+    public string ViewportStateDescription => IsViewportCreated
+        ? $"webcam DX12 viewport {_viewportPixelWidth}x{_viewportPixelHeight}"
+        : "webcam DX12 viewport not created";
 
     protected IntPtr ViewportHandle => _viewportHandle;
 
@@ -56,8 +73,13 @@ public abstract class DirectX12ViewportHost : HwndHost
 
         if (_viewportHandle == IntPtr.Zero)
         {
-            throw new InvalidOperationException(_childWindowFailureMessage);
+            var lastError = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException($"{_childWindowFailureMessage} Win32 error: {lastError}.");
         }
+
+        _viewportPixelWidth = width;
+        _viewportPixelHeight = height;
+        _viewportCreatedUtc = DateTimeOffset.UtcNow;
 
         try
         {
@@ -85,6 +107,9 @@ public abstract class DirectX12ViewportHost : HwndHost
             }
 
             _viewportHandle = IntPtr.Zero;
+            _viewportPixelWidth = 0;
+            _viewportPixelHeight = 0;
+            _viewportCreatedUtc = null;
         }
     }
 
@@ -99,6 +124,9 @@ public abstract class DirectX12ViewportHost : HwndHost
         var width = ViewportWidth;
         var height = ViewportHeight;
         SetWindowPos(_viewportHandle, IntPtr.Zero, 0, 0, width, height, SwpNoZOrder | SwpNoActivate);
+        _viewportPixelWidth = width;
+        _viewportPixelHeight = height;
+
         try
         {
             OnViewportResized(width, height);
@@ -117,12 +145,12 @@ public abstract class DirectX12ViewportHost : HwndHost
 
     protected virtual void OnViewportCreateFailed(Exception ex)
     {
-        throw new InvalidOperationException("DirectX12 viewport initialization failed.", ex);
+        throw new InvalidOperationException("Webcam DX12 viewport initialization failed.", ex);
     }
 
     protected virtual void OnViewportResizeFailed(Exception ex)
     {
-        throw new InvalidOperationException("DirectX12 viewport resize failed.", ex);
+        throw new InvalidOperationException("Webcam DX12 viewport resize failed.", ex);
     }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
