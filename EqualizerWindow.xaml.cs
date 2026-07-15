@@ -26,6 +26,7 @@ using System.Windows.Threading;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.SessionPlayback;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.DirectShow;

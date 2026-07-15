@@ -9,10 +9,13 @@ Current responsibilities:
 - Keep ASIO objects on the STA dispatcher with a Windows message pump.
 - Produce diagnostics that distinguish no-callback driver failures from silent input.
 
-Current legacy files:
-- `Audio/AsioInputCapture.cs`
-- `Audio/AsioCallbackProbe.cs`
-- `Audio/StaThreadDispatcher.cs`
+Current entry points:
+- `AsioInputCapture.cs`
+- `AsioCallbackProbe.cs`
+- `AsioOutputPlayer.cs`
+- `StaThreadDispatcher.cs`
+
+Current legacy integration points:
 - ASIO sections of `Audio/MicrophoneSpectrumService.cs`
 - ASIO sections of `Audio/AudioDeviceDiagnostics.cs`
 

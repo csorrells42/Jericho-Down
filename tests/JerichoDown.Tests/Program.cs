@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using JerichoDown;
 using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Webcam;
 using JerichoDown.Modules.Webcam.Dx12;
 using JerichoDown.Modules.Visualization.Dx12;
@@ -1374,6 +1375,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
     Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
+    Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1384,6 +1386,20 @@ static void ModuleReadmesDefineOwnership()
     var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
     Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
     Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+
+    var audioAsioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "README.md")));
+    var asioInputCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
+    var asioCallbackProbe = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioCallbackProbe.cs")));
+    var asioOutputPlayer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioOutputPlayer.cs")));
+    var staThreadDispatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "StaThreadDispatcher.cs")));
+    Assert(audioAsioReadme.Contains("AsioInputCapture.cs", StringComparison.Ordinal), "ASIO docs should name migrated input capture ownership");
+    Assert(audioAsioReadme.Contains("AsioCallbackProbe.cs", StringComparison.Ordinal), "ASIO docs should name migrated callback probe ownership");
+    Assert(audioAsioReadme.Contains("AsioOutputPlayer.cs", StringComparison.Ordinal), "ASIO docs should name migrated output player ownership");
+    Assert(audioAsioReadme.Contains("StaThreadDispatcher.cs", StringComparison.Ordinal), "ASIO docs should name migrated STA dispatcher ownership");
+    Assert(asioInputCapture.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO input capture should live in the Audio ASIO module namespace");
+    Assert(asioCallbackProbe.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO callback probe should live in the Audio ASIO module namespace");
+    Assert(asioOutputPlayer.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO output player should live in the Audio ASIO module namespace");
+    Assert(staThreadDispatcher.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO STA dispatcher should live in the Audio ASIO module namespace");
 
     var visualizationDx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "README.md")));
     var direct3D12AudioGraphHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
@@ -1828,7 +1844,7 @@ static void AsioCallbackTestExposesDriverModes()
 {
     var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
     var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var probeSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AsioCallbackProbe.cs")));
+    var probeSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioCallbackProbe.cs")));
 
     Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose an ASIO callback test");
     Assert(windowCode.Contains("AsioCallbackTestMenuClicked", StringComparison.Ordinal), "ASIO callback test menu item should have a handler");
@@ -1934,7 +1950,7 @@ static void AsioInputStartupAvoidsPreOpenProbe()
 
 static void AsioStaDispatcherPumpsWindowsMessages()
 {
-    var dispatcherSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "StaThreadDispatcher.cs")));
+    var dispatcherSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "StaThreadDispatcher.cs")));
     Assert(dispatcherSource.Contains("using System.Windows.Threading;", StringComparison.Ordinal), "ASIO STA helper should use WPF Dispatcher infrastructure");
     Assert(dispatcherSource.Contains("Dispatcher.CurrentDispatcher", StringComparison.Ordinal), "ASIO STA helper should create a dispatcher on its dedicated thread");
     Assert(dispatcherSource.Contains("new DispatcherSynchronizationContext(dispatcher)", StringComparison.Ordinal), "ASIO STA helper should install a synchronization context before creating NAudio ASIO objects");
@@ -2005,7 +2021,7 @@ static void AsioNoCallbackStateClearsStaleGraphs()
 
 static void AsioInputCaptureUsesRecordOnlyLiveMode()
 {
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AsioInputCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
     var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
     var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
 

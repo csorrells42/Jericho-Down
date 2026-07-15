@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Asio;
 
 public sealed class AsioOutputPlayer : IWavePlayer
 {

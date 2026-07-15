@@ -3,6 +3,7 @@ using NAudio.Wave;
 using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave.SampleProviders;
+using JerichoDown.Modules.Audio.Asio;
 using System.Buffers;
 using System.IO;
 using System.Runtime.InteropServices;

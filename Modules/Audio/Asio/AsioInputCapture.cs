@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Asio;
 
 public sealed class AsioInputCapture : IWaveIn
 {

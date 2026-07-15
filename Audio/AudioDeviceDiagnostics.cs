@@ -1,4 +1,5 @@
 using System.Text;
+using JerichoDown.Modules.Audio.Asio;
 using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave;

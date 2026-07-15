@@ -1,7 +1,7 @@
 using System.Runtime.ExceptionServices;
 using System.Windows.Threading;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Asio;
 
 internal sealed class StaThreadDispatcher : IDisposable
 {

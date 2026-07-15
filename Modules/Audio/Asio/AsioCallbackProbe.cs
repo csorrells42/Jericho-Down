@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 using NAudio.Wave;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Asio;
 
 public static class AsioCallbackProbe
 {
