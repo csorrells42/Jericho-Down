@@ -1410,7 +1410,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Audio/Diagnostics` owns `AudioDeviceDiagnostics`", StringComparison.Ordinal), "module index should record migrated audio diagnostics ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
     Assert(moduleIndex.Contains("Audio/Live` owns `MicrophoneSpectrumService`", StringComparison.Ordinal), "module index should record migrated live audio service ownership");
-    Assert(moduleIndex.Contains("Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
+    Assert(moduleIndex.Contains("Audio/Recording` owns `AudioRecordingCatalog`, `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
     Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
     Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
@@ -1550,17 +1550,21 @@ static void ModuleReadmesDefineOwnership()
     var audioRecordingReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "README.md")));
     var audioRecordingSources = new[]
     {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingCatalog.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedRecordingSource.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedAudioSampleConverter.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioFileAnalyzer.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingExporter.cs")))
     };
+    Assert(audioRecordingReadme.Contains("AudioRecordingCatalog.cs", StringComparison.Ordinal), "Audio recording docs should name migrated recording catalog ownership");
     Assert(audioRecordingReadme.Contains("ProcessedRecordingSource.cs", StringComparison.Ordinal), "Audio recording docs should name migrated recording source ownership");
     Assert(audioRecordingReadme.Contains("ProcessedAudioSampleConverter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated sample converter ownership");
     Assert(audioRecordingReadme.Contains("AudioFileAnalyzer.cs", StringComparison.Ordinal), "Audio recording docs should name migrated analyzer ownership");
     Assert(audioRecordingReadme.Contains("AudioRecordingExporter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated exporter ownership");
     Assert(audioRecordingReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio recording docs should name the live audio service consumer");
     Assert(audioRecordingSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Recording;", StringComparison.Ordinal)), "Audio recording helpers should live in the Audio Recording module namespace");
+    Assert(audioRecordingSources[0].Contains("public static class AudioRecordingCatalog", StringComparison.Ordinal), "Audio recording catalog should be a module entry point");
+    Assert(audioRecordingSources[0].Contains("public sealed record AudioRecordingFileItem", StringComparison.Ordinal), "Audio recording catalog should expose browser item records");
 
     var mixerReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "README.md")));
     var mixerSources = new[]
@@ -3006,15 +3010,10 @@ static void PrimaryCaptureSelectorMatchesAsioEndpoint()
 
 static void AudioRecordingFilenamesIdentifySelectedSource()
 {
-    var method = typeof(EqualizerWindow).GetMethod(
-        "CreateAudioRecordingFileName",
-        BindingFlags.NonPublic | BindingFlags.Static);
-    Assert(method is not null, "audio recording filename helper should be available");
-
     var timestamp = new DateTime(2026, 7, 9, 14, 3, 5);
-    var program = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.ProgramMix, 3])!;
-    var processed = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicProcessed, 3])!;
-    var raw = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicRawBackup, 3])!;
+    var program = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.ProgramMix, 3);
+    var processed = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.SelectedMicProcessed, 3);
+    var raw = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.SelectedMicRawBackup, 3);
 
     Assert(program == "jericho_program_mix_2026-07-09_14-03-05.wav", "program mix recordings should be clearly named");
     Assert(processed == "jericho_mic3_processed_2026-07-09_14-03-05.wav", "selected processed mic recordings should identify the mic");
@@ -4561,10 +4560,11 @@ static void NAudioFileAnalyzerReportsRecordingQualityDetails()
         Assert(silentWindowAnalysis.LeadingSilence <= TimeSpan.FromMilliseconds(85), "silent bounded windows should report silence for the scanned window, not the full file");
 
         var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "AppShell", "EqualizerWindow.xaml.cs")));
-        Assert(windowCode.Contains("CreateAudioRecordingFileItem", StringComparison.Ordinal), "recording browser should create analyzed file rows");
+        var recordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingCatalog.cs")));
+        Assert(windowCode.Contains("AudioRecordingCatalog.EnumerateRecordingFiles", StringComparison.Ordinal), "recording browser should delegate file rows to the recording catalog");
         Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis rows");
         Assert(windowCode.Contains("EagerRecordingAnalysisDuration", StringComparison.Ordinal), "recording browser should cap eager analysis duration");
-        Assert(windowCode.Contains("AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, EagerRecordingAnalysisDuration)", StringComparison.Ordinal), "recording browser should use bounded NAudio analysis for eager file rows");
+        Assert(recordingCatalog.Contains("AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, eagerAnalysisDuration)", StringComparison.Ordinal), "recording catalog should use bounded NAudio analysis for eager file rows");
     }
     finally
     {
@@ -4856,13 +4856,13 @@ static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
     foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".flac", ".aiff", ".aif", ".wma" })
     {
         var path = Path.Combine(Path.GetTempPath(), "recording" + extension);
-        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", path);
+        var isSupported = AudioRecordingCatalog.IsSupportedRecordingFile(path);
 
         Assert(isSupported, $"{extension} should be accepted by the recording browser playback filter");
     }
 
     var protectedPath = Path.Combine(Path.GetTempPath(), "recording.m4p");
-    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", protectedPath), "M4P should not be accepted as a recording playback format");
+    Assert(!AudioRecordingCatalog.IsSupportedRecordingFile(protectedPath), "M4P should not be accepted as a recording playback format");
 }
 
 static void AudioRecordingExporterSupportsCompressedTargets()

@@ -89,18 +89,6 @@ public partial class EqualizerWindow : Window
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
     private static readonly string KaraokeTrackOpenFileFilter = KaraokePlaybackPolicy.CreateOpenFileFilter();
-    private static readonly string[] SupportedAudioRecordingExtensions =
-    [
-        ".wav",
-        ".mp3",
-        ".m4a",
-        ".aac",
-        ".mp4",
-        ".flac",
-        ".aiff",
-        ".aif",
-        ".wma"
-    ];
     private static readonly string UserPresetFolder = AppStoragePaths.UserPresetFolder;
     private static readonly string CameraProfileFolder = AppStoragePaths.CameraProfileFolder;
     private static readonly string KaraokeAiToolsFolder = System.IO.Path.Combine(AppStoragePaths.SettingsFolder, "Tools", "KaraokeAi");
@@ -4092,7 +4080,7 @@ public partial class EqualizerWindow : Window
             var selectedPath = GetSelectedAudioRecordingPath();
             if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
             {
-                if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder, SupportedAudioRecordingExtensions))
+                if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder, AudioRecordingCatalog.SupportedRecordingExtensions))
                 {
                     AudioRecordingStatusText.Text = "Open location blocked: selected recording is outside the recording folder.";
                     return;
@@ -4123,7 +4111,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder, SupportedAudioRecordingExtensions))
+        if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder, AudioRecordingCatalog.SupportedRecordingExtensions))
         {
             AudioRecordingStatusText.Text = "Delete blocked: selected recording is outside the recording folder.";
             return;
@@ -6298,35 +6286,13 @@ public partial class EqualizerWindow : Window
         }
     }
 
-    private static string CreateAudioRecordingFileName(
-        DateTime timestamp,
-        ProcessedRecordingSource source,
-        int channelNumber)
-    {
-        var sourceSlug = source switch
-        {
-            ProcessedRecordingSource.SelectedMicProcessed => $"mic{Math.Max(1, channelNumber)}_processed",
-            ProcessedRecordingSource.SelectedMicRawBackup => $"mic{Math.Max(1, channelNumber)}_raw_backup",
-            _ => "program_mix"
-        };
-
-        return $"jericho_{sourceSlug}_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
-    }
-
     private string CreateAudioRecordingFilePath(DateTime timestamp)
     {
-        Directory.CreateDirectory(_audioRecordingFolder);
-        var baseName = System.IO.Path.GetFileNameWithoutExtension(CreateAudioRecordingFileName(
+        return AudioRecordingCatalog.CreateRecordingFilePath(
+            _audioRecordingFolder,
             timestamp,
             _audioRecordingSource,
-            _activeMicChannel?.ChannelNumber ?? 1));
-        var path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}.wav");
-        for (var attempt = 1; File.Exists(path) && attempt < 100; attempt++)
-        {
-            path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}_{attempt:00}.wav");
-        }
-
-        return path;
+            _activeMicChannel?.ChannelNumber ?? 1);
     }
 
     private void SpectrumViewClicked(object sender, RoutedEventArgs e)
@@ -8430,7 +8396,7 @@ public partial class EqualizerWindow : Window
             }
 
             return File.Exists(path)
-                ? FormatFileSize(new FileInfo(path).Length)
+                ? AudioRecordingCatalog.FormatFileSize(new FileInfo(path).Length)
                 : "folder OK";
         }
         catch
@@ -12762,7 +12728,7 @@ public partial class EqualizerWindow : Window
             var selectedPath = GetSelectedKaraokeRecordingPath();
             if (!string.IsNullOrWhiteSpace(selectedPath) && File.Exists(selectedPath))
             {
-                if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _karaokeRecordingFolder, SupportedAudioRecordingExtensions))
+                if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _karaokeRecordingFolder, AudioRecordingCatalog.SupportedRecordingExtensions))
                 {
                     KaraokeVocalStatusText.Text = "Open location blocked: selected karaoke recording is outside the recording folder.";
                     return;
@@ -12793,7 +12759,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
-        if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _karaokeRecordingFolder, SupportedAudioRecordingExtensions))
+        if (!PathSafety.IsRegularFileUnderFolder(selectedPath, _karaokeRecordingFolder, AudioRecordingCatalog.SupportedRecordingExtensions))
         {
             KaraokeVocalStatusText.Text = "Delete blocked: selected karaoke recording is outside the recording folder.";
             return;
@@ -15447,7 +15413,7 @@ public partial class EqualizerWindow : Window
                 _audioRecordingFolder,
                 includeSubdirectories: false,
                 NotifyFilters.FileName | NotifyFilters.CreationTime,
-                IsSupportedAudioRecordingFile,
+                AudioRecordingCatalog.IsSupportedRecordingFile,
                 QueueAudioRecordingFilesRefresh);
         }
         catch
@@ -15492,19 +15458,6 @@ public partial class EqualizerWindow : Window
         }, DispatcherPriority.Background);
     }
 
-    private static AudioRecordingFileItem CreateAudioRecordingFileItem(FileInfo file, bool analyze)
-    {
-        AudioFileAnalysis? analysis = null;
-        var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}";
-        if (analyze && AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, EagerRecordingAnalysisDuration))
-        {
-            analysis = fileAnalysis;
-            details = $"{details}    {fileAnalysis.BrowserSummary}";
-        }
-
-        return new AudioRecordingFileItem(file.FullName, file.Name, details, analysis);
-    }
-
     private void UpdateSelectedAudioRecordingAnalysisStatus()
     {
         if (_isStandaloneAudioRecording || AudioRecordingStatusText is null)
@@ -15539,14 +15492,10 @@ public partial class EqualizerWindow : Window
         }
 
         var selectedPath = preferredPath ?? GetSelectedAudioRecordingPath();
-        var items = Directory.Exists(_audioRecordingFolder)
-            ? Directory.EnumerateFiles(_audioRecordingFolder)
-                .Where(IsSupportedAudioRecordingFile)
-                .Select(path => new FileInfo(path))
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Select((file, index) => CreateAudioRecordingFileItem(file, index < MaximumAnalyzedRecordingRows))
-                .ToList()
-            : [];
+        var items = AudioRecordingCatalog.EnumerateRecordingFiles(
+            _audioRecordingFolder,
+            MaximumAnalyzedRecordingRows,
+            EagerRecordingAnalysisDuration);
 
         _audioRecordingFiles.Clear();
         foreach (var item in items)
@@ -15590,7 +15539,7 @@ public partial class EqualizerWindow : Window
                 _karaokeRecordingFolder,
                 includeSubdirectories: false,
                 NotifyFilters.FileName | NotifyFilters.CreationTime,
-                IsSupportedAudioRecordingFile,
+                AudioRecordingCatalog.IsSupportedRecordingFile,
                 QueueKaraokeRecordingFilesRefresh);
         }
         catch
@@ -15643,14 +15592,10 @@ public partial class EqualizerWindow : Window
         }
 
         var selectedPath = preferredPath ?? GetSelectedKaraokeRecordingPath();
-        var items = Directory.Exists(_karaokeRecordingFolder)
-            ? Directory.EnumerateFiles(_karaokeRecordingFolder)
-                .Where(IsSupportedAudioRecordingFile)
-                .Select(path => new FileInfo(path))
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Select((file, index) => CreateAudioRecordingFileItem(file, index < MaximumAnalyzedRecordingRows))
-                .ToList()
-            : [];
+        var items = AudioRecordingCatalog.EnumerateRecordingFiles(
+            _karaokeRecordingFolder,
+            MaximumAnalyzedRecordingRows,
+            EagerRecordingAnalysisDuration);
 
         _karaokeRecordingFiles.Clear();
         foreach (var item in items)
@@ -15783,29 +15728,6 @@ public partial class EqualizerWindow : Window
     private string? GetSelectedSessionRecordingPath()
     {
         return GetSelectedSessionRecording()?.Path;
-    }
-
-    private static bool IsSupportedAudioRecordingFile(string path)
-    {
-        var extension = System.IO.Path.GetExtension(path);
-        return SupportedAudioRecordingExtensions.Any(supportedExtension =>
-            supportedExtension.Equals(extension, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string FormatFileSize(long byteCount)
-    {
-        if (byteCount < 1024)
-        {
-            return $"{byteCount} B";
-        }
-
-        var kib = byteCount / 1024d;
-        if (kib < 1024d)
-        {
-            return $"{kib:0.0} KB";
-        }
-
-        return $"{kib / 1024d:0.0} MB";
     }
 
     private CameraProfile CaptureCameraProfile(string name)
@@ -16885,8 +16807,6 @@ public partial class EqualizerWindow : Window
     {
         public override string ToString() => Label;
     }
-
-    private sealed record AudioRecordingFileItem(string Path, string Name, string Details, AudioFileAnalysis? Analysis);
 
     private sealed record KaraokeTrackItem(string Path, string Name, string Artist, TimeSpan Duration, string DurationText);
 
