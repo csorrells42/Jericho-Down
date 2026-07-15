@@ -123,6 +123,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
+    ("Graphic EQ slider moves change mixer line output", GraphicEqSliderMovesChangeMixerLineOutput),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
     ("Live service bus publishes auxiliary sync telemetry", LiveServiceBusPublishesAuxiliarySyncTelemetry),
     ("Live service bus records auxiliary mic in program mix", LiveServiceBusRecordsAuxiliaryMicInProgramMix),
@@ -3566,6 +3567,33 @@ static void LiveOutputProviderFollowsMixerGainPanPolarityAndDelay()
     Assert(lateLeftPeak > 0.20f, "per-mic delay should release the delayed live output after the requested time");
 }
 
+static void GraphicEqSliderMovesChangeMixerLineOutput()
+{
+    const int sampleRate = 48_000;
+    using var service = CreateLiveOutputService(out var outputProvider);
+    var micSettings = CreateTransparentVoiceSettings();
+    var mutedMicSettings = CreateTransparentVoiceSettings();
+    ConfigureTwoMicOutputService(service, micSettings, mutedMicSettings, mic1Pan: 0d, mic2Muted: true);
+
+    var lineInputBlock = GenerateGraphicEqCompositeStereoBlock(sampleRate, frameCount: 4_800);
+    var baselineOutput = CaptureMixerLineOutputBlock(service, outputProvider, lineInputBlock, warmupBlocks: 4);
+    var baselineLeftRms = CalculateStereoChannelRms(baselineOutput, channel: 0, startFrame: 600);
+    var baselineRightRms = CalculateStereoChannelRms(baselineOutput, channel: 1, startFrame: 600);
+    Assert(baselineLeftRms > 0.002d, "flat EQ should still produce measurable left line output");
+    Assert(baselineRightRms > 0.002d, "flat EQ should still produce measurable right line output");
+
+    var allSlidersAtMaximum = Enumerable.Repeat(12d, 20).ToArray();
+    micSettings.SetEqualizerGains(allSlidersAtMaximum);
+    var movedOutput = CaptureMixerLineOutputBlock(service, outputProvider, lineInputBlock, warmupBlocks: 10);
+    var movedLeftRms = CalculateStereoChannelRms(movedOutput, channel: 0, startFrame: 600);
+    var movedRightRms = CalculateStereoChannelRms(movedOutput, channel: 1, startFrame: 600);
+    var changedRms = CalculateStereoDifferenceRms(baselineOutput, movedOutput, startFrame: 600);
+
+    Assert(movedLeftRms > baselineLeftRms * 1.7d, $"moving all EQ sliders should boost left mixer line output, flat {baselineLeftRms:0.000000}, moved {movedLeftRms:0.000000}");
+    Assert(movedRightRms > baselineRightRms * 1.7d, $"moving all EQ sliders should boost right mixer line output, flat {baselineRightRms:0.000000}, moved {movedRightRms:0.000000}");
+    Assert(changedRms > baselineLeftRms * 0.45d, $"mixer line output waveform should measurably change after all EQ sliders move, delta {changedRms:0.000000}");
+}
+
 static void LiveServiceBusMixesAuxiliaryCaptureDevice()
 {
     using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out var outputProvider);
@@ -3913,6 +3941,44 @@ static void FeedAlternatingStereoBlock(MicrophoneSpectrumService service)
     InvokePrimaryCaptureBytes(service, buffer);
 }
 
+static float[] GenerateGraphicEqCompositeStereoBlock(int sampleRate, int frameCount)
+{
+    var frequencies = new[]
+    {
+        31d, 45d, 63d, 90d, 125d, 180d, 250d, 355d, 500d, 710d,
+        1000d, 1400d, 2000d, 2800d, 4000d, 5600d, 8000d, 11200d, 16000d, 20000d
+    };
+    var samples = new float[Math.Max(1, frameCount) * 2];
+    for (var frame = 0; frame < samples.Length / 2; frame++)
+    {
+        var mono = 0d;
+        foreach (var frequency in frequencies)
+        {
+            mono += Math.Sin(2d * Math.PI * frequency * frame / sampleRate) * 0.0035d;
+        }
+
+        samples[frame * 2] = (float)mono;
+    }
+
+    return samples;
+}
+
+static float[] CaptureMixerLineOutputBlock(
+    MicrophoneSpectrumService service,
+    BufferedWaveProvider outputProvider,
+    float[] interleavedStereoSamples,
+    int warmupBlocks)
+{
+    float[] lineOutput = [];
+    for (var i = 0; i < Math.Max(1, warmupBlocks); i++)
+    {
+        InvokePrimaryCapture(service, interleavedStereoSamples);
+        lineOutput = ReadBufferedFloatSamples(outputProvider);
+    }
+
+    return lineOutput;
+}
+
 static void InvokePrimaryCapture(MicrophoneSpectrumService service, float[] interleavedSamples)
 {
     InvokePrimaryCaptureBytes(service, MemoryMarshal.AsBytes(interleavedSamples.AsSpan()).ToArray());
@@ -4051,6 +4117,36 @@ static float MeasureChannelPeak(IReadOnlyList<float> samples, int channel, int s
     }
 
     return peak;
+}
+
+static double CalculateStereoChannelRms(IReadOnlyList<float> samples, int channel, int startFrame)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Max(0, samples.Count / 2)) * 2 + Math.Clamp(channel, 0, 1);
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < samples.Count; i += 2)
+    {
+        sum += samples[i] * samples[i];
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
+}
+
+static double CalculateStereoDifferenceRms(IReadOnlyList<float> first, IReadOnlyList<float> second, int startFrame)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Min(first.Count, second.Count) / 2) * 2;
+    var maxExclusive = Math.Min(first.Count, second.Count);
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < maxExclusive; i++)
+    {
+        var difference = second[i] - first[i];
+        sum += difference * difference;
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
 }
 
 static float MeasureLeftDotProduct(IReadOnlyList<float> first, IReadOnlyList<float> second, int startFrame, int frameCount)
