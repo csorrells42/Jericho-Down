@@ -1,8 +1,8 @@
 using System.IO;
 using System.Text.Json;
-using JerichoDown.Modules.Webcam;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam;
 
 internal static class CameraProfileStore
 {

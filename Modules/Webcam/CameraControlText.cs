@@ -1,6 +1,4 @@
-using JerichoDown.Modules.Webcam;
-
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam;
 
 internal static class CameraControlText
 {

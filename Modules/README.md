@@ -37,4 +37,5 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `SessionPlayback` owns `MediaFoundationFilePlaybackService`.
 - `Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`, plus `VideoFrameColorSettings`.
 - `Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`.
+- `Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, and `CameraProfileStore`.
 - Most legacy code still lives in the original `Audio`, `Video`, and `Visualization` folders until it is moved in verified passes.

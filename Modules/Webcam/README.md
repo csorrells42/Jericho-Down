@@ -10,10 +10,14 @@ Important submodules:
 
 Current entry points:
 - `CameraDevice.cs`
+- `CameraDeviceCatalog.cs`
 - `CameraVideoMode.cs`
 - `CameraFrame.cs`
 - `CameraControlKind.cs`
 - `CameraControlItem.cs`
+- `CameraControlText.cs`
+- `CameraProfile.cs`
+- `CameraProfileStore.cs`
 - `CameraStatusText.cs`
 - `VideoRecordingPolicy.cs`
 - `VideoFrameColorSettings.cs`
