@@ -17,7 +17,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Live;
 
 public sealed class MicrophoneSpectrumService : IDisposable
 {

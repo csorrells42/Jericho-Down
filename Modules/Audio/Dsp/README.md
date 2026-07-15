@@ -18,6 +18,6 @@ Current entry points:
 - `NAudioDmoEffectChain.cs`
 
 Consumed by:
-- `JerichoDown.Audio.MicrophoneSpectrumService` for live capture, graphing, and recording pipelines.
+- `JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService` for live capture, graphing, and recording pipelines.
 
 Keep NAudio-owned effect verification separate from custom Jericho DSP claims.

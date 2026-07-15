@@ -19,6 +19,6 @@ Current entry points:
 - `NaudioPeakMeterSampleProvider.cs`
 
 Consumed by:
-- `JerichoDown.Audio.MicrophoneSpectrumService` for live routing and program mix output.
+- `JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService` for live routing and program mix output.
 
 Do not put low-level ASIO driver startup, camera preview, or karaoke lyrics here.

@@ -7,6 +7,6 @@ Current entry points:
 - `SignalGeneratorCapture.cs`
 
 Consumed by:
-- `JerichoDown.Audio.MicrophoneSpectrumService` when starting app-audio loopback or stereo test-tone capture.
+- `JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService` when starting app-audio loopback or stereo test-tone capture.
 
 Do not put ASIO startup, device vocabulary, recording export, or mixer policy here.

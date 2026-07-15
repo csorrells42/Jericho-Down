@@ -15,8 +15,8 @@ Current entry points:
 - `AsioOutputPlayer.cs`
 - `StaThreadDispatcher.cs`
 
-Current legacy integration points:
-- ASIO sections of `Audio/MicrophoneSpectrumService.cs`
+Current integration points:
+- ASIO sections of `Modules/Audio/Live/MicrophoneSpectrumService.cs`
 - ASIO sections of `Modules/Audio/Diagnostics/AudioDeviceDiagnostics.cs`
 
 Do not add generic WASAPI, WaveIn, mixer, or DSP code here.

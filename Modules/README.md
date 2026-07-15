@@ -19,6 +19,7 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Audio`: capture, output routing, recording, loopback, synchronization, and NAudio helpers.
 - `Audio/Asio`: ASIO capture, callback probing, STA dispatcher, and ASIO diagnostics.
 - `Audio/Dsp`: voice processing, EQ, presets, DSP verification, and signal analysis.
+- `Audio/Live`: live microphone service orchestration, capture startup, processed monitoring, recording routing, spectrum publishing, and live output coordination.
 - `Mixer`: live program bus, channel strips, pan, gain, mute, solo, delay, and metering.
 - `Webcam`: camera device vocabulary, controls, preview policy, recording policy, frame/color helpers, and camera status text.
 - `Webcam/MediaFoundation`: Media Foundation camera enumeration, modes, source readers, and video writing.
@@ -53,8 +54,9 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`.
 - `Audio/Diagnostics` owns `AudioDeviceDiagnostics`.
 - `Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.
+- `Audio/Live` owns `MicrophoneSpectrumService`.
 - `Audio/Recording` owns `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`.
 - `Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`.
 - `Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`.
 - `Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`.
-- Legacy audio code still lives in the original `Audio` folder until it is moved in verified passes; the former camera/video and visualization DX12 code now live under modules.
+- The former legacy audio helpers now live under documented Audio submodules; the former camera/video and visualization DX12 code now live under modules.

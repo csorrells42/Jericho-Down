@@ -2,7 +2,7 @@
 
 Owns audio capture, playback output routing, recording, loopback, synchronization, and shared NAudio helper code.
 
-Most entry points still live in the legacy `Audio` folder while migration is in progress. Driver wrappers and sync helpers now live under this module.
+The root audio module coordinates ownership; implementation lives in documented submodules.
 
 Important submodules:
 - `Asio`: ASIO-specific driver startup, callback testing, and diagnostics.
@@ -11,6 +11,7 @@ Important submodules:
 - `Devices`: input/output device vocabulary, selected-channel modes, and output route policy.
 - `Diagnostics`: user-facing audio device and ASIO runtime diagnostic reports.
 - `Dsp`: voice processor, EQ, verification, and signal shaping.
+- `Live`: live microphone service orchestration, capture startup, processed monitoring, recording routing, spectrum publishing, and live output coordination.
 - `Recording`: recording source selection, audio-file analysis, sample conversion, and compressed export.
 - `Sync`: delay lines, auxiliary latency buffers, and NAudio-backed sample-rate conversion.
 

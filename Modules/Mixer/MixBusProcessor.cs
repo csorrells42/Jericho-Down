@@ -1,4 +1,3 @@
-using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Dsp;
 

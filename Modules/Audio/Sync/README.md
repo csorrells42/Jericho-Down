@@ -9,6 +9,6 @@ Current entry points:
 - `NAudioSampleRateConverter.cs`
 
 Consumed by:
-- `JerichoDown.Audio.MicrophoneSpectrumService` when aligning auxiliary captures and applying per-channel delay.
+- `JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService` when aligning auxiliary captures and applying per-channel delay.
 
 Do not put device enumeration, ASIO driver startup, or mix-bus policy here.

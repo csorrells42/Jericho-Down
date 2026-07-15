@@ -2,7 +2,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
-using JerichoDown.Audio;
 using JerichoDown.Modules.Visualization;
 using SharpGen.Runtime;
 using Vortice;
