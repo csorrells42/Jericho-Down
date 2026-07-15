@@ -1,7 +1,8 @@
 using System.Runtime.InteropServices;
 using JerichoDown.Modules.Webcam.MediaFoundation;
+using JerichoDown.Video;
 
-namespace JerichoDown.Video;
+namespace JerichoDown.Modules.Webcam.Dx11Bridge;
 
 internal sealed class Direct3D11DeviceManager : ITextureNativeDeviceManager
 {

@@ -1371,6 +1371,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
     Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
     Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
 
     foreach (var readmePath in moduleReadmes)
     {
@@ -1416,6 +1417,16 @@ static void ModuleReadmesDefineOwnership()
     Assert(directShowCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera enumerator should live in the DirectShow module namespace");
     Assert(directShowCameraControlService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera control service should live in the DirectShow module namespace");
     Assert(directShowCameraPreviewService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera preview service should live in the DirectShow module namespace");
+
+    var dx11BridgeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md")));
+    var direct3D11DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11DeviceManager.cs")));
+    var direct3D11SharedTextureBridge = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11SharedTextureBridge.cs")));
+    Assert(dx11BridgeReadme.Contains("Direct3D11DeviceManager.cs", StringComparison.Ordinal), "DX11 bridge docs should name migrated device manager ownership");
+    Assert(dx11BridgeReadme.Contains("Direct3D11SharedTextureBridge.cs", StringComparison.Ordinal), "DX11 bridge docs should name migrated shared texture bridge ownership");
+    Assert(dx11BridgeReadme.Contains("JerichoDown.Video.ITextureNativeDeviceManager", StringComparison.Ordinal), "DX11 bridge docs should name its temporary texture-native interface dependency");
+    Assert(direct3D11DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx11Bridge;", StringComparison.Ordinal), "D3D11 device manager should live in the DX11 bridge module namespace");
+    Assert(direct3D11DeviceManager.Contains("using JerichoDown.Video;", StringComparison.Ordinal), "D3D11 device manager should document its temporary texture-native interface dependency");
+    Assert(direct3D11SharedTextureBridge.Contains("namespace JerichoDown.Modules.Webcam.Dx11Bridge;", StringComparison.Ordinal), "D3D11 shared texture bridge should live in the DX11 bridge module namespace");
 
     var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
     var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));

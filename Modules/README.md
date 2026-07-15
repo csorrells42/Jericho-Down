@@ -43,4 +43,5 @@ The first migration passes keep everything inside the main WPF project so behavi
 - `Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`.
 - `Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`.
 - `Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`.
+- `Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`.
 - Most legacy code still lives in the original `Audio`, `Video`, and `Visualization` folders until it is moved in verified passes.
