@@ -10,6 +10,7 @@ using JerichoDown;
 using JerichoDown.Audio;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Dsp;
+using JerichoDown.Modules.Audio.Sync;
 using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.Mixer;
 using JerichoDown.Modules.Webcam;
@@ -1382,6 +1383,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost` and `Direct3D12AudioGraphMode`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
     Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
     Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
+    Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
     Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
     Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
 
@@ -1431,6 +1433,21 @@ static void ModuleReadmesDefineOwnership()
     Assert(mixerReadme.Contains("NaudioPeakMeterSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated peak meter ownership");
     Assert(mixerReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Mixer docs should name the live audio service consumer");
     Assert(mixerSources.All(source => source.Contains("namespace JerichoDown.Modules.Mixer;", StringComparison.Ordinal)), "Mixer primitives should live in the Mixer module namespace");
+
+    var audioSyncReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "README.md")));
+    var audioSyncSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioDelayLine.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioStereoDelayLine.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioSyncBuffer.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "NAudioSampleRateConverter.cs")))
+    };
+    Assert(audioSyncReadme.Contains("AudioDelayLine.cs", StringComparison.Ordinal), "Audio sync docs should name migrated delay line ownership");
+    Assert(audioSyncReadme.Contains("AudioStereoDelayLine.cs", StringComparison.Ordinal), "Audio sync docs should name migrated stereo delay line ownership");
+    Assert(audioSyncReadme.Contains("AudioSyncBuffer.cs", StringComparison.Ordinal), "Audio sync docs should name migrated sync buffer ownership");
+    Assert(audioSyncReadme.Contains("NAudioSampleRateConverter.cs", StringComparison.Ordinal), "Audio sync docs should name migrated sample-rate converter ownership");
+    Assert(audioSyncReadme.Contains("JerichoDown.Audio.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio sync docs should name the live audio service consumer");
+    Assert(audioSyncSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Sync;", StringComparison.Ordinal)), "Audio sync helpers should live in the Audio Sync module namespace");
 
     var audioAsioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "README.md")));
     var asioInputCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
@@ -4332,8 +4349,8 @@ static void AudioSyncBufferUsesNAudioWdlResampler()
     var wrongTone = CalculateToneMagnitude(output, targetSampleRate, 1_600, targetSampleRate / 100, Math.Min(2048, written - targetSampleRate / 100));
     Assert(expectedTone > wrongTone * 3d, "resampled output should preserve the source tone at the target sample rate");
 
-    var converterSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioSampleRateConverter.cs")));
-    var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioSyncBuffer.cs")));
+    var converterSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "NAudioSampleRateConverter.cs")));
+    var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioSyncBuffer.cs")));
     Assert(converterSource.Contains("WdlResamplingSampleProvider", StringComparison.Ordinal), "sample-rate conversion should use NAudio's WDL resampler");
     Assert(syncBufferSource.Contains("NAudioSampleRateConverter.TryResampleInterleaved", StringComparison.Ordinal), "auxiliary sync buffers should use the NAudio resampler before falling back");
 }

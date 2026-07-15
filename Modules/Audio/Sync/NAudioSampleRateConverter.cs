@@ -2,7 +2,7 @@ using System.Buffers;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Sync;
 
 public static class NAudioSampleRateConverter
 {

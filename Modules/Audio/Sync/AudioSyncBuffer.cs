@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace JerichoDown.Audio;
+namespace JerichoDown.Modules.Audio.Sync;
 
 public sealed class AudioSyncBuffer
 {
