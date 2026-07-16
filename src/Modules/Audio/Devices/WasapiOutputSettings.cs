@@ -18,6 +18,10 @@ public sealed record WasapiOutputSettings(
     public const int LowLatencyMilliseconds = 45;
     public const int MinimumCustomLatencyMilliseconds = 30;
     public const int MaximumCustomLatencyMilliseconds = 240;
+    public const int StabilityProcessedOutputMaximumBufferMilliseconds = 350;
+    public const int BalancedProcessedOutputMaximumBufferMilliseconds = 240;
+    public const int LowLatencyProcessedOutputMaximumBufferMilliseconds = 180;
+    public const int ProcessedOutputProviderBufferMilliseconds = 500;
 
     public static WasapiOutputSettings Default { get; } = new(
         WasapiOutputLatencyProfile.Stability,
@@ -33,6 +37,21 @@ public sealed record WasapiOutputSettings(
     };
 
     public bool UseEventDrivenOutput => true;
+
+    public TimeSpan ProcessedOutputInitialBufferDuration => TimeSpan.FromMilliseconds(EffectiveLatencyMilliseconds);
+
+    public TimeSpan ProcessedOutputTargetBufferDuration => TimeSpan.FromMilliseconds(EffectiveLatencyMilliseconds);
+
+    public TimeSpan ProcessedOutputMaximumBufferDuration => TimeSpan.FromMilliseconds(Profile switch
+    {
+        WasapiOutputLatencyProfile.Balanced => BalancedProcessedOutputMaximumBufferMilliseconds,
+        WasapiOutputLatencyProfile.LowLatency => LowLatencyProcessedOutputMaximumBufferMilliseconds,
+        WasapiOutputLatencyProfile.Custom => Math.Clamp(EffectiveLatencyMilliseconds * 3, 120, 500),
+        _ => StabilityProcessedOutputMaximumBufferMilliseconds
+    });
+
+    public TimeSpan ProcessedOutputProviderBufferDuration => TimeSpan.FromMilliseconds(
+        Math.Max(ProcessedOutputProviderBufferMilliseconds, (int)ProcessedOutputMaximumBufferDuration.TotalMilliseconds));
 
     public string DisplayText => $"{FormatProfile(Profile)} {(ExclusiveMode ? "exclusive" : "shared")}, {EffectiveLatencyMilliseconds} ms";
 

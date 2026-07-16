@@ -19,7 +19,8 @@ public static class AudioDeviceDiagnostics
         IReadOnlyList<AudioOutputDevice> outputDevices,
         AsioInputCaptureDiagnostics? asioInputDiagnostics = null,
         string? activeInputStatus = null,
-        VoiceProcessingTelemetry? liveTelemetry = null)
+        VoiceProcessingTelemetry? liveTelemetry = null,
+        WasapiOutputSettings? wasapiOutputSettings = null)
     {
         var report = new StringBuilder();
         report.AppendLine("Audio Device Diagnostics");
@@ -34,6 +35,7 @@ public static class AudioDeviceDiagnostics
         AppendLiveDspLatencySection(report, liveTelemetry);
         report.AppendLine();
         AppendOutputSection(report, selectedOutput, outputFormat);
+        AppendProcessedMonitorOutputSection(report, selectedOutput, wasapiOutputSettings);
         report.AppendLine();
         AppendWarnings(report, selectedInput, selectedOutput, inputFormat, outputFormat);
 
@@ -53,6 +55,25 @@ public static class AudioDeviceDiagnostics
         report.AppendLine($"- Limiter lookahead latency: {telemetry.LimiterLookaheadLatencySamples} sample(s) ({telemetry.LimiterLookaheadLatencyMilliseconds:0.00} ms)");
         report.AppendLine($"- Known DSP algorithmic latency: {telemetry.KnownDspAlgorithmicLatencySamples} sample(s) ({telemetry.KnownDspAlgorithmicLatencyMilliseconds:0.00} ms)");
         report.AppendLine("- Driver, capture, sync, and output buffering are separate from this DSP latency.");
+    }
+
+    private static void AppendProcessedMonitorOutputSection(
+        StringBuilder report,
+        AudioOutputDevice? selectedOutput,
+        WasapiOutputSettings? wasapiOutputSettings)
+    {
+        if (wasapiOutputSettings is null || selectedOutput?.IsAsio == true)
+        {
+            return;
+        }
+
+        report.AppendLine();
+        report.AppendLine("Processed Monitor Output");
+        report.AppendLine($"- WASAPI profile: {wasapiOutputSettings.DisplayText}");
+        report.AppendLine($"- Driver/output latency request: {wasapiOutputSettings.EffectiveLatencyMilliseconds} ms");
+        report.AppendLine($"- Initial monitor buffer: {wasapiOutputSettings.ProcessedOutputInitialBufferDuration.TotalMilliseconds:0} ms");
+        report.AppendLine($"- Target monitor buffer: {wasapiOutputSettings.ProcessedOutputTargetBufferDuration.TotalMilliseconds:0} ms");
+        report.AppendLine($"- Maximum monitor buffer before trimming: {wasapiOutputSettings.ProcessedOutputMaximumBufferDuration.TotalMilliseconds:0} ms");
     }
 
     private static void AppendInputSection(StringBuilder report, AudioInputDevice? selectedInput, AudioDeviceFormat? inputFormat)

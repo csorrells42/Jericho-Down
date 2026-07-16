@@ -3222,7 +3222,8 @@ public partial class EqualizerWindow : Window
             outputDevices,
             selectedInput?.IsAsio == true ? _spectrumService.ActiveAsioInputDiagnostics : null,
             selectedInput?.IsAsio == true ? _spectrumService.ActiveInputFormatStatus : null,
-            _latestFrame?.Telemetry);
+            _latestFrame?.Telemetry,
+            selectedOutput?.IsAsio == true ? null : _wasapiOutputSettings);
         return report;
     }
 

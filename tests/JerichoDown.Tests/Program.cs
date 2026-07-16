@@ -85,7 +85,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
     ("Audio stream restart failures back off", AudioStreamRestartFailuresBackOff),
-    ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
+    ("Processed monitor follows WASAPI latency profile", ProcessedMonitorFollowsWasapiLatencyProfile),
     ("Mic DSP monitor exposes processed EQ audition", MicDspMonitorExposesProcessedEqAudition),
     ("Graphic EQ sliders sync live settings and graph", GraphicEqSlidersSyncLiveSettingsAndGraph),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
@@ -2232,6 +2232,7 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
 {
     var appInput = AudioInputDevice.CreateProcessLoopback(4242, "MusicApp");
     var output = new AudioOutputDevice(-1, "Default playback device");
+    var lowLatencyOutput = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
     var report = AudioDeviceDiagnostics.BuildReport(
         appInput,
         output,
@@ -2245,7 +2246,8 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
             GraphicEqualizerLatencyMilliseconds = 0d,
             LimiterLookaheadLatencySamples = 144,
             LimiterLookaheadLatencyMilliseconds = 3d
-        });
+        },
+        wasapiOutputSettings: lowLatencyOutput);
 
     Assert(report.Contains("Audio Device Diagnostics", StringComparison.Ordinal), "diagnostics report should have a clear title");
     Assert(report.Contains("Selected Input", StringComparison.Ordinal), "diagnostics report should identify the selected input");
@@ -2257,6 +2259,10 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(report.Contains("Graphic EQ algorithmic latency: 0 sample", StringComparison.Ordinal), "diagnostics report should make graphic EQ zero-latency explicit");
     Assert(report.Contains("Limiter lookahead latency: 144 sample", StringComparison.Ordinal), "diagnostics report should separate limiter lookahead from graphic EQ latency");
     Assert(report.Contains("Driver, capture, sync, and output buffering are separate", StringComparison.Ordinal), "diagnostics report should not blame DSP latency for driver/output buffering");
+    Assert(report.Contains("Processed Monitor Output", StringComparison.Ordinal), "diagnostics report should include processed monitor output settings");
+    Assert(report.Contains("WASAPI profile: Low latency shared, 45 ms", StringComparison.Ordinal), "diagnostics report should name the selected low-latency WASAPI profile");
+    Assert(report.Contains("Target monitor buffer: 45 ms", StringComparison.Ordinal), "diagnostics report should show the live monitor target buffer");
+    Assert(report.Contains("Maximum monitor buffer before trimming: 180 ms", StringComparison.Ordinal), "diagnostics report should show the low-latency trim ceiling");
 
     var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Focusrite USB ASIO");
     var asioInput = new AudioInputDevice(
@@ -2354,21 +2360,36 @@ static void AudioStreamRestartFailuresBackOff()
     Assert(restartMethod.Contains("RegisterAudioStreamRestartFailure(ex);", StringComparison.Ordinal), "failed automatic restart should register a bounded retry instead of looping every timer tick");
 }
 
-static void ProcessedMonitorUsesStabilityFirstBuffering()
+static void ProcessedMonitorFollowsWasapiLatencyProfile()
 {
-    var wasapiLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WasapiProcessedOutputLatencyMilliseconds");
     var waveOutLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WaveOutProcessedOutputLatencyMilliseconds");
-    var providerBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "ProcessedOutputBufferDuration");
-    var initialBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "InitialLiveOutputBufferedDuration");
-    var targetBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "TargetLiveOutputBufferedDuration");
-    var maximumBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "MaximumLiveOutputBufferedDuration");
+    var stability = WasapiOutputSettings.Default;
+    var lowLatency = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
+    var customMinimum = WasapiOutputSettings.FromPersisted("Custom", exclusiveMode: true, customLatencyMilliseconds: WasapiOutputSettings.MinimumCustomLatencyMilliseconds);
 
-    Assert(wasapiLatency >= 100 && wasapiLatency <= 180, "WASAPI monitor latency should favor reliability over minimum delay");
+    Assert(stability.EffectiveLatencyMilliseconds == WasapiOutputSettings.StabilityLatencyMilliseconds, "stability profile should keep the conservative WASAPI latency request");
+    Assert(stability.ProcessedOutputInitialBufferDuration >= TimeSpan.FromMilliseconds(100), "stability profile should prime enough monitor audio to absorb startup jitter");
+    Assert(stability.ProcessedOutputTargetBufferDuration >= TimeSpan.FromMilliseconds(100), "stability profile should retain a large target monitor buffer");
+    Assert(stability.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(300), "stability profile should avoid over-trimming on slower computers");
+    Assert(stability.ProcessedOutputProviderBufferDuration >= stability.ProcessedOutputMaximumBufferDuration, "processed output provider must hold the stability buffer");
+
+    Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should request the low-latency WASAPI buffer");
+    Assert(lowLatency.ProcessedOutputInitialBufferDuration <= TimeSpan.FromMilliseconds(50), "low-latency profile should prime only a small live monitor buffer");
+    Assert(lowLatency.ProcessedOutputTargetBufferDuration <= TimeSpan.FromMilliseconds(50), "low-latency profile should trim toward a small headphone monitor buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration <= TimeSpan.FromMilliseconds(200), "low-latency profile should not silently keep the old 350 ms live buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(waveOutLatency), "low-latency maximum should still leave room for WaveOut fallback stability");
+    Assert(lowLatency.ProcessedOutputProviderBufferDuration >= lowLatency.ProcessedOutputMaximumBufferDuration, "low-latency provider capacity should hold its maximum buffer");
+
+    Assert(customMinimum.ProcessedOutputInitialBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.MinimumCustomLatencyMilliseconds), "minimum custom profile should be able to request the smallest supported WASAPI buffer");
+    Assert(customMinimum.ProcessedOutputTargetBufferDuration == customMinimum.ProcessedOutputInitialBufferDuration, "custom monitor target should follow the custom WASAPI request");
+    Assert(customMinimum.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(120), "custom monitor maximum should keep a minimum safety cushion");
     Assert(waveOutLatency >= 120 && waveOutLatency <= 220, "WaveOut fallback latency should give physical devices room to stay smooth");
-    Assert(initialBuffer >= TimeSpan.FromMilliseconds(100), "initial live monitor buffer should absorb startup jitter");
-    Assert(targetBuffer >= TimeSpan.FromMilliseconds(100), "target live monitor buffer should absorb callback jitter");
-    Assert(maximumBuffer >= TimeSpan.FromMilliseconds(300), "maximum live monitor buffer should avoid over-trimming on slower computers");
-    Assert(providerBuffer >= maximumBuffer, "processed output provider must be able to hold the stability buffer");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputProviderBufferDuration", StringComparison.Ordinal), "processed output provider capacity should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputInitialBufferDuration", StringComparison.Ordinal), "processed output startup priming should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputMaximumBufferDuration", StringComparison.Ordinal), "processed output trimming maximum should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputTargetBufferDuration", StringComparison.Ordinal), "processed output trim target should come from the active latency profile");
 }
 
 static void MicDspMonitorExposesProcessedEqAudition()
@@ -5089,6 +5110,8 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     var lowLatency = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
     Assert(lowLatency.Profile == WasapiOutputLatencyProfile.LowLatency, "WASAPI persisted profile should restore low-latency mode");
     Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should use the low-latency buffer target");
+    Assert(lowLatency.ProcessedOutputTargetBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.LowLatencyMilliseconds), "low-latency profile should also drive the live monitor target buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.LowLatencyProcessedOutputMaximumBufferMilliseconds), "low-latency profile should use a low trim ceiling");
     Assert(lowLatency.DisplayText.Contains("shared", StringComparison.Ordinal), "default WASAPI profile text should explain shared mode");
 
     var custom = WasapiOutputSettings.FromPersisted("Custom", exclusiveMode: true, customLatencyMilliseconds: 999);
@@ -5096,6 +5119,8 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     Assert(custom.ExclusiveMode, "WASAPI persisted profile should restore exclusive mode");
     Assert(custom.CustomLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should be clamped for stability");
     Assert(custom.EffectiveLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should drive the effective buffer target");
+    Assert(custom.ProcessedOutputTargetBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.MaximumCustomLatencyMilliseconds), "custom profile should drive the live monitor target buffer");
+    Assert(custom.ProcessedOutputProviderBufferDuration >= custom.ProcessedOutputMaximumBufferDuration, "custom profile should keep provider capacity above the trimming ceiling");
     Assert(custom.DisplayText.Contains("exclusive", StringComparison.Ordinal), "custom WASAPI profile text should explain exclusive mode");
 
     using var service = new MicrophoneSpectrumService();
@@ -5117,6 +5142,7 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     Assert(serviceSource.Contains("ConfigureWasapiOutput", StringComparison.Ordinal), "audio service should expose WASAPI output configuration");
     Assert(serviceSource.Contains("_wasapiOutputSettings.EffectiveLatencyMilliseconds", StringComparison.Ordinal), "WASAPI output should use the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputTargetBufferDuration", StringComparison.Ordinal), "processed monitor buffer should use the active latency profile");
     Assert(serviceSource.Contains("AudioClientShareMode.Exclusive", StringComparison.Ordinal), "WASAPI output should support expert exclusive mode");
 
     var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));

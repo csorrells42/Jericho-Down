@@ -27,7 +27,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private static readonly int[] CaptureBufferFallbackMilliseconds = [CaptureBufferMilliseconds, 10, 15];
     private const int SpectrumAnalysisIntervalMilliseconds = 24;
     private static readonly long SpectrumAnalysisIntervalTicks = Math.Max(1, TimeSpan.FromMilliseconds(SpectrumAnalysisIntervalMilliseconds).Ticks * System.Diagnostics.Stopwatch.Frequency / TimeSpan.TicksPerSecond);
-    private const int WasapiProcessedOutputLatencyMilliseconds = WasapiOutputSettings.StabilityLatencyMilliseconds;
     private const int WaveOutProcessedOutputLatencyMilliseconds = 160;
     private const int MediaFoundationResamplerQuality = 60;
     private const bool UseWasapiEventDrivenOutput = true;
@@ -36,10 +35,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private const int ProcessedOutputDiscardBufferBytes = 32768;
     private static readonly int[] PreferredSampleRates = [192000, 96000, 48000, 44100];
     private static readonly int[] PreferredAsioSampleRates = [DefaultSampleRate, 44100, 96000, 192000];
-    private static readonly TimeSpan ProcessedOutputBufferDuration = TimeSpan.FromMilliseconds(500);
-    private static readonly TimeSpan InitialLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
-    private static readonly TimeSpan TargetLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(120);
-    private static readonly TimeSpan MaximumLiveOutputBufferedDuration = TimeSpan.FromMilliseconds(350);
     private static readonly TimeSpan AuxiliaryCaptureTargetLatency = TimeSpan.FromMilliseconds(35);
     private static readonly TimeSpan AuxiliaryCaptureMaximumLatency = TimeSpan.FromMilliseconds(140);
     private const double ProcessedOutputRecoveryRampMilliseconds = 6d;
@@ -2681,21 +2676,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
         return TryGetAsioDriverName(_processedOutputEndpointId, out _);
     }
 
-    private static BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)
+    private BufferedWaveProvider CreateProcessedOutputProvider(WaveFormat waveFormat)
     {
         var provider = new BufferedWaveProvider(waveFormat)
         {
-            BufferDuration = ProcessedOutputBufferDuration,
+            BufferDuration = _wasapiOutputSettings.ProcessedOutputProviderBufferDuration,
             DiscardOnBufferOverflow = true,
             ReadFully = true
         };
-        PrimeProcessedOutputProvider(provider);
+        PrimeProcessedOutputProvider(provider, _wasapiOutputSettings.ProcessedOutputInitialBufferDuration);
         return provider;
     }
 
-    private static void PrimeProcessedOutputProvider(BufferedWaveProvider provider)
+    private static void PrimeProcessedOutputProvider(BufferedWaveProvider provider, TimeSpan initialBufferDuration)
     {
-        var byteCount = DurationToAlignedByteCount(InitialLiveOutputBufferedDuration, provider.WaveFormat);
+        var byteCount = DurationToAlignedByteCount(initialBufferDuration, provider.WaveFormat);
         var silence = ArrayPool<byte>.Shared.Rent(byteCount);
         try
         {
@@ -3087,7 +3082,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
     private void TrimProcessedOutputBufferIfNeeded(BufferedWaveProvider provider, int incomingBytes = 0)
     {
-        var maximumBytes = DurationToAlignedByteCount(MaximumLiveOutputBufferedDuration, provider.WaveFormat);
+        var maximumBytes = DurationToAlignedByteCount(_wasapiOutputSettings.ProcessedOutputMaximumBufferDuration, provider.WaveFormat);
         if (provider.BufferedBytes + Math.Max(0, incomingBytes) <= maximumBytes)
         {
             return;
@@ -3101,7 +3096,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     {
         var waveFormat = provider.WaveFormat;
         var blockAlign = Math.Max(1, waveFormat.BlockAlign);
-        var targetBytes = DurationToAlignedByteCount(TargetLiveOutputBufferedDuration, waveFormat);
+        var targetBytes = DurationToAlignedByteCount(_wasapiOutputSettings.ProcessedOutputTargetBufferDuration, waveFormat);
         var bytesToDiscard = Math.Max(0, provider.BufferedBytes - targetBytes);
         if (bytesToDiscard <= 0)
         {
