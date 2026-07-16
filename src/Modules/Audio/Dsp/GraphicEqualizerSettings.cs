@@ -81,6 +81,40 @@ public sealed class GraphicEqualizerSettings
 
     public double[] CreateFlatGains() => new double[_bandFrequenciesHz.Length];
 
+    public double[] CreateBandAndMidpointFrequencies()
+    {
+        var points = new List<double>(_bandFrequenciesHz.Length * 2 - 1);
+        for (var i = 0; i < _bandFrequenciesHz.Length; i++)
+        {
+            points.Add(_bandFrequenciesHz[i]);
+            if (i < _bandFrequenciesHz.Length - 1)
+            {
+                points.Add(Math.Sqrt(_bandFrequenciesHz[i] * _bandFrequenciesHz[i + 1]));
+            }
+        }
+
+        return points.ToArray();
+    }
+
+    public int FindNearestBandIndex(double frequencyHz)
+    {
+        var bestIndex = 0;
+        var bestDistance = double.MaxValue;
+        for (var i = 0; i < _bandFrequenciesHz.Length; i++)
+        {
+            var distance = Math.Abs(Math.Log(Math.Max(1d, frequencyHz) / _bandFrequenciesHz[i]));
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            bestIndex = i;
+            bestDistance = distance;
+        }
+
+        return bestIndex;
+    }
+
     public double CalculateGainSmoothingCoefficient(double sampleRate, int sampleCount)
     {
         var clampedSampleRate = Math.Max(8000d, sampleRate);

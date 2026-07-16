@@ -178,6 +178,63 @@ public sealed class GraphicEqualizerProcessor
         return 20d * Math.Log10(Math.Max(1.0E-12d, magnitude));
     }
 
+    public double CalculateModeledResponseDb(IReadOnlyList<double> gainsDb, double frequencyHz) =>
+        CalculateModeledResponseDb(_settings, _sampleRate, gainsDb, frequencyHz);
+
+    public static double CalculateModeledResponseDb(
+        GraphicEqualizerSettings settings,
+        double sampleRate,
+        IReadOnlyList<double> gainsDb,
+        double frequencyHz)
+    {
+        var clampedSampleRate = Math.Max(8000d, sampleRate);
+        var clampedFrequencyHz = Math.Clamp(frequencyHz, 1d, clampedSampleRate / 2d);
+        var omega = 2d * Math.PI * clampedFrequencyHz / clampedSampleRate;
+        var z1Real = Math.Cos(omega);
+        var z1Imaginary = -Math.Sin(omega);
+        var z2Real = Math.Cos(2d * omega);
+        var z2Imaginary = -Math.Sin(2d * omega);
+        var magnitude = 1d;
+
+        for (var bandIndex = 0; bandIndex < settings.BandCount; bandIndex++)
+        {
+            var gainDb = bandIndex < gainsDb.Count
+                ? settings.ClampGainDb(gainsDb[bandIndex])
+                : 0d;
+            if (Math.Abs(gainDb) < settings.InactiveGainThresholdDb)
+            {
+                continue;
+            }
+
+            var bandFrequencyHz = settings.ClampBandFrequencyForSampleRate(bandIndex, clampedSampleRate);
+            var bandOmega = 2d * Math.PI * bandFrequencyHz / clampedSampleRate;
+            var cosine = Math.Cos(bandOmega);
+            var alpha = Math.Sin(bandOmega) / (2d * settings.BandQ);
+            var amplitude = Math.Pow(10d, gainDb / 40d);
+            var b0 = 1d + alpha * amplitude;
+            var b1 = -2d * cosine;
+            var b2 = 1d - alpha * amplitude;
+            var a0 = 1d + alpha / amplitude;
+            var a1 = -2d * cosine;
+            var a2 = 1d - alpha / amplitude;
+
+            var normalizedB0 = b0 / a0;
+            var normalizedB1 = b1 / a0;
+            var normalizedB2 = b2 / a0;
+            var normalizedA1 = a1 / a0;
+            var normalizedA2 = a2 / a0;
+            var numeratorReal = normalizedB0 + normalizedB1 * z1Real + normalizedB2 * z2Real;
+            var numeratorImaginary = normalizedB1 * z1Imaginary + normalizedB2 * z2Imaginary;
+            var denominatorReal = 1d + normalizedA1 * z1Real + normalizedA2 * z2Real;
+            var denominatorImaginary = normalizedA1 * z1Imaginary + normalizedA2 * z2Imaginary;
+            var numeratorMagnitude = Math.Sqrt(numeratorReal * numeratorReal + numeratorImaginary * numeratorImaginary);
+            var denominatorMagnitude = Math.Sqrt(denominatorReal * denominatorReal + denominatorImaginary * denominatorImaginary);
+            magnitude *= numeratorMagnitude / Math.Max(1.0E-12d, denominatorMagnitude);
+        }
+
+        return 20d * Math.Log10(Math.Max(1.0E-12d, magnitude));
+    }
+
     private void CopyTargetGains(ReadOnlySpan<double> gainsDb)
     {
         for (var i = 0; i < _targetGainsDb.Length; i++)

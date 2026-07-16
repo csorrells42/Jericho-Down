@@ -203,3 +203,36 @@ public sealed record GraphicEqualizerCurveResponse(
         Bands.Count,
         GraphicEqualizerResponse.FormatDeltaDb(MaximumMeasuredModelErrorDb));
 }
+
+public sealed record GraphicEqualizerModeledResponsePoint(
+    int NearestBandIndex,
+    double FrequencyHz,
+    double NearestBandFrequencyHz,
+    double NearestBandGainDb,
+    double ModeledDeltaDb)
+{
+    public bool IsFinite =>
+        double.IsFinite(FrequencyHz) &&
+        double.IsFinite(NearestBandFrequencyHz) &&
+        double.IsFinite(NearestBandGainDb) &&
+        double.IsFinite(ModeledDeltaDb);
+}
+
+public sealed record GraphicEqualizerModeledCurve(
+    int SampleRate,
+    IReadOnlyList<double> RequestedGainsDb,
+    IReadOnlyList<GraphicEqualizerModeledResponsePoint> Points)
+{
+    public bool Passed => Points.All(point => point.IsFinite);
+
+    public double MinimumDeltaDb => Points.Count == 0 ? 0d : Points.Min(point => point.ModeledDeltaDb);
+
+    public double MaximumDeltaDb => Points.Count == 0 ? 0d : Points.Max(point => point.ModeledDeltaDb);
+
+    public string Summary => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0} model points; range {1} to {2}",
+        Points.Count,
+        GraphicEqualizerResponse.FormatDeltaDb(MinimumDeltaDb),
+        GraphicEqualizerResponse.FormatDeltaDb(MaximumDeltaDb));
+}

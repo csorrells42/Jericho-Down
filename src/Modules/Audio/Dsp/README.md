@@ -28,5 +28,6 @@ Graphic EQ notes:
 - `GraphicEqualizerProcessor` is the reusable zero-algorithmic-latency EQ engine used by `VoiceSampleProcessor`.
 - The processor uses flat arrays, active-band indexes, preallocated state, and `Span<T>` block processing so the steady audio path does not allocate while monitoring.
 - `GraphicEqualizerVerification` measures isolated slider response and complete multi-slider curves against the modeled biquad response.
+- `GraphicEqualizerVerification.ModelCurve(...)` gives a pure modeled curve at band centers and between-band midpoints without running audio through the processor.
 
 Keep NAudio-owned effect verification separate from custom Jericho DSP claims.

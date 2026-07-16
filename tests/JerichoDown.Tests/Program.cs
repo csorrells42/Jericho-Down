@@ -51,6 +51,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
     ("Graphic EQ processor is zero-latency and reusable", GraphicEqProcessorIsZeroLatencyAndReusable),
+    ("Graphic EQ modeled response describes expected curves", GraphicEqModeledResponseDescribesExpectedCurves),
     ("Graphic EQ verification measures all bands and adjacent response", GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse),
     ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
@@ -627,6 +628,45 @@ static void GraphicEqProcessorIsZeroLatencyAndReusable()
     processor.Process(impulse, processed);
     var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
     Assert(allocatedAfter == allocatedBefore, "steady graphic EQ block processing should not allocate on the audio thread");
+}
+
+static void GraphicEqModeledResponseDescribesExpectedCurves()
+{
+    const int sampleRate = 48_000;
+    var settings = GraphicEqualizerSettings.Default;
+    var flat = settings.CreateFlatGains();
+    var processor = new GraphicEqualizerProcessor(settings, sampleRate);
+    var singleBoost = settings.CreateFlatGains();
+    singleBoost[10] = 6d;
+
+    var flatCurve = GraphicEqualizerVerification.ModelCurve(flat);
+    Assert(flatCurve.Passed, "flat graphic EQ model should produce finite response points");
+    Assert(flatCurve.Points.Count == settings.BandCount * 2 - 1, "default model curve should include band centers and between-band midpoints");
+    Assert(flatCurve.Points.All(point => Math.Abs(point.ModeledDeltaDb) < 0.000001d), "flat graphic EQ model should stay flat at every modeled point");
+
+    var centerModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 1_000d);
+    var lowerAdjacentModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 710d);
+    var farHighModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 4_000d);
+    Assert(Math.Abs(centerModelDb - 6d) < 0.01d, "1 kHz graphic EQ boost should model the requested center-band gain");
+    Assert(lowerAdjacentModelDb > 0.5d && lowerAdjacentModelDb < centerModelDb, "1 kHz graphic EQ boost should shape the adjacent band less than the center");
+    Assert(Math.Abs(farHighModelDb) < 0.5d, "1 kHz graphic EQ boost should leave far high bands mostly unchanged");
+
+    processor.Update(singleBoost, 1, sampleRate);
+    var liveCoefficientModelDb = processor.CalculateCurrentResponseDb(1_000d);
+    Assert(Math.Abs(liveCoefficientModelDb - centerModelDb) < 0.001d, "pure graphic EQ model should match the live processor coefficients after update");
+
+    var lowCurveGains = settings.CreateFlatGains();
+    for (var i = 0; i < Math.Min(6, lowCurveGains.Length); i++)
+    {
+        lowCurveGains[i] = settings.MaximumGainDb;
+    }
+
+    var lowCurve = GraphicEqualizerVerification.ModelCurve(lowCurveGains);
+    var lowAverageDb = lowCurve.Points.Where(point => point.FrequencyHz <= 250d).Average(point => point.ModeledDeltaDb);
+    var highAverageDb = lowCurve.Points.Where(point => point.FrequencyHz >= 2_000d).Average(point => point.ModeledDeltaDb);
+    Assert(lowCurve.Passed, "stacked low-band graphic EQ model should produce finite response points");
+    Assert(lowAverageDb > highAverageDb + 8d, "stacked low-band graphic EQ boosts should model a clearly larger low-frequency curve");
+    Assert(lowCurve.Points.Any(point => point.NearestBandGainDb == settings.MaximumGainDb), "modeled curve should expose nearest-band requested gain metadata");
 }
 
 static void GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse()

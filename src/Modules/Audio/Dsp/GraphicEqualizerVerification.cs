@@ -15,6 +15,36 @@ public static class GraphicEqualizerVerification
     public static GraphicEqualizerResponse Measure(double requestedGainDb) =>
         new(VerificationSampleRate, requestedGainDb, MeasureAllBands(requestedGainDb));
 
+    public static GraphicEqualizerModeledCurve ModelCurve(
+        IReadOnlyList<double> gainsDb,
+        IReadOnlyList<double>? frequenciesHz = null)
+    {
+        var settings = GraphicEqualizerSettings.Default;
+        var requestedGainsDb = settings.CreateFlatGains();
+        for (var i = 0; i < requestedGainsDb.Length; i++)
+        {
+            requestedGainsDb[i] = i < gainsDb.Count ? settings.ClampGainDb(gainsDb[i]) : 0d;
+        }
+
+        var frequencies = frequenciesHz is { Count: > 0 }
+            ? frequenciesHz
+            : settings.CreateBandAndMidpointFrequencies();
+        var points = new List<GraphicEqualizerModeledResponsePoint>(frequencies.Count);
+
+        foreach (var frequencyHz in frequencies)
+        {
+            var nearestBandIndex = settings.FindNearestBandIndex(frequencyHz);
+            points.Add(new GraphicEqualizerModeledResponsePoint(
+                nearestBandIndex,
+                frequencyHz,
+                settings.BandFrequenciesHz[nearestBandIndex],
+                requestedGainsDb[nearestBandIndex],
+                GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, VerificationSampleRate, requestedGainsDb, frequencyHz)));
+        }
+
+        return new GraphicEqualizerModeledCurve(VerificationSampleRate, requestedGainsDb, points);
+    }
+
     public static GraphicEqualizerCurveResponse MeasureCurve(IReadOnlyList<double> gainsDb)
     {
         var settings = GraphicEqualizerSettings.Default;
