@@ -4,7 +4,10 @@ Owns microphone voice processing, EQ, presets, verification, and signal-shaping 
 
 Current entry points:
 - `DspVerificationReportGenerator.cs`
-- `GraphicEqualizerVerificationHarness.cs`
+- `GraphicEqualizerProcessor.cs`
+- `GraphicEqualizerSettings.cs`
+- `GraphicEqualizerResponse.cs`
+- `GraphicEqualizerVerification.cs`
 - `VoiceProcessorSettings.cs`
 - `BuiltInVoicePresetCatalog.cs`
 - `VoiceProcessingTelemetry.cs`

@@ -65,7 +65,7 @@ Keep visual content and viewport plumbing inside the owning module: camera frame
 - `Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`.
 - `Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`.
 - `Audio/Diagnostics` owns `AudioDeviceDiagnostics`.
-- `Audio/Dsp` owns `DspVerificationReportGenerator`, `GraphicEqualizerVerificationHarness`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.
+- `Audio/Dsp` owns `DspVerificationReportGenerator`, `GraphicEqualizerProcessor`, `GraphicEqualizerSettings`, `GraphicEqualizerResponse`, `GraphicEqualizerVerification`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers.
 - `Audio/Live` owns `MicrophoneSpectrumService`.
 - `Audio/Recording` owns `AudioRecordingCatalog`, `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`.
 - `Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`.

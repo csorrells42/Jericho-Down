@@ -3,16 +3,10 @@ namespace JerichoDown.Modules.Audio.Dsp;
 public sealed class VoiceSampleProcessor
 {
     private const double DenormalThreshold = 1.0E-20d;
-    private const double EqualizerQ = 1.35d;
-    private const int EqualizerBypassDrainBlocks = 2;
     private const double LimiterTruePeakDetectorMarginDb = 0.6d;
-    private static readonly double[] EqualizerFrequenciesHz =
-    [
-        31d, 45d, 63d, 90d, 125d, 180d, 250d, 355d, 500d, 710d,
-        1000d, 1400d, 2000d, 2800d, 4000d, 5600d, 8000d, 11200d, 16000d, 20000d
-    ];
 
     private readonly VoiceProcessorSettings _settings;
+    private readonly GraphicEqualizerProcessor _graphicEqualizer;
     private readonly NAudioBiQuadFilterRack _naudioBiQuadFilterRack;
     private readonly NAudioPitchShiftProcessor _naudioPitchShiftProcessor;
     private readonly NAudioImpulseConvolutionProcessor _naudioImpulseConvolutionProcessor;
@@ -283,37 +277,19 @@ public sealed class VoiceSampleProcessor
     private double _limiterPreviousDetectorSample;
     private int _coefficientSettingsRevision = -1;
     private int _coefficientSampleCount = -1;
-    private readonly double[] _equalizerGainsDb = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerSmoothedGainsDb = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerCoefficientGainsDb = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerCosines = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerAlphas = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerB0 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerB1 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerB2 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerA1 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerA2 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerX1 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerX2 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerY1 = new double[EqualizerFrequenciesHz.Length];
-    private readonly double[] _equalizerY2 = new double[EqualizerFrequenciesHz.Length];
-    private readonly bool[] _equalizerBandActive = new bool[EqualizerFrequenciesHz.Length];
-    private readonly int[] _equalizerActiveBandIndices = new int[EqualizerFrequenciesHz.Length];
-    private readonly int[] _equalizerBypassDrainBlocks = new int[EqualizerFrequenciesHz.Length];
-    private int _equalizerActiveBandCount;
+    private readonly double[] _equalizerGainsDb = new double[GraphicEqualizerSettings.DefaultBandCount];
     private int _equalizerSettingsRevision = -1;
-    private bool _equalizerSmoothingSettled;
 
     public VoiceSampleProcessor(VoiceProcessorSettings settings, int sampleRate)
     {
         _settings = settings;
         _sampleRate = Math.Max(8000d, sampleRate);
+        _graphicEqualizer = new GraphicEqualizerProcessor(_sampleRate);
         _naudioBiQuadFilterRack = new NAudioBiQuadFilterRack(_sampleRate);
         _naudioPitchShiftProcessor = new NAudioPitchShiftProcessor(_sampleRate);
         _naudioImpulseConvolutionProcessor = new NAudioImpulseConvolutionProcessor(_sampleRate);
         _naudioEnvelopeGeneratorProcessor = new NAudioEnvelopeGeneratorProcessor(_sampleRate);
         _naudioDmoEffectChain = new NAudioDmoEffectChain(_sampleRate);
-        InitializeEqualizerFrequencyCache();
     }
 
     public float[] Process(ReadOnlySpan<float> samples)
@@ -344,7 +320,7 @@ public sealed class VoiceSampleProcessor
             sample = ApplyHighPass(sample);
             sample = ApplyHumRemoval(sample);
             sample = ApplyManualNotch(sample);
-            sample = ApplyEqualizer(sample);
+            sample = _graphicEqualizer.TransformSample(sample);
             sample = ApplyParametricEq(sample);
             sample = ApplyShelfEq(sample);
             sample = _naudioBiQuadFilterRack.Transform(sample);
@@ -983,133 +959,9 @@ public sealed class VoiceSampleProcessor
         {
             _settings.CopyEqualizerGainsTo(_equalizerGainsDb);
             _equalizerSettingsRevision = equalizerRevision;
-            _equalizerSmoothingSettled = false;
         }
 
-        if (_equalizerSmoothingSettled)
-        {
-            return;
-        }
-
-        var smoothingCoefficient = BlockTimeCoefficient(35d, sampleCount);
-        var allBandsSettled = true;
-        _equalizerActiveBandCount = 0;
-        for (var i = 0; i < EqualizerFrequenciesHz.Length; i++)
-        {
-            var targetGainDb = Math.Clamp(_equalizerGainsDb[i], -12d, 12d);
-            _equalizerSmoothedGainsDb[i] += (targetGainDb - _equalizerSmoothedGainsDb[i]) * smoothingCoefficient;
-            if (Math.Abs(targetGainDb - _equalizerSmoothedGainsDb[i]) < 0.005d)
-            {
-                _equalizerSmoothedGainsDb[i] = targetGainDb;
-            }
-            else
-            {
-                allBandsSettled = false;
-            }
-
-            var gainDb = _equalizerSmoothedGainsDb[i];
-            if (Math.Abs(gainDb) < 0.01d)
-            {
-                var previousCoefficientGainDb = _equalizerCoefficientGainsDb[i];
-                _equalizerCoefficientGainsDb[i] = 0d;
-                _equalizerB0[i] = 1d;
-                _equalizerB1[i] = 0d;
-                _equalizerB2[i] = 0d;
-                _equalizerA1[i] = 0d;
-                _equalizerA2[i] = 0d;
-
-                if (_equalizerBandActive[i])
-                {
-                    if (_equalizerBypassDrainBlocks[i] <= 0 && Math.Abs(previousCoefficientGainDb) > 0.002d)
-                    {
-                        _equalizerBypassDrainBlocks[i] = EqualizerBypassDrainBlocks;
-                    }
-
-                    if (_equalizerBypassDrainBlocks[i] > 0)
-                    {
-                        _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
-                        _equalizerBypassDrainBlocks[i]--;
-                        allBandsSettled = false;
-                        continue;
-                    }
-
-                    ResetEqualizerBandState(i);
-                }
-
-                _equalizerBandActive[i] = false;
-                continue;
-            }
-
-            _equalizerBypassDrainBlocks[i] = 0;
-            if (_equalizerBandActive[i] && Math.Abs(gainDb - _equalizerCoefficientGainsDb[i]) < 0.002d)
-            {
-                _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
-                continue;
-            }
-
-            _equalizerBandActive[i] = true;
-            _equalizerActiveBandIndices[_equalizerActiveBandCount++] = i;
-            _equalizerCoefficientGainsDb[i] = gainDb;
-            var cosine = _equalizerCosines[i];
-            var alpha = _equalizerAlphas[i];
-            var amplitude = Math.Pow(10d, gainDb / 40d);
-            var b0 = 1d + alpha * amplitude;
-            var b1 = -2d * cosine;
-            var b2 = 1d - alpha * amplitude;
-            var a0 = 1d + alpha / amplitude;
-            var a1 = -2d * cosine;
-            var a2 = 1d - alpha / amplitude;
-
-            _equalizerB0[i] = b0 / a0;
-            _equalizerB1[i] = b1 / a0;
-            _equalizerB2[i] = b2 / a0;
-            _equalizerA1[i] = a1 / a0;
-            _equalizerA2[i] = a2 / a0;
-        }
-
-        _equalizerSmoothingSettled = allBandsSettled;
-    }
-
-    private void InitializeEqualizerFrequencyCache()
-    {
-        var nyquist = _sampleRate / 2d;
-        for (var i = 0; i < EqualizerFrequenciesHz.Length; i++)
-        {
-            var frequencyHz = Math.Clamp(EqualizerFrequenciesHz[i], 20d, nyquist * 0.92d);
-            var omega = 2d * Math.PI * frequencyHz / _sampleRate;
-            var sine = Math.Sin(omega);
-            _equalizerCosines[i] = Math.Cos(omega);
-            _equalizerAlphas[i] = sine / (2d * EqualizerQ);
-        }
-    }
-
-    private void ResetEqualizerBandState(int bandIndex)
-    {
-        _equalizerX1[bandIndex] = 0d;
-        _equalizerX2[bandIndex] = 0d;
-        _equalizerY1[bandIndex] = 0d;
-        _equalizerY2[bandIndex] = 0d;
-    }
-
-    private double ApplyEqualizer(double sample)
-    {
-        for (var activeBandIndex = 0; activeBandIndex < _equalizerActiveBandCount; activeBandIndex++)
-        {
-            var i = _equalizerActiveBandIndices[activeBandIndex];
-
-            var output = _equalizerB0[i] * sample
-                + _equalizerB1[i] * _equalizerX1[i]
-                + _equalizerB2[i] * _equalizerX2[i]
-                - _equalizerA1[i] * _equalizerY1[i]
-                - _equalizerA2[i] * _equalizerY2[i];
-            _equalizerX2[i] = _equalizerX1[i];
-            _equalizerX1[i] = FlushDenormal(sample);
-            _equalizerY2[i] = _equalizerY1[i];
-            _equalizerY1[i] = FlushDenormal(output);
-            sample = _equalizerY1[i];
-        }
-
-        return sample;
+        _graphicEqualizer.Update(_equalizerGainsDb, _equalizerSettingsRevision, sampleCount);
     }
 
     private double ApplyParametricEq(double sample)

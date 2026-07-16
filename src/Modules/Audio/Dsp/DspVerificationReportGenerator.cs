@@ -37,7 +37,7 @@ public sealed record DspVerificationCheck(
 public static class DspVerificationReportGenerator
 {
     private const int VerificationSampleRate = 48_000;
-    private static readonly double[] EqualizerFrequenciesHz = GraphicEqualizerVerificationHarness.BandFrequenciesHz.ToArray();
+    private static readonly double[] EqualizerFrequenciesHz = GraphicEqualizerVerification.BandFrequenciesHz.ToArray();
 
     public static DspVerificationReport Run()
     {
@@ -120,10 +120,10 @@ public static class DspVerificationReportGenerator
     {
         AddGraphicEqualizerResponseChecks(
             checks,
-            GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.BoostGainDb));
+            GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.BoostGainDb));
         AddGraphicEqualizerResponseChecks(
             checks,
-            GraphicEqualizerVerificationHarness.MeasureAllBands(GraphicEqualizerVerificationHarness.CutGainDb));
+            GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.CutGainDb));
     }
 
     private static void AddGraphicEqualizerResponseChecks(
@@ -134,9 +134,9 @@ public static class DspVerificationReportGenerator
         {
             checks.Add(new DspVerificationCheck(
                 "Graphic EQ",
-                $"{GraphicEqualizerVerificationHarness.FormatDeltaDb(measurement.RequestedGainDb)} on the {measurement.BandLabel} slider measures center and adjacent response",
+                $"{GraphicEqualizerResponse.FormatDeltaDb(measurement.RequestedGainDb)} on the {measurement.BandLabel} slider measures center and adjacent response",
                 measurement.MeasurementSummary,
-                "center response within 2.0 dB of requested gain; adjacent responses measured and not stronger than center response",
+                "center response within 2.0 dB of requested gain; adjacent responses measured and not stronger than center response; measured center matches modeled response",
                 measurement.Center.DeltaDb,
                 measurement.Passed,
                 measurement.Details));
