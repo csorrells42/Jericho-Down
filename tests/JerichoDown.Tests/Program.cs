@@ -2265,9 +2265,9 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(report.Contains("Limiter lookahead latency: 144 sample", StringComparison.Ordinal), "diagnostics report should separate limiter lookahead from graphic EQ latency");
     Assert(report.Contains("Driver, capture, sync, and output buffering are separate", StringComparison.Ordinal), "diagnostics report should not blame DSP latency for driver/output buffering");
     Assert(report.Contains("Processed Monitor Output", StringComparison.Ordinal), "diagnostics report should include processed monitor output settings");
-    Assert(report.Contains("WASAPI profile: Low latency shared, 45 ms", StringComparison.Ordinal), "diagnostics report should name the selected low-latency WASAPI profile");
-    Assert(report.Contains("Target monitor buffer: 45 ms", StringComparison.Ordinal), "diagnostics report should show the live monitor target buffer");
-    Assert(report.Contains("Maximum monitor buffer before trimming: 180 ms", StringComparison.Ordinal), "diagnostics report should show the low-latency trim ceiling");
+    Assert(report.Contains("WASAPI profile: Low latency shared, 35 ms", StringComparison.Ordinal), "diagnostics report should name the selected low-latency WASAPI profile");
+    Assert(report.Contains("Target monitor buffer: 35 ms", StringComparison.Ordinal), "diagnostics report should show the live monitor target buffer");
+    Assert(report.Contains("Maximum monitor buffer before trimming: 160 ms", StringComparison.Ordinal), "diagnostics report should show the low-latency trim ceiling");
 
     var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Focusrite USB ASIO");
     var asioInput = new AudioInputDevice(
@@ -2379,13 +2379,15 @@ static void ProcessedMonitorFollowsWasapiLatencyProfile()
     Assert(stability.ProcessedOutputProviderBufferDuration >= stability.ProcessedOutputMaximumBufferDuration, "processed output provider must hold the stability buffer");
 
     Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should request the low-latency WASAPI buffer");
-    Assert(lowLatency.ProcessedOutputInitialBufferDuration <= TimeSpan.FromMilliseconds(50), "low-latency profile should prime only a small live monitor buffer");
-    Assert(lowLatency.ProcessedOutputTargetBufferDuration <= TimeSpan.FromMilliseconds(50), "low-latency profile should trim toward a small headphone monitor buffer");
-    Assert(lowLatency.ProcessedOutputMaximumBufferDuration <= TimeSpan.FromMilliseconds(200), "low-latency profile should not silently keep the old 350 ms live buffer");
+    Assert(lowLatency.EffectiveLatencyMilliseconds == 35, "low-latency profile should shave monitor buffering without using the experimental 6 ms custom floor");
+    Assert(lowLatency.ProcessedOutputInitialBufferDuration <= TimeSpan.FromMilliseconds(40), "low-latency profile should prime only a small live monitor buffer");
+    Assert(lowLatency.ProcessedOutputTargetBufferDuration <= TimeSpan.FromMilliseconds(40), "low-latency profile should trim toward a small headphone monitor buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration <= TimeSpan.FromMilliseconds(160), "low-latency profile should not silently keep the old 350 ms live buffer");
     Assert(lowLatency.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(waveOutLatency), "low-latency maximum should still leave room for WaveOut fallback stability");
     Assert(lowLatency.ProcessedOutputProviderBufferDuration >= lowLatency.ProcessedOutputMaximumBufferDuration, "low-latency provider capacity should hold its maximum buffer");
 
     Assert(customMinimum.ProcessedOutputInitialBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.MinimumCustomLatencyMilliseconds), "minimum custom profile should be able to request the smallest supported WASAPI buffer");
+    Assert(customMinimum.EffectiveLatencyMilliseconds == 6, "minimum custom profile should expose an experimental 6 ms monitor request");
     Assert(customMinimum.ProcessedOutputTargetBufferDuration == customMinimum.ProcessedOutputInitialBufferDuration, "custom monitor target should follow the custom WASAPI request");
     Assert(customMinimum.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(120), "custom monitor maximum should keep a minimum safety cushion");
     Assert(waveOutLatency >= 120 && waveOutLatency <= 220, "WaveOut fallback latency should give physical devices room to stay smooth");
@@ -5250,6 +5252,8 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     Assert(windowXaml.Contains("WasapiOutputProfileComboBox", StringComparison.Ordinal), "WASAPI profile dropdown should be wired");
     Assert(windowXaml.Contains("WasapiExclusiveModeCheckBox", StringComparison.Ordinal), "WASAPI exclusive-mode checkbox should be wired");
     Assert(windowXaml.Contains("WasapiCustomLatencySlider", StringComparison.Ordinal), "WASAPI custom latency slider should be wired");
+    Assert(windowXaml.Contains("Minimum=\"6\"", StringComparison.Ordinal), "WASAPI custom slider should expose the experimental 6 ms live-monitor latency floor");
+    Assert(windowXaml.Contains("TickFrequency=\"1\"", StringComparison.Ordinal), "WASAPI custom slider should allow 1 ms latency steps");
 
     static object? GetProperty(object target, string propertyName)
     {

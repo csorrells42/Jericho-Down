@@ -15,12 +15,12 @@ public sealed record WasapiOutputSettings(
 {
     public const int StabilityLatencyMilliseconds = 120;
     public const int BalancedLatencyMilliseconds = 80;
-    public const int LowLatencyMilliseconds = 45;
-    public const int MinimumCustomLatencyMilliseconds = 30;
+    public const int LowLatencyMilliseconds = 35;
+    public const int MinimumCustomLatencyMilliseconds = 6;
     public const int MaximumCustomLatencyMilliseconds = 240;
     public const int StabilityProcessedOutputMaximumBufferMilliseconds = 350;
     public const int BalancedProcessedOutputMaximumBufferMilliseconds = 240;
-    public const int LowLatencyProcessedOutputMaximumBufferMilliseconds = 180;
+    public const int LowLatencyProcessedOutputMaximumBufferMilliseconds = 160;
     public const int ProcessedOutputProviderBufferMilliseconds = 500;
 
     public static WasapiOutputSettings Default { get; } = new(

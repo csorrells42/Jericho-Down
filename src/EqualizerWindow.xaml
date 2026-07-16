@@ -2961,7 +2961,7 @@
                             <ColumnDefinition Width="46" />
                           </Grid.ColumnDefinitions>
                           <TextBlock Text="Buffer" Foreground="#B8C7D9" FontSize="11" VerticalAlignment="Center" />
-                          <Slider x:Name="WasapiCustomLatencySlider" Grid.Column="1" Minimum="30" Maximum="240" TickFrequency="10" IsSnapToTickEnabled="True" Value="120" ValueChanged="WasapiOutputLatencyChanged" />
+                          <Slider x:Name="WasapiCustomLatencySlider" Grid.Column="1" Minimum="6" Maximum="240" TickFrequency="1" IsSnapToTickEnabled="True" Value="120" ValueChanged="WasapiOutputLatencyChanged" />
                           <TextBlock x:Name="WasapiCustomLatencyValueText" Grid.Column="2" Text="120 ms" Foreground="#F8FAFC" FontSize="11" TextAlignment="Right" VerticalAlignment="Center" />
                         </Grid>
                       </StackPanel>
