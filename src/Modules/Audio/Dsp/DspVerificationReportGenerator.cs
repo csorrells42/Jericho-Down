@@ -152,11 +152,12 @@ public static class DspVerificationReportGenerator
             gains[i] = GraphicEqualizerSettings.Default.MaximumGainDb;
         }
 
-        var response = GraphicEqualizerVerification.MeasureCurve(gains);
+        var audit = GraphicEqualizerVerification.AuditAdjustments(gains);
+        var response = audit.MeasuredCurve;
         var lowAverageDb = response.Bands.Take(6).Average(band => band.DeltaDb);
         var highAverageDb = response.Bands.Skip(12).Average(band => band.DeltaDb);
         var lowLiftDb = lowAverageDb - highAverageDb;
-        var passed = response.Passed && lowLiftDb >= 8d;
+        var passed = audit.Passed && lowLiftDb >= 8d;
 
         checks.Add(new DspVerificationCheck(
             "Graphic EQ",
@@ -165,7 +166,16 @@ public static class DspVerificationReportGenerator
             "six lowest sliders at maximum must produce at least +8 dB more low-band than high-band energy and match modeled response",
             lowLiftDb,
             passed,
-            response.Summary));
+            audit.Summary));
+
+        checks.Add(new DspVerificationCheck(
+            "Graphic EQ",
+            "Every graphic EQ slider adjustment is audited with requested, modeled, measured, and interaction dB",
+            $"{audit.BandCount} sliders; adjusted {audit.AdjustedBandCount}; max model error {GraphicEqualizerResponse.FormatDeltaDb(audit.MaximumMeasuredModelErrorDb)}; max interaction {GraphicEqualizerResponse.FormatDeltaDb(audit.MaximumInteractionMagnitudeDb)}",
+            "one audit row per EQ band; all requested/model/measured values finite; max measured-model error within 0.45 dB",
+            audit.MaximumMeasuredModelErrorDb,
+            audit.Passed && audit.BandCount == GraphicEqualizerSettings.Default.BandCount,
+            audit.Summary));
     }
 
     private static void AddInputGainChecks(ICollection<DspVerificationCheck> checks)

@@ -45,6 +45,55 @@ public static class GraphicEqualizerVerification
         return new GraphicEqualizerModeledCurve(VerificationSampleRate, requestedGainsDb, points);
     }
 
+    public static GraphicEqualizerAdjustmentReport AuditAdjustments(IReadOnlyList<double> gainsDb)
+    {
+        var settings = GraphicEqualizerSettings.Default;
+        var requestedGainsDb = settings.CreateFlatGains();
+        for (var i = 0; i < requestedGainsDb.Length; i++)
+        {
+            requestedGainsDb[i] = i < gainsDb.Count ? settings.ClampGainDb(gainsDb[i]) : 0d;
+        }
+
+        var modeledCurve = ModelCurve(requestedGainsDb);
+        var measuredCurve = MeasureCurve(requestedGainsDb);
+        var adjustments = new List<GraphicEqualizerAdjustmentResponse>(settings.BandCount);
+
+        for (var bandIndex = 0; bandIndex < settings.BandCount; bandIndex++)
+        {
+            var frequencyHz = settings.BandFrequenciesHz[bandIndex];
+            var modeledCenter = FindModeledPoint(modeledCurve, frequencyHz).ModeledDeltaDb;
+            var measuredCenter = measuredCurve.Bands[bandIndex].DeltaDb;
+            var lowerMidpoint = bandIndex > 0
+                ? FindModeledPoint(
+                    modeledCurve,
+                    Math.Sqrt(settings.BandFrequenciesHz[bandIndex - 1] * frequencyHz)).ModeledDeltaDb
+                : (double?)null;
+            var upperMidpoint = bandIndex < settings.BandCount - 1
+                ? FindModeledPoint(
+                    modeledCurve,
+                    Math.Sqrt(frequencyHz * settings.BandFrequenciesHz[bandIndex + 1])).ModeledDeltaDb
+                : (double?)null;
+
+            adjustments.Add(new GraphicEqualizerAdjustmentResponse(
+                bandIndex,
+                frequencyHz,
+                requestedGainsDb[bandIndex],
+                modeledCenter,
+                measuredCenter,
+                measuredCenter - modeledCenter,
+                modeledCenter - requestedGainsDb[bandIndex],
+                lowerMidpoint,
+                upperMidpoint));
+        }
+
+        return new GraphicEqualizerAdjustmentReport(
+            VerificationSampleRate,
+            requestedGainsDb,
+            modeledCurve,
+            measuredCurve,
+            adjustments);
+    }
+
     public static GraphicEqualizerCurveResponse MeasureCurve(IReadOnlyList<double> gainsDb)
     {
         var settings = GraphicEqualizerSettings.Default;
@@ -216,6 +265,27 @@ public static class GraphicEqualizerVerification
     }
 
     private static double ToDecibels(double ratio) => 20d * Math.Log10(Math.Max(1e-12d, ratio));
+
+    private static GraphicEqualizerModeledResponsePoint FindModeledPoint(
+        GraphicEqualizerModeledCurve curve,
+        double frequencyHz)
+    {
+        GraphicEqualizerModeledResponsePoint? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (var point in curve.Points)
+        {
+            var distance = Math.Abs(point.FrequencyHz - frequencyHz);
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            best = point;
+            bestDistance = distance;
+        }
+
+        return best ?? throw new InvalidOperationException("Graphic EQ modeled curve did not contain any response points.");
+    }
 
     private sealed record ProcessedTone(IReadOnlyList<float> Samples, double ModeledDeltaDb);
 }

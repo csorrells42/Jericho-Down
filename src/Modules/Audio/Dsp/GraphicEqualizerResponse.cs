@@ -236,3 +236,77 @@ public sealed record GraphicEqualizerModeledCurve(
         GraphicEqualizerResponse.FormatDeltaDb(MinimumDeltaDb),
         GraphicEqualizerResponse.FormatDeltaDb(MaximumDeltaDb));
 }
+
+public sealed record GraphicEqualizerAdjustmentResponse(
+    int BandIndex,
+    double FrequencyHz,
+    double RequestedGainDb,
+    double ModeledCenterDeltaDb,
+    double MeasuredCenterDeltaDb,
+    double MeasuredModelErrorDb,
+    double InteractionDeltaDb,
+    double? LowerMidpointModeledDeltaDb,
+    double? UpperMidpointModeledDeltaDb)
+{
+    private const double MeasuredModelToleranceDb = 0.45d;
+
+    public bool IsAdjusted => Math.Abs(RequestedGainDb) >= GraphicEqualizerSettings.DefaultInactiveGainThresholdDb;
+
+    public bool IsFinite =>
+        double.IsFinite(FrequencyHz) &&
+        double.IsFinite(RequestedGainDb) &&
+        double.IsFinite(ModeledCenterDeltaDb) &&
+        double.IsFinite(MeasuredCenterDeltaDb) &&
+        double.IsFinite(MeasuredModelErrorDb) &&
+        double.IsFinite(InteractionDeltaDb) &&
+        (!LowerMidpointModeledDeltaDb.HasValue || double.IsFinite(LowerMidpointModeledDeltaDb.Value)) &&
+        (!UpperMidpointModeledDeltaDb.HasValue || double.IsFinite(UpperMidpointModeledDeltaDb.Value));
+
+    public bool Passed => IsFinite && Math.Abs(MeasuredModelErrorDb) <= MeasuredModelToleranceDb;
+
+    public string BandLabel => GraphicEqualizerResponse.FormatFrequency(FrequencyHz);
+
+    public string Summary => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0}: requested {1}; modeled {2}; measured {3}; model error {4}; interaction {5}",
+        BandLabel,
+        GraphicEqualizerResponse.FormatDeltaDb(RequestedGainDb),
+        GraphicEqualizerResponse.FormatDeltaDb(ModeledCenterDeltaDb),
+        GraphicEqualizerResponse.FormatDeltaDb(MeasuredCenterDeltaDb),
+        GraphicEqualizerResponse.FormatDeltaDb(MeasuredModelErrorDb),
+        GraphicEqualizerResponse.FormatDeltaDb(InteractionDeltaDb));
+}
+
+public sealed record GraphicEqualizerAdjustmentReport(
+    int SampleRate,
+    IReadOnlyList<double> RequestedGainsDb,
+    GraphicEqualizerModeledCurve ModeledCurve,
+    GraphicEqualizerCurveResponse MeasuredCurve,
+    IReadOnlyList<GraphicEqualizerAdjustmentResponse> Adjustments)
+{
+    public int BandCount => Adjustments.Count;
+
+    public int AdjustedBandCount => Adjustments.Count(adjustment => adjustment.IsAdjusted);
+
+    public bool Passed =>
+        ModeledCurve.Passed &&
+        MeasuredCurve.Passed &&
+        Adjustments.All(adjustment => adjustment.Passed);
+
+    public double MaximumMeasuredModelErrorDb => Adjustments.Count == 0
+        ? 0d
+        : Adjustments.Max(adjustment => Math.Abs(adjustment.MeasuredModelErrorDb));
+
+    public double MaximumInteractionMagnitudeDb => Adjustments.Count == 0
+        ? 0d
+        : Adjustments.Max(adjustment => Math.Abs(adjustment.InteractionDeltaDb));
+
+    public string Summary => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0}/{1} slider audits passed; adjusted {2}; max measured-model error {3}; max interaction {4}",
+        Adjustments.Count(adjustment => adjustment.Passed),
+        Adjustments.Count,
+        AdjustedBandCount,
+        GraphicEqualizerResponse.FormatDeltaDb(MaximumMeasuredModelErrorDb),
+        GraphicEqualizerResponse.FormatDeltaDb(MaximumInteractionMagnitudeDb));
+}

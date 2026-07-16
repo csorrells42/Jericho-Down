@@ -29,5 +29,6 @@ Graphic EQ notes:
 - The processor uses flat arrays, active-band indexes, preallocated state, and `Span<T>` block processing so the steady audio path does not allocate while monitoring.
 - `GraphicEqualizerVerification` measures isolated slider response and complete multi-slider curves against the modeled biquad response.
 - `GraphicEqualizerVerification.ModelCurve(...)` gives a pure modeled curve at band centers and between-band midpoints without running audio through the processor.
+- `GraphicEqualizerVerification.AuditAdjustments(...)` returns one requested/modeled/measured/interaction row per EQ slider.
 
 Keep NAudio-owned effect verification separate from custom Jericho DSP claims.

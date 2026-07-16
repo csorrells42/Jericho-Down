@@ -52,6 +52,7 @@ var tests = new (string Name, Action Test)[]
     ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
     ("Graphic EQ processor is zero-latency and reusable", GraphicEqProcessorIsZeroLatencyAndReusable),
     ("Graphic EQ modeled response describes expected curves", GraphicEqModeledResponseDescribesExpectedCurves),
+    ("Graphic EQ adjustment audit quantifies every slider", GraphicEqAdjustmentAuditQuantifiesEverySlider),
     ("Graphic EQ verification measures all bands and adjacent response", GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse),
     ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
@@ -669,6 +670,31 @@ static void GraphicEqModeledResponseDescribesExpectedCurves()
     Assert(lowCurve.Points.Any(point => point.NearestBandGainDb == settings.MaximumGainDb), "modeled curve should expose nearest-band requested gain metadata");
 }
 
+static void GraphicEqAdjustmentAuditQuantifiesEverySlider()
+{
+    var settings = GraphicEqualizerSettings.Default;
+    var gains = settings.CreateFlatGains();
+    gains[0] = 12d;
+    gains[1] = 9d;
+    gains[10] = -6d;
+    gains[19] = 3d;
+
+    var audit = GraphicEqualizerVerification.AuditAdjustments(gains);
+
+    Assert(audit.Passed, "graphic EQ adjustment audit should pass all requested/model/measured rows: " + audit.Summary);
+    Assert(audit.BandCount == settings.BandCount, "graphic EQ adjustment audit should include one row per slider");
+    Assert(audit.AdjustedBandCount == 4, "graphic EQ adjustment audit should count adjusted sliders");
+    Assert(audit.RequestedGainsDb.Count == settings.BandCount, "graphic EQ adjustment audit should preserve clamped requested gains");
+    Assert(audit.MaximumMeasuredModelErrorDb < 0.45d, "graphic EQ adjustment audit should keep measured and modeled response aligned");
+    Assert(audit.MaximumInteractionMagnitudeDb > 0.5d, "graphic EQ adjustment audit should quantify adjacent-band interaction");
+    Assert(audit.Adjustments.All(adjustment => adjustment.IsFinite), "every graphic EQ adjustment audit row should expose finite numbers");
+    Assert(audit.Adjustments[0].LowerMidpointModeledDeltaDb is null, "lowest EQ band should have no lower midpoint");
+    Assert(audit.Adjustments[0].UpperMidpointModeledDeltaDb.HasValue, "lowest EQ band should expose upper midpoint interaction");
+    Assert(audit.Adjustments[^1].LowerMidpointModeledDeltaDb.HasValue, "highest EQ band should expose lower midpoint interaction");
+    Assert(audit.Adjustments[^1].UpperMidpointModeledDeltaDb is null, "highest EQ band should have no upper midpoint");
+    Assert(audit.Adjustments[10].RequestedGainDb < 0d && audit.Adjustments[10].MeasuredCenterDeltaDb < -4d, "audited cut slider should measure a real center-band cut");
+}
+
 static void GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse()
 {
     var expectedBands = GraphicEqualizerVerification.BandFrequenciesHz.Count;
@@ -727,6 +753,7 @@ static void DspVerificationReportProvesCustomDspClaims()
     Assert(graphicEqChecks.Any(check => check.Claim.Contains("+6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include boost measurements");
     Assert(graphicEqChecks.Any(check => check.Claim.Contains("-6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include cut measurements");
     Assert(graphicEqChecks.Any(check => check.Claim.Contains("Stacked adjacent low-frequency sliders", StringComparison.Ordinal)), "graphic EQ verification should include a measured full-curve low-slider check");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("Every graphic EQ slider adjustment is audited", StringComparison.Ordinal)), "graphic EQ verification should include an every-slider adjustment audit");
     Assert(graphicEqPerBandChecks.All(check => check.Claim.Contains("adjacent", StringComparison.Ordinal)), "graphic EQ per-band verification should explicitly measure adjacent-band response");
     Assert(graphicEqPerBandChecks.All(check => check.Details.Contains("Center error", StringComparison.Ordinal)), "graphic EQ per-band verification should report numeric center error");
     foreach (var effect in new[]
