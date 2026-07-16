@@ -31,6 +31,18 @@ public sealed class StereoVoiceProcessorSampleProvider : ISampleProvider
 
     public WaveFormat WaveFormat => _source.WaveFormat;
 
+    public int GraphicEqualizerLatencySamples => Math.Max(LeftProcessor.GraphicEqualizerLatencySamples, RightProcessor.GraphicEqualizerLatencySamples);
+
+    public double GraphicEqualizerLatencyMilliseconds => Math.Max(LeftProcessor.GraphicEqualizerLatencyMilliseconds, RightProcessor.GraphicEqualizerLatencyMilliseconds);
+
+    public int LimiterLookaheadLatencySamples => Math.Max(LeftProcessor.LimiterLookaheadLatencySamples, RightProcessor.LimiterLookaheadLatencySamples);
+
+    public double LimiterLookaheadLatencyMilliseconds => Math.Max(LeftProcessor.LimiterLookaheadLatencyMilliseconds, RightProcessor.LimiterLookaheadLatencyMilliseconds);
+
+    public int KnownDspAlgorithmicLatencySamples => Math.Max(LeftProcessor.KnownDspAlgorithmicLatencySamples, RightProcessor.KnownDspAlgorithmicLatencySamples);
+
+    public double KnownDspAlgorithmicLatencyMilliseconds => Math.Max(LeftProcessor.KnownDspAlgorithmicLatencyMilliseconds, RightProcessor.KnownDspAlgorithmicLatencyMilliseconds);
+
     public int LastProcessedSampleCount { get; private set; }
 
     public ReadOnlySpan<float> LastProcessedSamples => _lastProcessedSamples.AsSpan(0, LastProcessedSampleCount);

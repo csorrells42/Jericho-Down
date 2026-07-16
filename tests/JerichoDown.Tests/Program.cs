@@ -51,6 +51,7 @@ var tests = new (string Name, Action Test)[]
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
     ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
     ("Graphic EQ processor is zero-latency and reusable", GraphicEqProcessorIsZeroLatencyAndReusable),
+    ("Voice processor reports EQ and limiter monitoring latency", VoiceProcessorReportsEqAndLimiterMonitoringLatency),
     ("Graphic EQ modeled response describes expected curves", GraphicEqModeledResponseDescribesExpectedCurves),
     ("Graphic EQ adjustment audit quantifies every slider", GraphicEqAdjustmentAuditQuantifiesEverySlider),
     ("Graphic EQ verification measures all bands and adjacent response", GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse),
@@ -629,6 +630,43 @@ static void GraphicEqProcessorIsZeroLatencyAndReusable()
     processor.Process(impulse, processed);
     var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
     Assert(allocatedAfter == allocatedBefore, "steady graphic EQ block processing should not allocate on the audio thread");
+}
+
+static void VoiceProcessorReportsEqAndLimiterMonitoringLatency()
+{
+    const int sampleRate = 48_000;
+    var lowLatencySettings = CreateTransparentVoiceSettings();
+    var blockProvider = new LiveMicBlockSampleProvider(sampleRate);
+    var provider = new VoiceProcessorSampleProvider(blockProvider, new VoiceSampleProcessor(lowLatencySettings, sampleRate));
+    var samples = GenerateSine(sampleRate, 1_000d, 0.25d, 0.05d);
+    var output = new float[samples.Length];
+
+    blockProvider.SetBlock(samples);
+    provider.Read(output, 0, output.Length);
+
+    Assert(provider.GraphicEqualizerLatencySamples == 0, "live provider should report graphic EQ as zero-latency");
+    Assert(Math.Abs(provider.GraphicEqualizerLatencyMilliseconds) < 0.000001d, "live provider should report graphic EQ latency as 0 ms");
+    Assert(provider.LimiterLookaheadLatencySamples == 0, "transparent low-latency voice settings should not add limiter lookahead");
+    Assert(provider.KnownDspAlgorithmicLatencySamples == 0, "transparent live provider should have no known algorithmic DSP delay");
+    Assert(provider.Processor.Telemetry.KnownDspAlgorithmicLatencySamples == 0, "telemetry should preserve the provider DSP latency total");
+
+    var limiterSettings = CreateTransparentVoiceSettings();
+    limiterSettings.LimiterEnabled = true;
+    limiterSettings.LimiterLookaheadEnabled = true;
+    limiterSettings.LimiterLookaheadMs = 3d;
+    limiterSettings.LimiterSoftClipEnabled = false;
+    var limiterProcessor = new VoiceSampleProcessor(limiterSettings, sampleRate);
+    var limiterOutput = new float[samples.Length];
+
+    limiterProcessor.Process(samples, limiterOutput);
+
+    Assert(limiterProcessor.GraphicEqualizerLatencySamples == 0, "graphic EQ latency should stay zero even when limiter lookahead is enabled");
+    Assert(limiterProcessor.LimiterLookaheadLatencySamples == 144, "3 ms limiter lookahead at 48 kHz should report 144 samples");
+    Assert(Math.Abs(limiterProcessor.LimiterLookaheadLatencyMilliseconds - 3d) < 0.001d, "limiter lookahead should report the matching milliseconds");
+    Assert(limiterProcessor.KnownDspAlgorithmicLatencySamples == 144, "known DSP latency should separate limiter lookahead from graphic EQ");
+    Assert(limiterProcessor.Telemetry.GraphicEqualizerLatencySamples == 0, "telemetry should report zero graphic EQ latency");
+    Assert(limiterProcessor.Telemetry.LimiterLookaheadLatencySamples == 144, "telemetry should report limiter lookahead latency");
+    Assert(limiterProcessor.Telemetry.KnownDspAlgorithmicLatencySamples == 144, "telemetry should expose known total algorithmic DSP latency");
 }
 
 static void GraphicEqModeledResponseDescribesExpectedCurves()
@@ -1391,14 +1429,23 @@ static void VoiceTelemetrySnapshotIsIndependent()
     var telemetry = new VoiceProcessingTelemetry
     {
         CompressorGainReductionDb = 4.5,
+        GraphicEqualizerLatencySamples = 0,
+        GraphicEqualizerLatencyMilliseconds = 0d,
+        LimiterLookaheadLatencySamples = 144,
+        LimiterLookaheadLatencyMilliseconds = 3d,
         AudioLateFrameCount = 7
     };
     var snapshot = telemetry.Snapshot();
 
     telemetry.CompressorGainReductionDb = 0;
+    telemetry.LimiterLookaheadLatencySamples = 0;
+    telemetry.LimiterLookaheadLatencyMilliseconds = 0d;
     telemetry.AudioLateFrameCount = 0;
 
     Assert(Math.Abs(snapshot.CompressorGainReductionDb - 4.5) < 0.001, "snapshot should preserve compressor reduction");
+    Assert(snapshot.GraphicEqualizerLatencySamples == 0, "snapshot should preserve graphic EQ zero-latency reporting");
+    Assert(snapshot.LimiterLookaheadLatencySamples == 144, "snapshot should preserve limiter lookahead latency samples");
+    Assert(Math.Abs(snapshot.KnownDspAlgorithmicLatencyMilliseconds - 3d) < 0.001d, "snapshot should preserve known DSP latency milliseconds");
     Assert(snapshot.AudioLateFrameCount == 7, "snapshot should preserve late frame count");
 }
 
@@ -2191,7 +2238,14 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
         new AudioDeviceFormat(48_000, 2, 32),
         new AudioDeviceFormat(44_100, 2, 16),
         [appInput],
-        [output]);
+        [output],
+        liveTelemetry: new VoiceProcessingTelemetry
+        {
+            GraphicEqualizerLatencySamples = 0,
+            GraphicEqualizerLatencyMilliseconds = 0d,
+            LimiterLookaheadLatencySamples = 144,
+            LimiterLookaheadLatencyMilliseconds = 3d
+        });
 
     Assert(report.Contains("Audio Device Diagnostics", StringComparison.Ordinal), "diagnostics report should have a clear title");
     Assert(report.Contains("Selected Input", StringComparison.Ordinal), "diagnostics report should identify the selected input");
@@ -2199,6 +2253,10 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(report.Contains("Process loopback target PID: 4242", StringComparison.Ordinal), "diagnostics report should show app-loopback process IDs");
     Assert(report.Contains("sample rates differ", StringComparison.OrdinalIgnoreCase), "diagnostics report should warn when output resampling will be used");
     Assert(report.Contains("refresh audio devices", StringComparison.OrdinalIgnoreCase), "diagnostics report should explain app-loopback refresh behavior");
+    Assert(report.Contains("Live DSP / Monitor Latency", StringComparison.Ordinal), "diagnostics report should include live DSP latency when telemetry is available");
+    Assert(report.Contains("Graphic EQ algorithmic latency: 0 sample", StringComparison.Ordinal), "diagnostics report should make graphic EQ zero-latency explicit");
+    Assert(report.Contains("Limiter lookahead latency: 144 sample", StringComparison.Ordinal), "diagnostics report should separate limiter lookahead from graphic EQ latency");
+    Assert(report.Contains("Driver, capture, sync, and output buffering are separate", StringComparison.Ordinal), "diagnostics report should not blame DSP latency for driver/output buffering");
 
     var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Focusrite USB ASIO");
     var asioInput = new AudioInputDevice(
@@ -3076,6 +3134,7 @@ static void StereoInputDspAppliesIndependentlyPerChannel()
     var read = provider.Read(output, 0, output.Length);
 
     Assert(read == sourceSamples.Length, "stereo DSP provider should read the source block");
+    Assert(provider.KnownDspAlgorithmicLatencySamples == 0, "stereo DSP provider should expose zero known latency for transparent settings");
     Assert(output[^2] > 0f && output[^2] < sourceSamples[^2] * 0.6f, "left stereo channel should receive DSP input trim");
     Assert(output[^1] < 0f && Math.Abs(output[^1]) < Math.Abs(sourceSamples[^1]) * 0.6f, "right stereo channel should receive DSP input trim");
     Assert(Math.Abs(output[^2] / output[^1] + 2d) < 0.2d, "stereo DSP should preserve independent left/right proportions");

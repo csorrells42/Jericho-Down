@@ -3221,7 +3221,8 @@ public partial class EqualizerWindow : Window
             inputDevices,
             outputDevices,
             selectedInput?.IsAsio == true ? _spectrumService.ActiveAsioInputDiagnostics : null,
-            selectedInput?.IsAsio == true ? _spectrumService.ActiveInputFormatStatus : null);
+            selectedInput?.IsAsio == true ? _spectrumService.ActiveInputFormatStatus : null,
+            _latestFrame?.Telemetry);
         return report;
     }
 

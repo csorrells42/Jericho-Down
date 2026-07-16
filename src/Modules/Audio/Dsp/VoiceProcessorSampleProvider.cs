@@ -20,6 +20,18 @@ public sealed class VoiceProcessorSampleProvider : ISampleProvider
 
     public WaveFormat WaveFormat => _source.WaveFormat;
 
+    public int GraphicEqualizerLatencySamples => Processor.GraphicEqualizerLatencySamples;
+
+    public double GraphicEqualizerLatencyMilliseconds => Processor.GraphicEqualizerLatencyMilliseconds;
+
+    public int LimiterLookaheadLatencySamples => Processor.LimiterLookaheadLatencySamples;
+
+    public double LimiterLookaheadLatencyMilliseconds => Processor.LimiterLookaheadLatencyMilliseconds;
+
+    public int KnownDspAlgorithmicLatencySamples => Processor.KnownDspAlgorithmicLatencySamples;
+
+    public double KnownDspAlgorithmicLatencyMilliseconds => Processor.KnownDspAlgorithmicLatencyMilliseconds;
+
     public int LastProcessedSampleCount { get; private set; }
 
     public ReadOnlySpan<float> LastProcessedSamples => _lastProcessedSamples.AsSpan(0, LastProcessedSampleCount);

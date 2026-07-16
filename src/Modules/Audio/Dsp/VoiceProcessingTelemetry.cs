@@ -34,6 +34,18 @@ public sealed class VoiceProcessingTelemetry
 
     public double LimiterReductionDb { get; set; }
 
+    public int GraphicEqualizerLatencySamples { get; set; }
+
+    public double GraphicEqualizerLatencyMilliseconds { get; set; }
+
+    public int LimiterLookaheadLatencySamples { get; set; }
+
+    public double LimiterLookaheadLatencyMilliseconds { get; set; }
+
+    public int KnownDspAlgorithmicLatencySamples => GraphicEqualizerLatencySamples + LimiterLookaheadLatencySamples;
+
+    public double KnownDspAlgorithmicLatencyMilliseconds => GraphicEqualizerLatencyMilliseconds + LimiterLookaheadLatencyMilliseconds;
+
     public double ProgramPeakLevel { get; set; }
 
     public double ProgramRmsLevel { get; set; }
@@ -76,6 +88,10 @@ public sealed class VoiceProcessingTelemetry
             PresenceBoostDb = PresenceBoostDb,
             MakeupGainDb = MakeupGainDb,
             LimiterReductionDb = LimiterReductionDb,
+            GraphicEqualizerLatencySamples = GraphicEqualizerLatencySamples,
+            GraphicEqualizerLatencyMilliseconds = GraphicEqualizerLatencyMilliseconds,
+            LimiterLookaheadLatencySamples = LimiterLookaheadLatencySamples,
+            LimiterLookaheadLatencyMilliseconds = LimiterLookaheadLatencyMilliseconds,
             ProgramPeakLevel = ProgramPeakLevel,
             ProgramRmsLevel = ProgramRmsLevel,
             MasterLimiterReductionDb = MasterLimiterReductionDb,

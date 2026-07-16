@@ -366,9 +366,25 @@ public sealed class VoiceSampleProcessor
         telemetry.PresenceBoostDb = 0d;
         telemetry.MakeupGainDb = Math.Abs(_settings.MakeupGainDb);
         telemetry.LimiterReductionDb = _limiterEnvelopeReductionDb;
+        telemetry.GraphicEqualizerLatencySamples = GraphicEqualizerLatencySamples;
+        telemetry.GraphicEqualizerLatencyMilliseconds = GraphicEqualizerLatencyMilliseconds;
+        telemetry.LimiterLookaheadLatencySamples = LimiterLookaheadLatencySamples;
+        telemetry.LimiterLookaheadLatencyMilliseconds = LimiterLookaheadLatencyMilliseconds;
     }
 
     public VoiceProcessingTelemetry Telemetry { get; private set; } = new();
+
+    public int GraphicEqualizerLatencySamples => _graphicEqualizer.LatencySamples;
+
+    public double GraphicEqualizerLatencyMilliseconds => _graphicEqualizer.LatencyMilliseconds;
+
+    public int LimiterLookaheadLatencySamples => CalculateLimiterLookaheadTargetSamples();
+
+    public double LimiterLookaheadLatencyMilliseconds => SamplesToMilliseconds(LimiterLookaheadLatencySamples);
+
+    public int KnownDspAlgorithmicLatencySamples => GraphicEqualizerLatencySamples + LimiterLookaheadLatencySamples;
+
+    public double KnownDspAlgorithmicLatencyMilliseconds => GraphicEqualizerLatencyMilliseconds + LimiterLookaheadLatencyMilliseconds;
 
     private void UpdateBlockCoefficients(int sampleCount)
     {
@@ -514,9 +530,7 @@ public sealed class VoiceSampleProcessor
         _limiterCeilingCoefficient = TimeCoefficient(8d);
         _limiterReleaseCoefficient = TimeCoefficient(_settings.LimiterReleaseMs);
         _limiterWetCoefficient = TimeCoefficient(10d);
-        _limiterLookaheadTargetSamples = _settings.LimiterLookaheadEnabled && _settings.LimiterLookaheadMs > 0d
-            ? Math.Clamp((int)(_sampleRate * _settings.LimiterLookaheadMs / 1000d), 1, (int)(_sampleRate * 0.02d))
-            : 0;
+        _limiterLookaheadTargetSamples = CalculateLimiterLookaheadTargetSamples();
         var limiterSoftClipDriveDb = Math.Clamp(_settings.LimiterSoftClipDriveDb, 0d, 12d);
         _limiterSoftClipWetCoefficient = TimeCoefficient(12d);
         _limiterSoftClipKneeFactor = Math.Clamp(0.9d - limiterSoftClipDriveDb * 0.012d, 0.76d, 0.9d);
@@ -2116,6 +2130,18 @@ public sealed class VoiceSampleProcessor
     {
         var clampedMs = Math.Clamp(milliseconds, 0.1d, 2000d);
         return 1d - Math.Exp(-1d / (_sampleRate * clampedMs / 1000d));
+    }
+
+    private int CalculateLimiterLookaheadTargetSamples()
+    {
+        return _settings.LimiterEnabled && _settings.LimiterLookaheadEnabled && _settings.LimiterLookaheadMs > 0d
+            ? Math.Clamp((int)(_sampleRate * _settings.LimiterLookaheadMs / 1000d), 1, (int)(_sampleRate * 0.02d))
+            : 0;
+    }
+
+    private double SamplesToMilliseconds(int samples)
+    {
+        return Math.Max(0, samples) * 1000d / _sampleRate;
     }
 
     private static double SmoothReductionGain(double currentGain, double targetGain, double attackCoefficient, double releaseCoefficient)

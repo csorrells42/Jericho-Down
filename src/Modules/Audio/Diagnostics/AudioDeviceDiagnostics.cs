@@ -1,6 +1,7 @@
 using System.Text;
 using JerichoDown.Modules.Audio.Asio;
 using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Dsp;
 using NAudio.CoreAudioApi;
 using NAudio.Dmo;
 using NAudio.Wave;
@@ -17,7 +18,8 @@ public static class AudioDeviceDiagnostics
         IReadOnlyList<AudioInputDevice> inputDevices,
         IReadOnlyList<AudioOutputDevice> outputDevices,
         AsioInputCaptureDiagnostics? asioInputDiagnostics = null,
-        string? activeInputStatus = null)
+        string? activeInputStatus = null,
+        VoiceProcessingTelemetry? liveTelemetry = null)
     {
         var report = new StringBuilder();
         report.AppendLine("Audio Device Diagnostics");
@@ -29,12 +31,28 @@ public static class AudioDeviceDiagnostics
 
         AppendInputSection(report, selectedInput, inputFormat);
         AppendAsioRuntimeSection(report, selectedInput, asioInputDiagnostics, activeInputStatus);
+        AppendLiveDspLatencySection(report, liveTelemetry);
         report.AppendLine();
         AppendOutputSection(report, selectedOutput, outputFormat);
         report.AppendLine();
         AppendWarnings(report, selectedInput, selectedOutput, inputFormat, outputFormat);
 
         return report.ToString().TrimEnd();
+    }
+
+    private static void AppendLiveDspLatencySection(StringBuilder report, VoiceProcessingTelemetry? telemetry)
+    {
+        if (telemetry is null)
+        {
+            return;
+        }
+
+        report.AppendLine();
+        report.AppendLine("Live DSP / Monitor Latency");
+        report.AppendLine($"- Graphic EQ algorithmic latency: {telemetry.GraphicEqualizerLatencySamples} sample(s) ({telemetry.GraphicEqualizerLatencyMilliseconds:0.00} ms)");
+        report.AppendLine($"- Limiter lookahead latency: {telemetry.LimiterLookaheadLatencySamples} sample(s) ({telemetry.LimiterLookaheadLatencyMilliseconds:0.00} ms)");
+        report.AppendLine($"- Known DSP algorithmic latency: {telemetry.KnownDspAlgorithmicLatencySamples} sample(s) ({telemetry.KnownDspAlgorithmicLatencyMilliseconds:0.00} ms)");
+        report.AppendLine("- Driver, capture, sync, and output buffering are separate from this DSP latency.");
     }
 
     private static void AppendInputSection(StringBuilder report, AudioInputDevice? selectedInput, AudioDeviceFormat? inputFormat)
