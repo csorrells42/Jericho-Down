@@ -1031,6 +1031,7 @@ public partial class EqualizerWindow : Window
         channel.VolumePercent = Math.Clamp(state.VolumePercent ?? 100d, 0d, 150d);
         channel.InputGainDb = Math.Clamp(state.InputGainDb ?? 0d, -24d, 24d);
         channel.Pan = Math.Clamp(state.Pan ?? 0d, -100d, 100d);
+        channel.DuplicateMonoToStereo = state.DuplicateMonoToStereo;
         channel.PolarityInverted = state.PolarityInverted;
         channel.IsSoloed = state.IsSoloed;
         channel.DelayMilliseconds = Math.Clamp(state.DelayMilliseconds ?? 0d, 0d, 250d);
@@ -1566,6 +1567,7 @@ public partial class EqualizerWindow : Window
                 VolumePercent = channel.VolumePercent,
                 InputGainDb = channel.InputGainDb,
                 Pan = channel.Pan,
+                DuplicateMonoToStereo = channel.DuplicateMonoToStereo,
                 PolarityInverted = channel.PolarityInverted,
                 IsSoloed = channel.IsSoloed,
                 DelayMilliseconds = channel.DelayMilliseconds,
@@ -6864,6 +6866,7 @@ public partial class EqualizerWindow : Window
                     ? previousSelectedDeviceFormat
                     : null;
             MicrophoneComboBox.SelectedItem = _selectedDevice;
+            ApplyMicDspMonoToStereoToggleState();
             ApplySelectedMixerInputPanelToUi();
             RefreshInputChannelOptionsForActiveDevice(_selectedDeviceFormat);
         }
@@ -6907,6 +6910,7 @@ public partial class EqualizerWindow : Window
                 && AudioInputDevicesMatch(previousSelectedDevice, _selectedDevice)
                     ? previousSelectedDeviceFormat
                     : null;
+            ApplyMicDspMonoToStereoToggleState();
             ApplySelectedMixerInputPanelToUi();
         }
         finally
@@ -6920,6 +6924,14 @@ public partial class EqualizerWindow : Window
         if (SelectedMixerInputPanel is not null && !ReferenceEquals(SelectedMixerInputPanel.DataContext, _activeMicChannel))
         {
             SelectedMixerInputPanel.DataContext = _activeMicChannel;
+        }
+    }
+
+    private void ApplyMicDspMonoToStereoToggleState()
+    {
+        if (MicDspMonoToStereoCheckBox is not null)
+        {
+            MicDspMonoToStereoCheckBox.IsChecked = _activeMicChannel?.DuplicateMonoToStereo == true;
         }
     }
 
@@ -7027,6 +7039,27 @@ public partial class EqualizerWindow : Window
 
         UpdateOutputRouting();
         PersistAppState();
+    }
+
+    private void MicDspMonoToStereoChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isUpdatingMicChannelUi || _activeMicChannel is null)
+        {
+            return;
+        }
+
+        var enabled = MicDspMonoToStereoCheckBox?.IsChecked == true;
+        if (_activeMicChannel.DuplicateMonoToStereo == enabled)
+        {
+            return;
+        }
+
+        _activeMicChannel.DuplicateMonoToStereo = enabled;
+        ConfigureLiveMixFromChannels();
+        PersistAppState();
+        StatusText.Text = enabled
+            ? "Mic/DSP will copy this mic's processed EQ signal to both left and right outputs."
+            : "Mic/DSP mono-to-stereo copy is off.";
     }
 
     private bool TrySnapMixerUnitySlider(object sender)
@@ -7506,7 +7539,8 @@ public partial class EqualizerWindow : Window
                     true,
                     channel.IsMuted,
                     channel.SelectedDevice!.EndpointId,
-                    channel.SelectedDevice.Backend);
+                    channel.SelectedDevice.Backend,
+                    DuplicateMonoToStereo: channel.DuplicateMonoToStereo);
             })
             .ToList();
     }
@@ -16510,6 +16544,7 @@ public partial class EqualizerWindow : Window
         private double _volumePercent = 100d;
         private double _inputGainDb;
         private double _pan;
+        private bool _duplicateMonoToStereo;
         private double _delayMilliseconds;
         private string _activePresetName = "Custom";
         private bool _activePresetIsUserPreset;
@@ -16659,6 +16694,12 @@ public partial class EqualizerWindow : Window
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(PanDisplayText));
             }
+        }
+
+        public bool DuplicateMonoToStereo
+        {
+            get => _duplicateMonoToStereo;
+            set => SetField(ref _duplicateMonoToStereo, value);
         }
 
         public double DelayMilliseconds

@@ -79,6 +79,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private int _processedOutputEnabled;
     private int _processedOutputRampSamplesRemaining;
     private int _processedOutputRampSamplesTotal;
+    private int _processedOutputRampChannelIndex;
+    private double _processedOutputRampCurrentGain;
     private uint _ditherState = 0x6D2B79F5u;
     private float[] _monoSamples = [];
     private float[] _processedSamples = [];
@@ -152,6 +154,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
         public required bool IsPolarityInverted { get; set; }
 
         public required double DelayMilliseconds { get; set; }
+
+        public required bool DuplicateMonoToStereo { get; init; }
 
         public required VoiceSampleProcessor Processor { get; init; }
 
@@ -603,6 +607,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 || !string.Equals(runtime.EndpointId, channel.EndpointId, StringComparison.Ordinal)
                 || runtime.Backend != channel.Backend
                 || runtime.InputChannelMode != channel.InputChannelMode
+                || runtime.DuplicateMonoToStereo != channel.DuplicateMonoToStereo
                 || runtime.IsEnabled != channel.IsEnabled
                 || !ReferenceEquals(runtime.ProcessorSettings, channel.ProcessorSettings))
             {
@@ -655,7 +660,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
             .Select(channel =>
             {
                 var processor = new VoiceSampleProcessor(channel.ProcessorSettings, sampleRate);
-                var preserveStereo = channel.InputChannelMode == InputChannelMode.StereoPair;
+                var preserveStereo = channel.InputChannelMode == InputChannelMode.StereoPair
+                    && !channel.DuplicateMonoToStereo;
                 var deviceKey = CreateInputDeviceKey(channel.DeviceNumber, channel.EndpointId, channel.Backend);
                 var volumeLinear = MixBusProcessor.PercentToLinear(channel.VolumePercent);
                 LiveMicBlockSampleProvider? sourceProvider = null;
@@ -695,12 +701,20 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     {
                         Volume = 0f
                     };
-                    panProvider = new StereoPanSampleProvider(volumeProvider)
+                    if (channel.DuplicateMonoToStereo)
                     {
-                        Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d)
-                    };
+                        programProvider = new DualMonoSampleProvider(volumeProvider);
+                    }
+                    else
+                    {
+                        panProvider = new StereoPanSampleProvider(volumeProvider)
+                        {
+                            Pan = Math.Clamp(channel.Pan / 100d, -1d, 1d)
+                        };
+                        programProvider = panProvider;
+                    }
+
                     delayLine = new AudioDelayLine(sampleRate, 250d);
-                    programProvider = panProvider;
                 }
 
                 var programMeterProvider = new NaudioPeakMeterSampleProvider(
@@ -723,6 +737,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     IsSoloed = channel.IsSoloed,
                     IsPolarityInverted = channel.IsPolarityInverted,
                     DelayMilliseconds = Math.Clamp(channel.DelayMilliseconds, 0d, 250d),
+                    DuplicateMonoToStereo = channel.DuplicateMonoToStereo,
                     Processor = processor,
                     PreservesStereo = preserveStereo,
                     SourceProvider = sourceProvider,
@@ -3264,6 +3279,8 @@ public sealed class MicrophoneSpectrumService : IDisposable
         var rampSamples = Math.Clamp((int)(_activeSampleRate * ProcessedOutputRecoveryRampMilliseconds / 1000d), 1, 256);
         _processedOutputRampSamplesTotal = rampSamples;
         _processedOutputRampSamplesRemaining = rampSamples;
+        _processedOutputRampChannelIndex = 0;
+        _processedOutputRampCurrentGain = 0d;
     }
 
     private float PrepareProcessedOutputSample(float inputSample)
@@ -3274,11 +3291,21 @@ public sealed class MicrophoneSpectrumService : IDisposable
             return sample;
         }
 
-        var completedRampSamples = _processedOutputRampSamplesTotal - _processedOutputRampSamplesRemaining;
-        var progress = (completedRampSamples + 1d) / Math.Max(1d, _processedOutputRampSamplesTotal);
-        var gain = progress * progress * (3d - 2d * progress);
-        _processedOutputRampSamplesRemaining--;
-        return (float)(sample * gain);
+        if (_processedOutputRampChannelIndex == 0)
+        {
+            var completedRampSamples = _processedOutputRampSamplesTotal - _processedOutputRampSamplesRemaining;
+            var progress = (completedRampSamples + 1d) / Math.Max(1d, _processedOutputRampSamplesTotal);
+            _processedOutputRampCurrentGain = progress * progress * (3d - 2d * progress);
+        }
+
+        var output = (float)(sample * _processedOutputRampCurrentGain);
+        _processedOutputRampChannelIndex = (_processedOutputRampChannelIndex + 1) % 2;
+        if (_processedOutputRampChannelIndex == 0)
+        {
+            _processedOutputRampSamplesRemaining--;
+        }
+
+        return output;
     }
 
     private static double CalculateBufferDurationMs(int bytesRecorded, WaveFormat format)

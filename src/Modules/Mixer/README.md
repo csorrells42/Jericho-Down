@@ -14,6 +14,7 @@ Current entry points:
 - `LiveMicBlockSampleProvider.cs`
 - `LiveStereoBlockSampleProvider.cs`
 - `LiveMixAudibility.cs`
+- `DualMonoSampleProvider.cs`
 - `StereoPanSampleProvider.cs`
 - `StereoBalanceSampleProvider.cs`
 - `NaudioPeakMeterSampleProvider.cs`

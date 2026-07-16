@@ -239,5 +239,6 @@ public sealed record MicrophoneLiveChannelSettings(
     bool IsEnabled,
     bool IsMuted,
     string? EndpointId = null,
-    AudioInputBackend Backend = AudioInputBackend.Windows);
+    AudioInputBackend Backend = AudioInputBackend.Windows,
+    bool DuplicateMonoToStereo = false);
 

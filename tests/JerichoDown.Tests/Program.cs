@@ -87,6 +87,7 @@ var tests = new (string Name, Action Test)[]
     ("Audio stream restart failures back off", AudioStreamRestartFailuresBackOff),
     ("Processed monitor follows WASAPI latency profile", ProcessedMonitorFollowsWasapiLatencyProfile),
     ("Mic DSP monitor exposes processed EQ audition", MicDspMonitorExposesProcessedEqAudition),
+    ("Mic DSP mono copy exposes dual-ear audition", MicDspMonoCopyExposesDualEarAudition),
     ("Graphic EQ sliders sync live settings and graph", GraphicEqSlidersSyncLiveSettingsAndGraph),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
@@ -128,6 +129,7 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
+    ("Live output provider duplicates processed mono to stereo", LiveOutputProviderDuplicatesProcessedMonoToStereo),
     ("Graphic EQ slider moves change mixer line output", GraphicEqSliderMovesChangeMixerLineOutput),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
     ("Live service bus publishes auxiliary sync telemetry", LiveServiceBusPublishesAuxiliarySyncTelemetry),
@@ -151,6 +153,7 @@ var tests = new (string Name, Action Test)[]
     ("Mic DSP editor rebinds after mixer selection", MicDspEditorRebindsAfterMixerSelection),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Mixer volume controls mark and snap unity", MixerVolumeControlsMarkAndSnapUnity),
+    ("Dual mono provider copies mono samples to both sides", DualMonoProviderCopiesMonoSamplesToBothSides),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Stereo audio delay line preserves left and right", StereoAudioDelayLinePreservesLeftAndRight),
@@ -1808,6 +1811,7 @@ static void ModuleReadmesDefineOwnership()
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMicBlockSampleProvider.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveStereoBlockSampleProvider.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMixAudibility.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "DualMonoSampleProvider.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoPanSampleProvider.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoBalanceSampleProvider.cs"))),
         File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "NaudioPeakMeterSampleProvider.cs")))
@@ -1817,6 +1821,7 @@ static void ModuleReadmesDefineOwnership()
     Assert(mixerReadme.Contains("LiveMicBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated mono block provider ownership");
     Assert(mixerReadme.Contains("LiveStereoBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated stereo block provider ownership");
     Assert(mixerReadme.Contains("LiveMixAudibility.cs", StringComparison.Ordinal), "Mixer docs should name migrated audibility ownership");
+    Assert(mixerReadme.Contains("DualMonoSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name dual-mono provider ownership");
     Assert(mixerReadme.Contains("StereoPanSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated pan provider ownership");
     Assert(mixerReadme.Contains("StereoBalanceSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated balance provider ownership");
     Assert(mixerReadme.Contains("NaudioPeakMeterSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated peak meter ownership");
@@ -2421,6 +2426,32 @@ static void MicDspMonitorExposesProcessedEqAudition()
     Assert(outputRequestedMethod.Contains("MicDspMonitorOutputCheckBox?.IsChecked == true", StringComparison.Ordinal), "processed-output routing should honor the Mic/DSP monitor switch");
     Assert(eqStatusMethod.Contains("MONITOR EQ is off", StringComparison.Ordinal), "EQ changes should warn when the processed monitor is off");
     Assert(eqStatusMethod.Contains("Direct/interface monitoring bypasses Jericho DSP", StringComparison.Ordinal), "EQ status should explain that direct monitoring bypasses DSP");
+}
+
+static void MicDspMonoCopyExposesDualEarAudition()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var micDspTab = ExtractSourceBetween(
+        xaml,
+        "      <TabItem x:Name=\"MicDspTabItem\" Header=\"Mic / DSP\">",
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
+    var handler = ExtractSourceBetween(
+        windowCode,
+        "    private void MicDspMonoToStereoChanged(object sender, RoutedEventArgs e)",
+        "    private bool TrySnapMixerUnitySlider(object sender)");
+    var liveMixFactory = ExtractSourceBetween(
+        windowCode,
+        "    private List<MicrophoneLiveChannelSettings> CreateLiveMixChannelSettings(bool coerceInputModes)",
+        "    private List<MidiControlMappingSettingsState> CaptureMidiControlMappingStates()");
+
+    Assert(micDspTab.Contains("x:Name=\"MicDspMonoToStereoCheckBox\"", StringComparison.Ordinal), "Mic/DSP should expose a mono-to-stereo checkbox beside the EQ monitor controls");
+    Assert(micDspTab.Contains("Content=\"Mono to both ears\"", StringComparison.Ordinal), "mono-to-stereo checkbox should use user-facing headphone language");
+    Assert(micDspTab.Contains("Checked=\"MicDspMonoToStereoChanged\" Unchecked=\"MicDspMonoToStereoChanged\"", StringComparison.Ordinal), "mono-to-stereo checkbox should update the live mic route immediately");
+    Assert(micDspTab.Contains("final processed EQ/DSP signal into both left and right outputs", StringComparison.Ordinal), "mono-to-stereo tooltip should describe post-EQ dual-mono routing");
+    Assert(handler.Contains("_activeMicChannel.DuplicateMonoToStereo = enabled;", StringComparison.Ordinal), "mono-to-stereo handler should persist the active mic route flag");
+    Assert(handler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mono-to-stereo handler should rebuild the channel provider graph");
+    Assert(liveMixFactory.Contains("DuplicateMonoToStereo: channel.DuplicateMonoToStereo", StringComparison.Ordinal), "live mix settings should carry the per-mic mono-to-stereo flag");
 }
 
 static void GraphicEqSlidersSyncLiveSettingsAndGraph()
@@ -3272,6 +3303,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Set(mic, "VolumePercent", 73d);
     Set(mic, "InputGainDb", -4.5d);
     Set(mic, "Pan", 35d);
+    Set(mic, "DuplicateMonoToStereo", true);
     Set(mic, "PolarityInverted", true);
     Set(mic, "IsSoloed", true);
     Set(mic, "DelayMilliseconds", 18d);
@@ -3341,6 +3373,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((double)Get(restoredMic, "VolumePercent")! == 73d, "mic volume should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "InputGainDb")! == -4.5d, "mic input gain should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "Pan")! == 35d, "mic pan should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "DuplicateMonoToStereo")!, "mic mono-to-stereo copy should survive app-state roundtrip");
     Assert((bool)Get(restoredMic, "PolarityInverted")!, "mic polarity should survive app-state roundtrip");
     Assert((bool)Get(restoredMic, "IsSoloed")!, "solo should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "DelayMilliseconds")! == 18d, "mic delay should survive app-state roundtrip");
@@ -3807,6 +3840,53 @@ static void LiveOutputProviderFollowsMixerGainPanPolarityAndDelay()
     var lateLeftPeak = MeasureLeftPeak(delayedSamples, startFrame: 64, frameCount: 120);
     Assert(earlyLeftPeak < 0.03f, "per-mic delay should hold back the start of the live output");
     Assert(lateLeftPeak > 0.20f, "per-mic delay should release the delayed live output after the requested time");
+}
+
+static void LiveOutputProviderDuplicatesProcessedMonoToStereo()
+{
+    using var service = CreateLiveOutputService(out var outputProvider);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                1,
+                0,
+                InputChannelMode.StereoPair,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                100d,
+                false,
+                false,
+                0d,
+                true,
+                false,
+                DuplicateMonoToStereo: true)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+
+    const int frameCount = 384;
+    var stereoSamples = new float[frameCount * 2];
+    for (var frame = 0; frame < frameCount; frame++)
+    {
+        var sign = frame % 2 == 0 ? 1f : -1f;
+        stereoSamples[frame * 2] = 0.60f * sign;
+        stereoSamples[frame * 2 + 1] = 0f;
+    }
+
+    InvokePrimaryCapture(service, stereoSamples);
+    var outputSamples = ReadBufferedFloatSamples(outputProvider);
+    Assert(outputSamples.Length >= frameCount * 2, "mono-to-stereo copy should write a stereo live output block");
+    var (leftPeak, rightPeak) = MeasureStereoPeaks(outputSamples);
+    Assert(leftPeak > 0.10f, "mono-to-stereo copy should leave the processed mic audible in the left output");
+    Assert(rightPeak > 0.10f, "mono-to-stereo copy should leave the processed mic audible in the right output");
+
+    var maxDifference = 0f;
+    for (var i = 0; i + 1 < outputSamples.Length; i += 2)
+    {
+        maxDifference = Math.Max(maxDifference, Math.Abs(outputSamples[i] - outputSamples[i + 1]));
+    }
+
+    Assert(maxDifference < 0.0001f, "mono-to-stereo copy should send the same processed samples to left and right");
 }
 
 static void GraphicEqSliderMovesChangeMixerLineOutput()
@@ -4902,6 +4982,21 @@ static void MixerVolumeControlsMarkAndSnapUnity()
         "    private void MasterOutputModeChanged");
     Assert(mixerSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "channel faders should apply the unity magnet before updating the live mix");
     Assert(masterSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "master volume should apply the unity magnet before rebuilding the live mix");
+}
+
+static void DualMonoProviderCopiesMonoSamplesToBothSides()
+{
+    var mic = new LiveMicBlockSampleProvider(48_000);
+    var dualMono = new DualMonoSampleProvider(mic);
+    mic.SetBlock([0.50f, -0.25f, 0.125f]);
+
+    var output = new float[6];
+    dualMono.Read(output, 0, output.Length);
+
+    AssertSequenceEqual(
+        new[] { 0.50f, 0.50f, -0.25f, -0.25f, 0.125f, 0.125f },
+        output,
+        "dual-mono provider should copy each processed mono sample to both stereo channels");
 }
 
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()

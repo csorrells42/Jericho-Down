@@ -366,6 +366,8 @@ internal sealed class MicChannelSettingsState
 
     public double? Pan { get; set; }
 
+    public bool DuplicateMonoToStereo { get; set; }
+
     public bool PolarityInverted { get; set; }
 
     public bool IsSoloed { get; set; }
