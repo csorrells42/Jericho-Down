@@ -633,12 +633,25 @@ static void GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse()
 {
     var expectedBands = GraphicEqualizerVerification.BandFrequenciesHz.Count;
     var boostResponse = GraphicEqualizerVerification.Measure(GraphicEqualizerVerification.BoostGainDb);
+    var lowCurveGains = GraphicEqualizerSettings.Default.CreateFlatGains();
+    for (var i = 0; i < Math.Min(6, lowCurveGains.Length); i++)
+    {
+        lowCurveGains[i] = GraphicEqualizerSettings.Default.MaximumGainDb;
+    }
+
+    var lowCurveResponse = GraphicEqualizerVerification.MeasureCurve(lowCurveGains);
     var boosts = GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.BoostGainDb);
     var cuts = GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.CutGainDb);
 
     Assert(boostResponse.Passed, "graphic EQ response object should summarize passing measured boost response: " + boostResponse.Summary);
     Assert(boostResponse.BandCount == expectedBands, "graphic EQ response object should cover every band");
     Assert(boostResponse.MaximumMeasuredModelErrorDb < 0.35d, "graphic EQ measured response should match the modeled biquad response closely");
+    Assert(lowCurveResponse.Passed, "graphic EQ curve response should summarize passing measured full-curve response: " + lowCurveResponse.Summary);
+    Assert(lowCurveResponse.Bands.Count == expectedBands, "graphic EQ curve response should cover every band");
+    Assert(lowCurveResponse.MaximumMeasuredModelErrorDb < 0.45d, "graphic EQ full-curve measured response should match the modeled biquad response closely");
+    var lowCurveAverageDb = lowCurveResponse.Bands.Take(6).Average(band => band.DeltaDb);
+    var highCurveAverageDb = lowCurveResponse.Bands.Skip(12).Average(band => band.DeltaDb);
+    Assert(lowCurveAverageDb > highCurveAverageDb + 8d, "maxed low graphic EQ bands should produce a clearly larger measured low-frequency curve");
     Assert(boosts.Count == expectedBands, "boost measurements should cover every graphic EQ band");
     Assert(cuts.Count == expectedBands, "cut measurements should cover every graphic EQ band");
 
@@ -669,11 +682,13 @@ static void DspVerificationReportProvesCustomDspClaims()
     Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks: " + string.Join("; ", failedChecks));
     Assert(report.Checks.Count >= 40, "DSP verification report should include the practical customer-facing custom DSP proof checks");
     var graphicEqChecks = report.Checks.Where(check => check.Effect == "Graphic EQ").ToList();
-    Assert(graphicEqChecks.Count >= 40, "DSP verification report should include per-band boost and cut graphic EQ response measurements");
+    var graphicEqPerBandChecks = graphicEqChecks.Where(check => check.Claim.Contains("measures center and adjacent", StringComparison.Ordinal)).ToList();
+    Assert(graphicEqPerBandChecks.Count >= 40, "DSP verification report should include per-band boost and cut graphic EQ response measurements");
     Assert(graphicEqChecks.Any(check => check.Claim.Contains("+6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include boost measurements");
     Assert(graphicEqChecks.Any(check => check.Claim.Contains("-6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include cut measurements");
-    Assert(graphicEqChecks.All(check => check.Claim.Contains("adjacent", StringComparison.Ordinal)), "graphic EQ verification should explicitly measure adjacent-band response");
-    Assert(graphicEqChecks.All(check => check.Details.Contains("Center error", StringComparison.Ordinal)), "graphic EQ verification should report numeric center error");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("Stacked adjacent low-frequency sliders", StringComparison.Ordinal)), "graphic EQ verification should include a measured full-curve low-slider check");
+    Assert(graphicEqPerBandChecks.All(check => check.Claim.Contains("adjacent", StringComparison.Ordinal)), "graphic EQ per-band verification should explicitly measure adjacent-band response");
+    Assert(graphicEqPerBandChecks.All(check => check.Details.Contains("Center error", StringComparison.Ordinal)), "graphic EQ per-band verification should report numeric center error");
     foreach (var effect in new[]
     {
         "Graphic EQ",

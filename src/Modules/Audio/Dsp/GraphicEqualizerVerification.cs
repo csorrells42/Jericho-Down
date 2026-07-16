@@ -15,6 +15,47 @@ public static class GraphicEqualizerVerification
     public static GraphicEqualizerResponse Measure(double requestedGainDb) =>
         new(VerificationSampleRate, requestedGainDb, MeasureAllBands(requestedGainDb));
 
+    public static GraphicEqualizerCurveResponse MeasureCurve(IReadOnlyList<double> gainsDb)
+    {
+        var settings = GraphicEqualizerSettings.Default;
+        var requestedGainsDb = settings.CreateFlatGains();
+        for (var i = 0; i < requestedGainsDb.Length; i++)
+        {
+            requestedGainsDb[i] = i < gainsDb.Count ? settings.ClampGainDb(gainsDb[i]) : 0d;
+        }
+
+        var bypassMagnitudes = settings.BandFrequenciesHz.ToDictionary(
+            frequencyHz => frequencyHz,
+            frequencyHz => MeasureBypassMagnitude(settings, frequencyHz));
+        var bands = new List<GraphicEqualizerCurveBandResponse>(settings.BandCount);
+
+        for (var bandIndex = 0; bandIndex < settings.BandCount; bandIndex++)
+        {
+            var frequencyHz = settings.BandFrequenciesHz[bandIndex];
+            var processed = ProcessTone(settings, frequencyHz, gains =>
+            {
+                for (var gainIndex = 0; gainIndex < requestedGainsDb.Length; gainIndex++)
+                {
+                    gains[gainIndex] = requestedGainsDb[gainIndex];
+                }
+            });
+            var processedMagnitude = CalculateToneMagnitude(processed.Samples, frequencyHz, MeasurementStartIndex);
+            var bypassMagnitude = bypassMagnitudes[frequencyHz];
+            var deltaDb = ToDecibels(processedMagnitude / bypassMagnitude);
+
+            bands.Add(new GraphicEqualizerCurveBandResponse(
+                bandIndex,
+                frequencyHz,
+                requestedGainsDb[bandIndex],
+                bypassMagnitude,
+                processedMagnitude,
+                deltaDb,
+                processed.ModeledDeltaDb));
+        }
+
+        return new GraphicEqualizerCurveResponse(VerificationSampleRate, requestedGainsDb, bands);
+    }
+
     public static IReadOnlyList<GraphicEqualizerBandResponse> MeasureAllBands(double requestedGainDb)
     {
         var settings = GraphicEqualizerSettings.Default;

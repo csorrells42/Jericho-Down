@@ -124,6 +124,7 @@ public static class DspVerificationReportGenerator
         AddGraphicEqualizerResponseChecks(
             checks,
             GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.CutGainDb));
+        AddGraphicEqualizerCurveCheck(checks);
     }
 
     private static void AddGraphicEqualizerResponseChecks(
@@ -141,6 +142,30 @@ public static class DspVerificationReportGenerator
                 measurement.Passed,
                 measurement.Details));
         }
+    }
+
+    private static void AddGraphicEqualizerCurveCheck(ICollection<DspVerificationCheck> checks)
+    {
+        var gains = GraphicEqualizerSettings.Default.CreateFlatGains();
+        for (var i = 0; i < Math.Min(6, gains.Length); i++)
+        {
+            gains[i] = GraphicEqualizerSettings.Default.MaximumGainDb;
+        }
+
+        var response = GraphicEqualizerVerification.MeasureCurve(gains);
+        var lowAverageDb = response.Bands.Take(6).Average(band => band.DeltaDb);
+        var highAverageDb = response.Bands.Skip(12).Average(band => band.DeltaDb);
+        var lowLiftDb = lowAverageDb - highAverageDb;
+        var passed = response.Passed && lowLiftDb >= 8d;
+
+        checks.Add(new DspVerificationCheck(
+            "Graphic EQ",
+            "Stacked adjacent low-frequency sliders produce a measured low-end EQ curve",
+            $"low average {GraphicEqualizerResponse.FormatDeltaDb(lowAverageDb)}; high average {GraphicEqualizerResponse.FormatDeltaDb(highAverageDb)}; lift {GraphicEqualizerResponse.FormatDeltaDb(lowLiftDb)}",
+            "six lowest sliders at maximum must produce at least +8 dB more low-band than high-band energy and match modeled response",
+            lowLiftDb,
+            passed,
+            response.Summary));
     }
 
     private static void AddInputGainChecks(ICollection<DspVerificationCheck> checks)

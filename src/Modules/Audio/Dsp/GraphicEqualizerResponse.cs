@@ -147,3 +147,59 @@ public sealed record GraphicEqualizerResponse(
     public static string FormatDeltaDb(double valueDb) =>
         string.Format(CultureInfo.InvariantCulture, "{0:+0.00;-0.00;0.00} dB", valueDb);
 }
+
+public sealed record GraphicEqualizerCurveBandResponse(
+    int BandIndex,
+    double FrequencyHz,
+    double RequestedGainDb,
+    double BypassMagnitude,
+    double ProcessedMagnitude,
+    double DeltaDb,
+    double ModeledDeltaDb)
+{
+    private const double ModelToleranceDb = 0.45d;
+
+    public double ModelErrorDb => DeltaDb - ModeledDeltaDb;
+
+    public bool IsFinite =>
+        double.IsFinite(FrequencyHz) &&
+        double.IsFinite(RequestedGainDb) &&
+        double.IsFinite(BypassMagnitude) &&
+        double.IsFinite(ProcessedMagnitude) &&
+        double.IsFinite(DeltaDb) &&
+        double.IsFinite(ModeledDeltaDb) &&
+        BypassMagnitude > 0d &&
+        ProcessedMagnitude > 0d;
+
+    public bool Passed => IsFinite && Math.Abs(ModelErrorDb) <= ModelToleranceDb;
+
+    public string BandLabel => GraphicEqualizerResponse.FormatFrequency(FrequencyHz);
+
+    public string MeasurementSummary => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0} slider {1}; measured {2}; modeled {3}; error {4}",
+        BandLabel,
+        GraphicEqualizerResponse.FormatDeltaDb(RequestedGainDb),
+        GraphicEqualizerResponse.FormatDeltaDb(DeltaDb),
+        GraphicEqualizerResponse.FormatDeltaDb(ModeledDeltaDb),
+        GraphicEqualizerResponse.FormatDeltaDb(ModelErrorDb));
+}
+
+public sealed record GraphicEqualizerCurveResponse(
+    int SampleRate,
+    IReadOnlyList<double> RequestedGainsDb,
+    IReadOnlyList<GraphicEqualizerCurveBandResponse> Bands)
+{
+    public bool Passed => Bands.All(band => band.Passed);
+
+    public double MaximumMeasuredModelErrorDb => Bands.Count == 0
+        ? 0d
+        : Bands.Max(band => Math.Abs(band.ModelErrorDb));
+
+    public string Summary => string.Format(
+        CultureInfo.InvariantCulture,
+        "{0}/{1} curve points passed; max measured-model error {2}",
+        Bands.Count(band => band.Passed),
+        Bands.Count,
+        GraphicEqualizerResponse.FormatDeltaDb(MaximumMeasuredModelErrorDb));
+}
