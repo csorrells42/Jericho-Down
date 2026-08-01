@@ -277,17 +277,28 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
             propVariantPointer = Marshal.AllocHGlobal(Marshal.SizeOf<BlobPropVariant>());
             Marshal.StructureToPtr(propVariant, propVariantPointer, fDeleteOld: false);
 
-            var completionHandler = new ActivateAudioInterfaceCompletionHandler();
+            using var completionHandler = new ActivateAudioInterfaceCompletionHandler();
             var interfaceId = typeof(IAudioClient).GUID;
-            var result = ActivateAudioInterfaceAsync(
-                VirtualAudioDeviceProcessLoopback,
-                ref interfaceId,
-                propVariantPointer,
-                completionHandler,
-                out _);
-            ThrowIfFailed(result);
+            IActivateAudioInterfaceAsyncOperation? asyncOperation = null;
+            try
+            {
+                var result = ActivateAudioInterfaceAsync(
+                    VirtualAudioDeviceProcessLoopback,
+                    ref interfaceId,
+                    propVariantPointer,
+                    completionHandler,
+                    out asyncOperation);
+                ThrowIfFailed(result);
 
-            return completionHandler.GetAudioClient();
+                return completionHandler.GetAudioClient();
+            }
+            finally
+            {
+                if (asyncOperation is not null)
+                {
+                    Marshal.ReleaseComObject(asyncOperation);
+                }
+            }
         }
         finally
         {
@@ -386,7 +397,7 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
     }
 
     [ComVisible(true)]
-    private sealed class ActivateAudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler
+    private sealed class ActivateAudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler, IDisposable
     {
         private readonly ManualResetEventSlim _completed = new();
         private object? _activatedInterface;
@@ -431,6 +442,11 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
             }
 
             return new AudioClient(audioClient);
+        }
+
+        public void Dispose()
+        {
+            _completed.Dispose();
         }
     }
 }
