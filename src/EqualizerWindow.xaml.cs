@@ -5161,7 +5161,7 @@ public partial class EqualizerWindow : Window
                 _lastTextureNativeCameraError = cachedTextureFailure;
                 CameraPreviewStatusText.Text = $"Shared GPU stream skipped for {camera.Name}: {cachedTextureFailure}";
             }
-            else if (StartTextureNativeCameraStream(camera, mode))
+            else if (await StartTextureNativeCameraStreamAsync(camera, mode, operationVersion))
             {
                 TextureNativePreviewPolicy.ForgetPreviewFailure(camera, mode);
                 return;
@@ -5374,7 +5374,7 @@ public partial class EqualizerWindow : Window
         return first == second || first.HasValue && second.HasValue && Math.Abs(first.Value - second.Value) < 0.001d;
     }
 
-    private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
+    private async Task<bool> StartTextureNativeCameraStreamAsync(CameraDevice camera, CameraVideoMode mode, int operationVersion)
     {
         _lastTextureNativeCameraError = null;
         StopPreviewServices();
@@ -5389,33 +5389,33 @@ public partial class EqualizerWindow : Window
 
         try
         {
-            if (!Dx12Camera.TryOpenTextureNativeIntoSlot(
-                ref _dx12Camera,
-                camera,
-                mode,
-                CreateActiveDx12CameraPreviewTarget(),
-                _pendingVideoDenoiseEnabled,
-                _pendingVideoDenoiseStrength,
-                TextureNativeCameraFrameAvailable,
-                TextureNativeCameraStatusChanged))
+            if (_dx12Camera is not null)
             {
                 RecoverCameraLifecycleViolation("shared GPU preview");
-                if (!Dx12Camera.TryOpenTextureNativeIntoSlot(
-                    ref _dx12Camera,
-                    camera,
-                    mode,
-                    CreateActiveDx12CameraPreviewTarget(),
-                    _pendingVideoDenoiseEnabled,
-                    _pendingVideoDenoiseStrength,
-                    TextureNativeCameraFrameAvailable,
-                    TextureNativeCameraStatusChanged))
-                {
-                    _lastTextureNativeCameraError = "camera preview ownership was busy";
-                    CameraPreviewStatusText.Text = "Shared GPU stream unavailable: camera preview ownership was busy.";
-                    return false;
-                }
             }
 
+            if (_dx12Camera is not null)
+            {
+                _lastTextureNativeCameraError = "camera preview ownership was busy";
+                CameraPreviewStatusText.Text = "Shared GPU stream unavailable: camera preview ownership was busy.";
+                return false;
+            }
+
+            var target = CreateActiveDx12CameraPreviewTarget();
+            var dx12Camera = await Dx12Camera.OpenTextureNativeAsync(
+                camera,
+                mode,
+                target,
+                _pendingVideoDenoiseEnabled,
+                _pendingVideoDenoiseStrength);
+
+            if (!IsCameraPreviewStartCurrent(operationVersion, camera, mode))
+            {
+                dx12Camera.Close();
+                return false;
+            }
+
+            Dx12Camera.AttachToSlot(ref _dx12Camera, dx12Camera, TextureNativeCameraFrameAvailable, TextureNativeCameraStatusChanged);
             _isDirectShowPreviewActive = false;
             _dx12Camera?.UpdateRenderSettings(
                 _pendingVideoDenoiseEnabled,
@@ -5430,6 +5430,11 @@ public partial class EqualizerWindow : Window
             CameraPreviewStatusText.Text = $"Shared GPU stream unavailable: {ex.Message}";
             return false;
         }
+    }
+
+    private bool StartTextureNativeCameraStream(CameraDevice camera, CameraVideoMode mode)
+    {
+        return StartTextureNativeCameraStreamAsync(camera, mode, System.Threading.Volatile.Read(ref _cameraPreviewStartOperationVersion)).GetAwaiter().GetResult();
     }
 
     private bool ClaimFallbackCameraOwner(

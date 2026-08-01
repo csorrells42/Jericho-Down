@@ -84,6 +84,11 @@ public sealed class Dx12Camera : IDisposable
     }
 
     public Dx12Camera(CameraDevice camera, CameraVideoMode? mode, PreviewTarget target)
+        : this(camera, mode, target, waitForFirstFrame: true)
+    {
+    }
+
+    private Dx12Camera(CameraDevice camera, CameraVideoMode? mode, PreviewTarget target, bool waitForFirstFrame)
     {
         if (!target.PreviewWindow.Dispatcher.CheckAccess())
         {
@@ -104,7 +109,7 @@ public sealed class Dx12Camera : IDisposable
 
         try
         {
-            Initialize();
+            Initialize(waitForFirstFrame);
         }
         catch
         {
@@ -335,6 +340,47 @@ public sealed class Dx12Camera : IDisposable
         var dx12Camera = new Dx12Camera(camera, mode, target);
         dx12Camera.Denoise(denoiseEnabled, denoiseStrength);
         return dx12Camera;
+    }
+
+    internal static async Task<Dx12Camera> OpenTextureNativeAsync(
+        CameraDevice camera,
+        CameraVideoMode mode,
+        PreviewTarget target,
+        bool denoiseEnabled,
+        double denoiseStrength,
+        CancellationToken cancellationToken = default)
+    {
+        if (!target.PreviewWindow.Dispatcher.CheckAccess())
+        {
+            return await target.PreviewWindow.Dispatcher.InvokeAsync(
+                () => OpenTextureNativeAsync(camera, mode, target, denoiseEnabled, denoiseStrength, cancellationToken)).Task.Unwrap();
+        }
+
+        var dx12Camera = new Dx12Camera(camera, mode, target, waitForFirstFrame: false);
+        dx12Camera.Denoise(denoiseEnabled, denoiseStrength);
+
+        try
+        {
+            if (!await dx12Camera.WaitForFirstFrameAsync(FirstFrameTimeout, cancellationToken).ConfigureAwait(true))
+            {
+                var stream = dx12Camera._stream;
+                var deviceMode = stream?.DeviceMode ?? "unknown";
+                var width = stream?.Width ?? 0;
+                var height = stream?.Height ?? 0;
+                var fps = stream?.FramesPerSecond ?? 0d;
+                var subtype = stream?.MediaSubtype ?? "unknown";
+                dx12Camera.Dispose();
+                throw new TimeoutException(
+                    $"No DX12 texture frames arrived within {FirstFrameTimeout.TotalSeconds:0.#} seconds ({deviceMode}, {width}x{height}@{fps:0.###}, {subtype}).");
+            }
+
+            return dx12Camera;
+        }
+        catch
+        {
+            dx12Camera.Dispose();
+            throw;
+        }
     }
 
     public static void DestroyActive(bool collectGarbage = false)
@@ -838,7 +884,7 @@ public sealed class Dx12Camera : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private void Initialize()
+    private void Initialize(bool waitForFirstFrame = true)
     {
         _target.PreviewImage?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Collapsed);
         _target.Placeholder?.SetCurrentValue(UIElement.VisibilityProperty, Visibility.Visible);
@@ -852,7 +898,7 @@ public sealed class Dx12Camera : IDisposable
 
         stream.Start();
         ShowPreviewHost(stream.DuplicateNativeD3D12Device());
-        if (!WaitForFirstFrame(stream))
+        if (waitForFirstFrame && !WaitForFirstFrame(_dispatcher, stream))
         {
             throw new TimeoutException(
                 $"No DX12 texture frames arrived within {FirstFrameTimeout.TotalSeconds:0.#} seconds ({stream.DeviceMode}, {stream.Width}x{stream.Height}@{stream.FramesPerSecond:0.###}, {stream.MediaSubtype}).");
@@ -867,7 +913,29 @@ public sealed class Dx12Camera : IDisposable
         ShowPreviewHost(IntPtr.Zero);
     }
 
-    private static bool WaitForFirstFrame(TextureNativeCameraStream stream)
+    public async Task<bool> WaitForFirstFrameAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    {
+        var limit = timeout ?? FirstFrameTimeout;
+        var deadline = DateTimeOffset.UtcNow + limit;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (_disposed || cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (_stream is not null && _stream.FramesRead > 0)
+            {
+                return true;
+            }
+
+            await Task.Delay(25, cancellationToken).ConfigureAwait(true);
+        }
+
+        return _stream is not null && _stream.FramesRead > 0;
+    }
+
+    private static bool WaitForFirstFrame(Dispatcher dispatcher, TextureNativeCameraStream stream)
     {
         var deadline = DateTimeOffset.UtcNow + FirstFrameTimeout;
         while (DateTimeOffset.UtcNow < deadline)
@@ -877,7 +945,16 @@ public sealed class Dx12Camera : IDisposable
                 return true;
             }
 
-            Thread.Sleep(25);
+            if (dispatcher is not null && dispatcher.CheckAccess())
+            {
+                var frame = new DispatcherFrame();
+                using var timer = new System.Threading.Timer(_ => frame.Continue = false, null, 25, System.Threading.Timeout.Infinite);
+                Dispatcher.PushFrame(frame);
+            }
+            else
+            {
+                Thread.Sleep(25);
+            }
         }
 
         return stream.FramesRead > 0;

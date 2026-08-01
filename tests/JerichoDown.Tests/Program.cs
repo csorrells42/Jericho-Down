@@ -2028,6 +2028,8 @@ static void ModuleReadmesDefineOwnership()
     Assert(!direct3D12PreviewHost.Contains("using JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "D3D12 preview host should not use the removed shared viewport module");
     Assert(direct3D12PreviewHost.Contains(": WebcamDirectX12ViewportHost, ICameraPreviewPresenter", StringComparison.Ordinal), "D3D12 preview host should use the webcam-local viewport host and preview presenter contract");
     Assert(direct3D12PreviewHost.Contains("RecordDroppedFrame()", StringComparison.Ordinal), "D3D12 preview host should track dropped frames");
+    Assert(dx12Camera.Contains("OpenTextureNativeAsync", StringComparison.Ordinal), "DX12 camera should expose non-blocking async native open helper");
+    Assert(dx12Camera.Contains("WaitForFirstFrameAsync", StringComparison.Ordinal), "DX12 camera should expose async first frame wait helper");
     Assert(direct3D12PreviewHost.Contains("SetRecordingMode", StringComparison.Ordinal), "D3D12 preview host should report recording mode in diagnostics");
     Assert(direct3D12PreviewDiagnostics.Contains("public sealed record Direct3D12PreviewDiagnostics", StringComparison.Ordinal), "preview diagnostics should be a reusable record");
     Assert(direct3D12PreviewDiagnostics.Contains("FormatStatusLine()", StringComparison.Ordinal), "preview diagnostics should expose a compact status line");
