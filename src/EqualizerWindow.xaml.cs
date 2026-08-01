@@ -84,6 +84,7 @@ public partial class EqualizerWindow : Window
     private static readonly TimeSpan AudioStreamRestartBaseBackoff = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AudioStreamRestartMaximumBackoff = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan AppStatePersistDebounceInterval = TimeSpan.FromMilliseconds(350);
+    private static readonly TimeSpan VideoSegmentRotationInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CameraPumpWarningDisplayDuration = TimeSpan.FromSeconds(8);
     private static readonly Regex KaraokeLyricTimestampRegex = new(@"\[(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?\]", RegexOptions.Compiled);
     private static readonly Regex KaraokeInlineLyricTimestampRegex = new(@"<(?<minutes>\d{1,3}):(?<seconds>\d{2})(?:[\.:](?<fraction>\d{1,3}))?>", RegexOptions.Compiled);
@@ -136,6 +137,7 @@ public partial class EqualizerWindow : Window
     private readonly DispatcherTimer _outputAudioSessionTimer = new();
     private readonly DispatcherTimer _sessionPlaybackPositionTimer = new();
     private readonly DispatcherTimer _appStatePersistTimer = new();
+    private readonly DispatcherTimer _videoSegmentRotationTimer = new();
     private readonly List<Line> _gridLines = [];
     private readonly IReadOnlyList<VoiceZone> _voiceZones =
     [
@@ -504,6 +506,8 @@ public partial class EqualizerWindow : Window
         _sessionPlaybackPositionTimer.Tick += SessionPlaybackPositionTimerTick;
         _appStatePersistTimer.Interval = AppStatePersistDebounceInterval;
         _appStatePersistTimer.Tick += AppStatePersistTimerTick;
+        _videoSegmentRotationTimer.Interval = VideoSegmentRotationInterval;
+        _videoSegmentRotationTimer.Tick += VideoSegmentRotationTimerTick;
         _karaokePlaybackPositionTimer.Interval = TimeSpan.FromMilliseconds(45);
         _karaokePlaybackPositionTimer.Tick += KaraokePlaybackPositionTimerTick;
         CompositionTarget.Rendering += CompositionTargetRendering;
@@ -3693,6 +3697,7 @@ public partial class EqualizerWindow : Window
         StopDispatcherTimer(_audioDeviceFormatTimer, AudioDeviceFormatTimerTick);
         StopDispatcherTimer(_audioDeviceRefreshTimer, AudioDeviceRefreshTimerTick);
         StopDispatcherTimer(_appStatePersistTimer, AppStatePersistTimerTick);
+        StopDispatcherTimer(_videoSegmentRotationTimer, VideoSegmentRotationTimerTick);
         StopDispatcherTimer(_outputAudioSessionTimer, OutputAudioSessionTimerTick);
         StopDispatcherTimer(_sessionPlaybackPositionTimer, SessionPlaybackPositionTimerTick);
         StopDispatcherTimer(_karaokePlaybackPositionTimer, KaraokePlaybackPositionTimerTick);
@@ -4420,6 +4425,15 @@ public partial class EqualizerWindow : Window
             : videoStarted
                 ? $"Recording video set {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)}: {videoPath}"
             : $"Recording set {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)} started: {_activeRecordingSessionFolder}";
+
+        // Periodically rotate to a fresh video file so a crash mid-recording only loses the
+        // current segment (a few minutes) instead of the entire session - the MP4 writer only
+        // produces a valid/playable file once cleanly finalized, so this bounds that exposure.
+        if (textureVideoStarted || videoStarted)
+        {
+            _videoSegmentRotationTimer.Start();
+        }
+
         UpdateRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
     }
@@ -4489,6 +4503,7 @@ public partial class EqualizerWindow : Window
             return;
         }
 
+        _videoSegmentRotationTimer.Stop();
         var elapsed = GetRecordingElapsed();
         var sessionFolder = _activeRecordingSessionFolder;
         var setNumber = _activeRecordingSetNumber;
@@ -4527,6 +4542,44 @@ public partial class EqualizerWindow : Window
         RefreshSessionRecordings(videoPath);
         UpdateRecordingTransportControls();
         UpdateSessionPlaybackTransportControls();
+    }
+
+    private void VideoSegmentRotationTimerTick(object? sender, EventArgs e)
+    {
+        if (!_isRecordingSession || _isRecordingPaused)
+        {
+            return;
+        }
+
+        var sessionFolder = _activeRecordingSessionFolder;
+        if (string.IsNullOrWhiteSpace(sessionFolder))
+        {
+            return;
+        }
+
+        // Finalize the current segment exactly like a normal stop, then immediately start a new
+        // one under the same session folder - a crash from this point on only loses whatever was
+        // recorded since this rotation, not the whole session.
+        var completedSetNumber = _activeRecordingSetNumber;
+        var completedElapsed = GetRecordingElapsed();
+        var textureResult = StopTextureNativeRecording();
+        var completedVideoPath = textureResult?.Path ?? StopActivePreviewRecording();
+        if (!string.IsNullOrWhiteSpace(completedVideoPath))
+        {
+            WriteRecordingSessionMetadata(sessionFolder, completedSetNumber, completedVideoPath, completedElapsed, textureResult);
+        }
+
+        var recordingTarget = SessionRecordingCatalog.CreateRecordingTarget(sessionFolder);
+        _activeRecordingSetNumber = recordingTarget.SetNumber;
+
+        var nextVideoPath = GetActiveRecordingVideoPath();
+        var nextTextureVideoStarted = TryStartTextureNativeRecording(nextVideoPath);
+        var nextVideoStarted = nextTextureVideoStarted
+            || (_isCameraEnabled && nextVideoPath is not null && StartActivePreviewRecording(nextVideoPath));
+
+        RecordingStatusText.Text = nextVideoStarted
+            ? $"Recording rotated to segment {SessionRecordingCatalog.FormatRecordingSetNumber(_activeRecordingSetNumber)}: {nextVideoPath}"
+            : $"Video segment rotation could not start a new file after finishing set {SessionRecordingCatalog.FormatRecordingSetNumber(completedSetNumber)}; will retry at the next rotation.";
     }
 
     private bool StartActivePreviewRecording(string videoPath)
