@@ -22,7 +22,14 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
     // GPU contexts from touching the shared NV12 texture at the same time.
     private const ulong ProducerAcquireKey = 0;
     private const ulong ProducerReleaseKey = 1;
-    private const int KeyedMutexTimeoutMilliseconds = 200;
+
+    // 0ms = a non-blocking test, not a wait: capture and render run at their own paces (not in
+    // lockstep), so if the consumer hasn't finished with the texture yet, this frame is skipped
+    // (TryCopyToSharedHandle already returns false/failureReason for that, which is tolerated) -
+    // never stalling the capture thread. A blocking timeout here previously stalled capture for
+    // up to its full duration on every frame the renderer fell behind on, which cascaded into
+    // severe CPU/GPU load under normal (non-lockstep) operation.
+    private const int KeyedMutexTimeoutMilliseconds = 0;
 
     private readonly IntPtr _device;
     private readonly IntPtr _context;

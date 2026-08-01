@@ -571,7 +571,12 @@ public sealed class Direct3D12PreviewHost : WebcamDirectX12ViewportHost, ICamera
         // the D3D11 producer releases into state 1, so the consumer acquires 1 and releases 0.
         private const ulong SharedBridgeConsumerAcquireKey = 1;
         private const ulong SharedBridgeConsumerReleaseKey = 0;
-        private const int SharedBridgeKeyedMutexTimeoutMilliseconds = 200;
+
+        // 0ms = non-blocking test, matching the producer side: capture and render are not in
+        // lockstep, so a blocking wait here stalls the render thread whenever capture hasn't
+        // finished with the texture yet, instead of just skipping this render and retrying next
+        // frame (already handled - this whole call is wrapped in a catch that reports and moves on).
+        private const int SharedBridgeKeyedMutexTimeoutMilliseconds = 0;
 
         private readonly ID3D12Device _device;
         private readonly ID3D12CommandQueue _commandQueue;
