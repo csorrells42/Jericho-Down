@@ -15641,6 +15641,11 @@ public partial class EqualizerWindow : Window
 
         Dispatcher.BeginInvoke(() =>
         {
+            if (_isClosing)
+            {
+                return;
+            }
+
             var timer = new DispatcherTimer
             {
                 Interval = AudioRecordingFolderRefreshDelay
@@ -15649,6 +15654,11 @@ public partial class EqualizerWindow : Window
             {
                 timer.Stop();
                 System.Threading.Volatile.Write(ref _audioRecordingFolderRefreshQueued, 0);
+                if (_isClosing)
+                {
+                    return;
+                }
+
                 RefreshAudioRecordingFiles(_lastAudioRecordingPath);
                 UpdateStandaloneAudioRecordingTransportControls();
             };
@@ -15767,6 +15777,11 @@ public partial class EqualizerWindow : Window
 
         Dispatcher.BeginInvoke(() =>
         {
+            if (_isClosing)
+            {
+                return;
+            }
+
             var timer = new DispatcherTimer
             {
                 Interval = AudioRecordingFolderRefreshDelay
@@ -15775,6 +15790,11 @@ public partial class EqualizerWindow : Window
             {
                 timer.Stop();
                 System.Threading.Volatile.Write(ref _karaokeRecordingFolderRefreshQueued, 0);
+                if (_isClosing)
+                {
+                    return;
+                }
+
                 RefreshKaraokeRecordingFiles(_lastKaraokeRecordingPath);
                 UpdateKaraokeTransportControls();
             };
@@ -15856,6 +15876,11 @@ public partial class EqualizerWindow : Window
 
         Dispatcher.BeginInvoke(() =>
         {
+            if (_isClosing)
+            {
+                return;
+            }
+
             var timer = new DispatcherTimer
             {
                 Interval = AudioRecordingFolderRefreshDelay
@@ -15864,6 +15889,11 @@ public partial class EqualizerWindow : Window
             {
                 timer.Stop();
                 System.Threading.Volatile.Write(ref _sessionFolderRefreshQueued, 0);
+                if (_isClosing)
+                {
+                    return;
+                }
+
                 RefreshSessionRecordings(_lastSessionRecordingPath);
                 UpdateSessionPlaybackTransportControls();
             };
