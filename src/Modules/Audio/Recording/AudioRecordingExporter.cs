@@ -134,8 +134,9 @@ public static class AudioRecordingExporter
                     throw new ArgumentOutOfRangeException(nameof(format), format, "Unsupported export format.");
             }
 
-            File.Delete(targetPath);
-            File.Move(tempPath, targetPath);
+            // A single overwrite-move (not delete-then-move) so a failure between the two steps
+            // can never leave targetPath missing while also failing to land the new export.
+            File.Move(tempPath, targetPath, overwrite: true);
         }
         catch
         {

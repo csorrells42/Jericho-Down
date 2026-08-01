@@ -225,7 +225,13 @@ public sealed class AsioInputCapture : IWaveIn
         }
         catch (Exception ex)
         {
-            StopRecording(ex, raiseStopped: true);
+            // Stop asynchronously instead of blocking this ASIO callback thread on
+            // dispatcher.Invoke(). Some ASIO drivers deliver AudioAvailable from their own
+            // real-time thread and internally wait for that callback to return before Stop()
+            // can complete on the STA dispatcher thread; blocking here while reentrantly
+            // stopping could deadlock the two threads against each other.
+            var capturedException = ex;
+            ThreadPool.QueueUserWorkItem(_ => StopRecording(capturedException, raiseStopped: true));
         }
     }
 

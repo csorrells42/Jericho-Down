@@ -3094,7 +3094,8 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
 {
     var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
     Assert(captureSource.Contains("IsBackground = true", StringComparison.Ordinal), "process loopback capture should not keep the app process alive if Windows audio is slow to stop");
-    Assert(captureSource.Contains("captureThread.Join(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
+    Assert(captureSource.Contains("captureThread.Join(timeout)", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
+    Assert(captureSource.Contains("StopRecordingAndWait(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should bound the wait to 2 seconds");
     Assert(captureSource.Contains("ReleaseAudioClient();", StringComparison.Ordinal), "process loopback capture should release Windows audio clients on stop and dispose");
     Assert(captureSource.Contains("Windows did not complete process-loopback activation", StringComparison.Ordinal), "process loopback activation should time out instead of hanging forever");
 

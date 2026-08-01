@@ -82,22 +82,34 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
 
     public void StopRecording()
     {
+        StopRecordingAndWait(TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>
+    /// Signals the capture thread to stop and waits up to <paramref name="timeout"/> for it to exit.
+    /// Returns true if the thread is confirmed to have exited (or was never running), false if the
+    /// wait timed out while it may still be running.
+    /// </summary>
+    private bool StopRecordingAndWait(TimeSpan timeout)
+    {
         Thread? captureThread;
         lock (_syncRoot)
         {
             if (!_isRecording)
             {
-                return;
+                return true;
             }
 
             _stopRequested = true;
             captureThread = _captureThread;
         }
 
-        if (captureThread is not null && !ReferenceEquals(Thread.CurrentThread, captureThread))
+        if (captureThread is null || ReferenceEquals(Thread.CurrentThread, captureThread))
         {
-            captureThread.Join(TimeSpan.FromSeconds(2));
+            return true;
         }
+
+        return captureThread.Join(timeout);
     }
 
     public void Dispose()
@@ -112,8 +124,18 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
             _disposed = true;
         }
 
-        StopRecording();
-        ReleaseAudioClient();
+        var stoppedCleanly = StopRecordingAndWait(TimeSpan.FromSeconds(2));
+
+        // Only release the native audio/capture client here if the capture thread is confirmed to
+        // have exited - it releases them itself in its own finally block otherwise. If the join
+        // above timed out, the thread may still be mid-call inside GetBuffer/ReleaseBuffer on these
+        // same COM objects; disposing them from this thread concurrently would be a use-after-dispose
+        // race that can crash the process rather than throw a catchable exception. In that case,
+        // leave cleanup to the capture thread's own finally block whenever it does eventually exit.
+        if (stoppedCleanly)
+        {
+            ReleaseAudioClient();
+        }
     }
 
     private void CaptureThread()

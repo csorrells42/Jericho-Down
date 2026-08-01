@@ -49,6 +49,13 @@ public static class AudioRecordingCatalog
             path = Path.Combine(recordingFolder, $"{baseName}_{attempt:00}.wav");
         }
 
+        if (File.Exists(path))
+        {
+            // 100 same-second collisions already used up every numbered suffix; fall back to a
+            // GUID suffix so a new recording can never silently overwrite an existing one.
+            path = Path.Combine(recordingFolder, $"{baseName}_{Guid.NewGuid():N}.wav");
+        }
+
         return path;
     }
 
@@ -61,6 +68,10 @@ public static class AudioRecordingCatalog
             ? Directory.EnumerateFiles(recordingFolder)
                 .Where(IsSupportedRecordingFile)
                 .Select(path => new FileInfo(path))
+                // A recorder/exporter running concurrently can delete or replace a file between
+                // this scan and CreateFileItem reading its properties below; skip it rather than
+                // let FileInfo.Length throw and blank the whole catalog list.
+                .Where(file => file.Exists)
                 .OrderByDescending(file => file.LastWriteTimeUtc)
                 .Select((file, index) => CreateFileItem(file, index < maximumAnalyzedRows, eagerAnalysisDuration))
                 .ToList()
@@ -70,7 +81,20 @@ public static class AudioRecordingCatalog
     public static AudioRecordingFileItem CreateFileItem(FileInfo file, bool analyze, TimeSpan eagerAnalysisDuration)
     {
         AudioFileAnalysis? analysis = null;
-        var details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}";
+        string details;
+        try
+        {
+            details = $"{file.LastWriteTime:g}    {FormatFileSize(file.Length)}";
+        }
+        catch (IOException)
+        {
+            details = "Unavailable";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            details = "Unavailable";
+        }
+
         if (analyze && AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, eagerAnalysisDuration))
         {
             analysis = fileAnalysis;
