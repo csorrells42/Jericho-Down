@@ -116,7 +116,7 @@ internal sealed class CpuPreviewFramePump
     private readonly Action<CameraFrame> _processFrame;
     private readonly Action<string>? _warningSink;
     private CameraFrame? _pendingFrame;
-    private bool _frameUpdateQueued;
+    private int _frameUpdateQueued;
     private int _framesReplacedSinceWarning;
     private long _replacementWindowStartTicks;
     private int _warningQueued;
@@ -133,30 +133,36 @@ internal sealed class CpuPreviewFramePump
 
     public void FrameAvailable(CameraFrame frame)
     {
-        _pendingFrame = frame;
-        if (_frameUpdateQueued)
+        // Interlocked (not plain field writes) because this runs on the camera capture thread
+        // while ProcessPendingFrame below reads/resets the same fields on the UI thread; a torn
+        // read here could silently drop a queued frame or stop scheduling further UI updates.
+        if (Interlocked.Exchange(ref _pendingFrame, frame) is not null)
         {
             TrackFrameReplacement("CPU preview");
+        }
+
+        if (Interlocked.Exchange(ref _frameUpdateQueued, 1) != 0)
+        {
             return;
         }
 
-        _frameUpdateQueued = true;
-        _dispatcher.BeginInvoke(() =>
-        {
-            var latestFrame = _pendingFrame;
-            _pendingFrame = null;
-            _frameUpdateQueued = false;
+        _dispatcher.BeginInvoke((Action)ProcessPendingFrame);
+    }
 
-            if (latestFrame is not null)
-            {
-                _processFrame(latestFrame);
-            }
-        });
+    private void ProcessPendingFrame()
+    {
+        var latestFrame = Interlocked.Exchange(ref _pendingFrame, null);
+        Volatile.Write(ref _frameUpdateQueued, 0);
+
+        if (latestFrame is not null)
+        {
+            _processFrame(latestFrame);
+        }
     }
 
     public void Reset()
     {
-        _frameUpdateQueued = false;
+        Volatile.Write(ref _frameUpdateQueued, 0);
         _pendingFrame = null;
         Volatile.Write(ref _framesReplacedSinceWarning, 0);
         Volatile.Write(ref _replacementWindowStartTicks, 0);

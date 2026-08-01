@@ -298,6 +298,7 @@ public sealed class Direct3D12AudioGraphHost : VisualizationDirectX12ViewportHos
         private const int MaxSegments = MaxGraphSegments + GridLineCount;
         private const int SegmentStride = 24;
         private const int UploadBufferBytes = MaxSegments * SegmentStride;
+        private static readonly TimeSpan GpuFenceWaitTimeout = TimeSpan.FromSeconds(5);
 
         private readonly ID3D12Device _device;
         private readonly ID3D12CommandQueue _commandQueue;
@@ -1222,8 +1223,40 @@ public sealed class Direct3D12AudioGraphHost : VisualizationDirectX12ViewportHos
             }
 
             _fence.SetEventOnCompletion(_fenceValue, _fenceEvent);
-            _fenceEvent.WaitOne();
+            WaitOnFenceEventOrThrow();
             ClearFrameFenceValues();
+        }
+
+        // A GPU driver TDR/hang would otherwise block this indefinitely - including inside
+        // Dispose(), which shares _rendererLock with the render loop. A bounded wait converts a
+        // permanent freeze into a caught, reported failure (RenderWorkerLoop already catches and
+        // reports render exceptions via StatusChanged) instead of hanging the app.
+        private void WaitOnFenceEventOrThrow()
+        {
+            if (_fenceEvent.WaitOne(GpuFenceWaitTimeout))
+            {
+                return;
+            }
+
+            string? deviceRemovedReason = null;
+            try
+            {
+                var reason = _device.DeviceRemovedReason;
+                if (reason.Failure)
+                {
+                    deviceRemovedReason = string.IsNullOrWhiteSpace(reason.Description)
+                        ? reason.ApiCode
+                        : reason.Description;
+                }
+            }
+            catch
+            {
+                // Best-effort diagnostic only.
+            }
+
+            throw new TimeoutException(deviceRemovedReason is null
+                ? $"GPU fence wait timed out after {GpuFenceWaitTimeout.TotalSeconds:0.#}s; the graphics device may be lost."
+                : $"GPU fence wait timed out after {GpuFenceWaitTimeout.TotalSeconds:0.#}s; device removed ({deviceRemovedReason}).");
         }
 
         private void SignalFrameSubmitted(FrameResource frameResource)
@@ -1248,7 +1281,7 @@ public sealed class Direct3D12AudioGraphHost : VisualizationDirectX12ViewportHos
             if (_fence.CompletedValue < frameResource.FenceValue)
             {
                 _fence.SetEventOnCompletion(frameResource.FenceValue, _fenceEvent);
-                _fenceEvent.WaitOne();
+                WaitOnFenceEventOrThrow();
             }
 
             frameResource.FenceValue = 0;
