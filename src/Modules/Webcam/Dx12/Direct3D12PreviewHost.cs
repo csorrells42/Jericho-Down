@@ -567,6 +567,12 @@ public sealed class Direct3D12PreviewHost : WebcamDirectX12ViewportHost, ICamera
         private const int BgraColorSettingsDescriptorStart = 3;
         private const int BgraColorSettingsBufferBytes = 256;
 
+        // Must mirror Direct3D11SharedTextureBridge's ProducerAcquireKey/ProducerReleaseKey:
+        // the D3D11 producer releases into state 1, so the consumer acquires 1 and releases 0.
+        private const ulong SharedBridgeConsumerAcquireKey = 1;
+        private const ulong SharedBridgeConsumerReleaseKey = 0;
+        private const int SharedBridgeKeyedMutexTimeoutMilliseconds = 200;
+
         private readonly ID3D12Device _device;
         private readonly ID3D12CommandQueue _commandQueue;
         private readonly IDXGIFactory4 _factory;
@@ -899,8 +905,39 @@ public sealed class Direct3D12PreviewHost : WebcamDirectX12ViewportHost, ICamera
             try
             {
                 using var sharedResource = _device.OpenSharedHandle<ID3D12Resource>(frame.D3D12SharedTextureHandle);
-                RenderNativeNv12Resource(sharedResource, frame.Width, frame.Height, colorSettings, denoiseEnabled, denoiseStrength);
-                WaitForGpu();
+
+                // Mirrors Direct3D11SharedTextureBridge's producer side: acquire state 1 (the D3D11
+                // capture side releases into state 1 after it finishes copying), sample the texture,
+                // then release back into state 0 so the producer can write the next frame.
+                using var keyedMutex = sharedResource.QueryInterfaceOrNull<IDXGIKeyedMutex>();
+                var mutexAcquired = false;
+                try
+                {
+                    if (keyedMutex is not null)
+                    {
+                        keyedMutex.AcquireSync(SharedBridgeConsumerAcquireKey, SharedBridgeKeyedMutexTimeoutMilliseconds);
+                        mutexAcquired = true;
+                    }
+
+                    RenderNativeNv12Resource(sharedResource, frame.Width, frame.Height, colorSettings, denoiseEnabled, denoiseStrength);
+                    WaitForGpu();
+                }
+                finally
+                {
+                    if (mutexAcquired)
+                    {
+                        try
+                        {
+                            keyedMutex!.ReleaseSync(SharedBridgeConsumerReleaseKey);
+                        }
+                        catch
+                        {
+                            // Best-effort hand-off; the producer's next AcquireSync will time out
+                            // and skip a frame rather than the process crashing here.
+                        }
+                    }
+                }
+
                 _sharedD3D11BridgePreviewFailureReason = null;
                 return true;
             }

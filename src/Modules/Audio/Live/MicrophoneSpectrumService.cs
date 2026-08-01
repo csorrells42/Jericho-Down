@@ -61,10 +61,13 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private BufferedWaveProvider? _processedOutputProvider;
     private IWaveProvider? _processedOutputPlaybackProvider;
     private WasapiOutputSettings _wasapiOutputSettings = WasapiOutputSettings.Default;
+    private const long ProcessedRecordingFlushIntervalMilliseconds = 2000;
+
     private readonly object _processedRecordingLock = new();
     private WaveFileWriter? _processedRecordingWriter;
     private string? _processedRecordingPath;
     private bool _isProcessedRecordingPaused;
+    private long _processedRecordingLastFlushTicks;
     private ProcessedRecordingSource _processedRecordingSource = ProcessedRecordingSource.ProgramMix;
     private int _processedRecordingSelectedChannelNumber = 1;
     private byte[] _processedRecordingBytes = [];
@@ -1326,6 +1329,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, recordingChannelCount));
             _processedRecordingPath = path;
             _isProcessedRecordingPaused = false;
+            _processedRecordingLastFlushTicks = Environment.TickCount64;
         }
     }
 
@@ -3020,6 +3024,18 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
                 MemoryMarshal.AsBytes(recordingSamples).CopyTo(_processedRecordingBytes.AsSpan(0, byteCount));
                 writer.Write(_processedRecordingBytes, 0, byteCount);
+
+                // The WAV RIFF/data chunk sizes are only patched into the header on Flush(), not on
+                // every Write(). Without this, a crash or power loss mid-recording leaves a header
+                // that still says "0 bytes of audio", making an otherwise-intact file unplayable.
+                // Flushing periodically bounds the worst-case loss to a couple of seconds of audio
+                // instead of the entire recording.
+                var nowTicks = Environment.TickCount64;
+                if (nowTicks - _processedRecordingLastFlushTicks >= ProcessedRecordingFlushIntervalMilliseconds)
+                {
+                    writer.Flush();
+                    _processedRecordingLastFlushTicks = nowTicks;
+                }
             }
             catch (Exception ex)
             {

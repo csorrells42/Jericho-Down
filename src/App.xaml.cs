@@ -29,7 +29,27 @@ public partial class App : Application
     private static void AppDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         AppStateStore.LogUnhandledException("dispatcher-unhandled-exception", e.Exception);
-        e.Handled = false;
+        NotifyMainWindow(e.Exception);
+
+        // Keep the app running for volunteers operating it live instead of crashing the
+        // whole session over a single UI-thread exception (e.g. a device hiccup mid-recording).
+        // The exception is already logged to diagnostics.log for follow-up.
+        e.Handled = true;
+    }
+
+    private static void NotifyMainWindow(Exception exception)
+    {
+        try
+        {
+            if (Current?.MainWindow is EqualizerWindow mainWindow)
+            {
+                mainWindow.NotifyRecoveredFromUnhandledError(exception);
+            }
+        }
+        catch
+        {
+            // Never let status-text notification turn a handled exception into a crash.
+        }
     }
 
     private static void CurrentDomainUnhandledException(object sender, UnhandledExceptionEventArgs e)

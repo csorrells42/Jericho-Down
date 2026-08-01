@@ -16,6 +16,14 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
     private const int DxgiFormatNv12 = 103;
     private const int DuplicateSameAccess = 0x2;
 
+    // DXGI keyed-mutex protocol: the mutex starts in state 0. The D3D11 producer acquires state 0,
+    // writes the frame, then releases into state 1; the D3D12 consumer (Direct3D12PreviewHost)
+    // acquires state 1, samples the frame, then releases back into state 0. This prevents the two
+    // GPU contexts from touching the shared NV12 texture at the same time.
+    private const ulong ProducerAcquireKey = 0;
+    private const ulong ProducerReleaseKey = 1;
+    private const int KeyedMutexTimeoutMilliseconds = 200;
+
     private readonly IntPtr _device;
     private readonly IntPtr _context;
     private readonly CreateTexture2DDelegate _createTexture2D;
@@ -23,6 +31,7 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
     private readonly FlushDelegate _flush;
     private IntPtr _sharedTexture;
     private IntPtr _sharedHandle;
+    private IDXGIKeyedMutex? _keyedMutex;
     private bool _disposed;
 
     public Direct3D11SharedTextureBridge(IntPtr device, IntPtr context, int width, int height)
@@ -74,8 +83,18 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
             return false;
         }
 
+        var mutexAcquired = false;
         try
         {
+            // Block the D3D12 consumer from sampling the shared texture while we're mid-copy;
+            // AcquireSync throws (caught below) if the consumer doesn't hand it back in time,
+            // so a stalled/hung consumer drops this frame instead of corrupting the texture.
+            if (_keyedMutex is not null)
+            {
+                _keyedMutex.AcquireSync(ProducerAcquireKey, KeyedMutexTimeoutMilliseconds);
+                mutexAcquired = true;
+            }
+
             _copyResource(_context, _sharedTexture, sourceTexture);
             _flush(_context);
             if (!TryDuplicateHandle(_sharedHandle, out duplicatedSharedHandle))
@@ -97,6 +116,21 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
             failureReason = ex.Message;
             return false;
         }
+        finally
+        {
+            if (mutexAcquired)
+            {
+                try
+                {
+                    _keyedMutex!.ReleaseSync(ProducerReleaseKey);
+                }
+                catch
+                {
+                    // Best-effort hand-off; if this fails the consumer's next AcquireSync will
+                    // time out and skip a frame rather than the process crashing here.
+                }
+            }
+        }
     }
 
     public void Dispose()
@@ -107,6 +141,8 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
         }
 
         _disposed = true;
+        _keyedMutex?.Dispose();
+        _keyedMutex = null;
         if (_sharedHandle != IntPtr.Zero)
         {
             CloseHandle(_sharedHandle);
@@ -149,6 +185,16 @@ internal sealed class Direct3D11SharedTextureBridge : IDisposable
         {
             throw new InvalidOperationException("D3D11 CreateTexture2D returned no shared bridge texture.");
         }
+
+        var keyedMutexId = typeof(IDXGIKeyedMutex).GUID;
+        result = Marshal.QueryInterface(_sharedTexture, in keyedMutexId, out var keyedMutexPointer);
+        MediaFoundationInterop.ThrowIfFailed(result);
+        if (keyedMutexPointer == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("D3D11 bridge texture did not expose IDXGIKeyedMutex.");
+        }
+
+        _keyedMutex = new IDXGIKeyedMutex(keyedMutexPointer);
 
         var dxgiResourcePointer = IntPtr.Zero;
         try

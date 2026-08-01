@@ -7933,6 +7933,16 @@ public partial class EqualizerWindow : Window
         });
     }
 
+    /// <summary>
+    /// Called by App's DispatcherUnhandledException handler after an unexpected exception was
+    /// caught and logged so the app can keep running instead of crashing. Surfaces a plain-language
+    /// status message; must never itself throw back into the exception handler.
+    /// </summary>
+    internal void NotifyRecoveredFromUnhandledError(Exception exception)
+    {
+        StatusText.Text = "Recovered from an unexpected error - it was logged. If something looks wrong, save your work and restart.";
+    }
+
     private async void AudioDeviceFormatTimerTick(object? sender, EventArgs e)
     {
         var selectedDevice = _selectedDevice;

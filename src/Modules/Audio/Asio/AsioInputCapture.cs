@@ -186,6 +186,15 @@ public sealed class AsioInputCapture : IWaveIn
             {
                 asio.AudioAvailable -= AsioAudioAvailable;
                 asio.Dispose();
+
+                // asio.Play() may have thrown after _asio was already published above; if we leave
+                // _asio pointing at the disposed driver, every future StartRecording() call sees
+                // "_asio is not null" and silently no-ops, permanently wedging capture.
+                if (ReferenceEquals(_asio, asio))
+                {
+                    _asio = null;
+                }
+
                 throw;
             }
         }

@@ -6,7 +6,8 @@ public sealed class NAudioImpulseConvolutionProcessor
 {
     private readonly ImpulseResponseConvolution _convolver = new();
     private readonly double _sampleRate;
-    private int _settingsRevision = -1;
+    private ImpulseKey _impulseKey;
+    private bool _impulseInitialized;
     private bool _enabled;
     private float _mix;
     private float[] _impulse = [1f];
@@ -21,18 +22,23 @@ public sealed class NAudioImpulseConvolutionProcessor
 
     public void UpdateFromSettings(VoiceProcessorSettings settings)
     {
-        if (settings.SettingsRevision == _settingsRevision)
-        {
-            return;
-        }
-
-        _settingsRevision = settings.SettingsRevision;
         _enabled = settings.NAudioConvolutionEnabled;
         _mix = (float)Math.Clamp(double.IsFinite(settings.NAudioConvolutionMix) ? settings.NAudioConvolutionMix : 0.2d, 0d, 1d);
-        _impulse = BuildImpulse(
+
+        var impulseKey = new ImpulseKey(
             settings.NAudioConvolutionLengthMs,
             settings.NAudioConvolutionPreDelayMs,
             settings.NAudioConvolutionDecay);
+        if (_impulseInitialized && impulseKey.Equals(_impulseKey))
+        {
+            // Only the enable flag or mix changed - keep the impulse response and the
+            // in-flight reverb tail intact instead of truncating whatever was still ringing out.
+            return;
+        }
+
+        _impulseInitialized = true;
+        _impulseKey = impulseKey;
+        _impulse = BuildImpulse(impulseKey.LengthMs, impulseKey.PreDelayMs, impulseKey.Decay);
         _tailBuffer = new float[Math.Max(0, _impulse.Length - 1)];
         _nextTailBuffer = new float[_tailBuffer.Length];
     }
@@ -103,4 +109,6 @@ public sealed class NAudioImpulseConvolutionProcessor
     {
         return float.IsFinite(sample) ? Math.Clamp(sample, -1f, 1f) : 0f;
     }
+
+    private readonly record struct ImpulseKey(double LengthMs, double PreDelayMs, double Decay);
 }

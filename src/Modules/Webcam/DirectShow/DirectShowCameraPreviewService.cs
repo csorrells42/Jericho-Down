@@ -293,9 +293,33 @@ public sealed class DirectShowCameraPreviewService : IDisposable
         {
             lock (_recordingLock)
             {
-                LastRecordingDiagnostics = "DirectShow recorder: stop timed out waiting for the capture thread to finalize the file.";
-                LastStatus = LastRecordingDiagnostics;
-                StatusChanged?.Invoke(this, LastRecordingDiagnostics);
+                // The capture thread never delivered another frame to finalize the file on its own
+                // (camera stalled/unplugged mid-recording). Take ownership of the recorder here -
+                // safe because OnBuffer only ever touches _recorder while holding this same lock -
+                // and force-finalize it so the sink writer/file handle isn't leaked and locked forever.
+                var orphanedRecorder = _recorder;
+                _recorder = null;
+                _recordingPath = null;
+                _recordingStopRequested = false;
+                _recordingMediaFoundationScope?.Dispose();
+                _recordingMediaFoundationScope = null;
+
+                string diagnostics;
+                try
+                {
+                    orphanedRecorder?.Dispose();
+                    diagnostics = orphanedRecorder is null
+                        ? "DirectShow recorder: stop timed out waiting for the capture thread to finalize the file."
+                        : "DirectShow recorder: stop timed out; the in-progress recording was force-finalized so the file would not stay locked.";
+                }
+                catch (Exception ex)
+                {
+                    diagnostics = $"DirectShow recorder: stop timed out and force-finalize failed ({ex.Message}); the recording may be unplayable.";
+                }
+
+                LastRecordingDiagnostics = diagnostics;
+                LastStatus = diagnostics;
+                StatusChanged?.Invoke(this, diagnostics);
                 return null;
             }
         }
