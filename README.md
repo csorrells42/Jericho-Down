@@ -1,6 +1,28 @@
 # Jericho Down
 
-Jericho Down is a standalone WPF church/live-worship production tool for recording, camera preview, microphone DSP, EQ, spectrum/waveform visualization, karaoke/worship lyrics, mic comparison, and processed output routing.
+Jericho Down is a standalone C# / WPF production tool for churches, worship teams, podcasters, and live-event operators. It brings microphone processing, camera preview, recording, lyrics, and routed output into one practical Windows desktop application.
+
+## Why it matters
+
+This is real-time application work, not a mockup: the software processes live audio, controls cameras, records sessions, and gives operators immediate feedback through purpose-built visualizations and controls.
+
+- **Audio pipeline:** 20-band EQ, high-pass filtering, noise gate, compressor, limiter, spectrum/waveform views, and processed routing.
+- **Video pipeline:** Media Foundation and DirectShow camera paths, DirectX 12 preview, camera controls, denoising, and color correction.
+- **Production workflow:** live mic selection, lyric timing, session metadata, raw-backup audio, and saved media browsing.
+- **Built to validate:** focused test harnesses and a PowerShell verifier for builds, tests, connected cameras, and optional live-camera diagnostics.
+
+## Engineering highlights
+
+| Area | Implementation |
+| --- | --- |
+| Desktop application | C#, .NET, WPF, XAML |
+| Audio | Low-latency DSP, EQ, dynamics processing, recording, virtual-device routing |
+| Video | Media Foundation, DirectShow, DirectX 12, camera controls, real-time image processing |
+| Reliability | Modular boundaries, test harness, hardware-aware verification scripts |
+
+## What I can build from this foundation
+
+Custom Windows media tools, podcast and livestream workflows, camera-control applications, audio-processing utilities, and hardware-adjacent desktop software.
 
 It is offered freely for Christian churches, worship teams, and ministries.
 
