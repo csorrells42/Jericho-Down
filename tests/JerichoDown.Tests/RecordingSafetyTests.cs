@@ -1,4 +1,6 @@
-using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Live;
+using JerichoDown.Modules.Audio.Recording;
 
 internal static class RecordingSafetyTests
 {

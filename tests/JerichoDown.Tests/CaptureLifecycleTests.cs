@@ -1,5 +1,6 @@
 using System.Reflection;
-using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Live;
 using NAudio.Wave;
 
 internal static class CaptureLifecycleTests

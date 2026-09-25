@@ -26,11 +26,35 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ApplicationDefinition Include="src\App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="dependencies\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="Assets\about-dedication.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Docs\jericho-down-podcast-guide.pdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Docs\jericho-down-karaoke-guide.pdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Docs\jericho-down-mic-dsp-guide.pdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Docs\jericho-down-mixing-guide.pdf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Docs\jericho-down-midi-guide.pdf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

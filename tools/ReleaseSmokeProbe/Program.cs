@@ -8,7 +8,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using JerichoDown;
-using JerichoDown.Audio;
+using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Live;
 using NAudio.Wave;
 
 internal static class Program
@@ -65,6 +66,8 @@ internal static class Program
         PresentationTraceSources.DataBindingSource.Listeners.Add(errors);
         var exitCode = 1;
         var app = new App();
+        var dispatcherErrors = new List<Exception>();
+        app.DispatcherUnhandledException += (_, e) => dispatcherErrors.Add(e.Exception);
         app.Startup += async (_, _) =>
         {
             EqualizerWindow? window = null;
@@ -78,6 +81,8 @@ internal static class Program
                     await VerifyPodcastAsync(window, profile);
                 if (errors.Messages.Count > 0)
                     throw new InvalidOperationException("WPF binding errors: " + string.Join(Environment.NewLine, errors.Messages.Distinct()));
+                if (dispatcherErrors.Count > 0)
+                    throw new AggregateException("Unhandled WPF errors were caught by the app.", dispatcherErrors);
                 var service = Field<MicrophoneSpectrumService>(window, "_spectrumService");
                 window.Close();
                 if (service.IsRunning) throw new InvalidOperationException("Capture remained active after closing the window.");
@@ -105,6 +110,14 @@ internal static class Program
         await Task.Delay(500);
         var tabs = Control<TabControl>(window, "MainTabControl");
         if (tabs.Items.Count != 5) throw new InvalidOperationException("Unexpected main tab count.");
+        var midiTab = Control<TabItem>(window, "MidiTabItem");
+        var midiMenu = Control<MenuItem>(window, "EnableMidiMenuItem");
+        if (midiTab.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("MIDI should be opt-in for a new profile.");
+        midiMenu.SetCurrentValue(MenuItem.IsCheckedProperty, true);
+        if (midiTab.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("Enable MIDI did not reveal the tab.");
+        Console.WriteLine("PASS MIDI opt-in menu reveals its tab");
         for (var pass = 0; pass < 2; pass++)
         {
             foreach (var tab in tabs.Items.Cast<TabItem>())
@@ -213,6 +226,22 @@ internal static class Program
                 throw new InvalidOperationException("Karaoke vocal recording did not finalize.");
         }
         Console.WriteLine("PASS Karaoke backing playback and vocal record/pause/resume/stop chain");
+
+        service.Stop();
+        for (var attempt = 0; attempt < 3; attempt++)
+            Invoke(window, "RegisterAudioStreamRestartFailure", new IOException("Test device unavailable"), "Audio stream refresh failed");
+        typeof(EqualizerWindow).GetField("_nextAudioStreamRestartAttemptUtc", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(window, DateTime.MinValue);
+        Invoke(window, "AudioDeviceFormatTimerTick", null, EventArgs.Empty);
+        await Task.Delay(200);
+        if (service.IsRunning || Field<bool>(window, "_isRestartingAudioStream")
+            || !Control<TextBlock>(window, "StatusText").Text.Contains("Automatic retries paused", StringComparison.Ordinal))
+            throw new InvalidOperationException($"Repeated device failures did not stop automatic reopen attempts: running={service.IsRunning}, restarting={Field<bool>(window, "_isRestartingAudioStream")}, failures={Field<int>(window, "_audioStreamRestartFailureCount")}, status={Control<TextBlock>(window, "StatusText").Text}");
+        Invoke(window, "RefreshAudioDevicesMenuClicked", window, new RoutedEventArgs());
+        if (Field<int>(window, "_audioStreamRestartFailureCount") != 0)
+            throw new InvalidOperationException("Explicit device refresh did not release the retry limit.");
+        service.Start(AudioInputDevice.CreateStereoTestTone());
+        Console.WriteLine("PASS Failed audio retries stop and explicit device refresh re-enables recovery");
     }
 
     private static int VerifyAudioHardware()
@@ -279,9 +308,11 @@ internal static class Program
         await Task.Delay(150);
         Click(window, "PauseRecordingButton");
         await Task.Delay(500);
+        Invoke(window, "VideoSegmentRotationTimerTick", null, EventArgs.Empty);
+        await Task.Delay(1000);
         Click(window, "StopRecordingButton");
         var folder = Directory.GetDirectories(profile, "Podcast_*").Single();
-        foreach (var name in new[] { "video_001.mp4", "mix_001.wav", "raw_backup_001.wav", "session.json" })
+        foreach (var name in new[] { "video_001.mp4", "mix_001.wav", "raw_backup_001.wav", "video_002.mp4", "mix_002.wav", "raw_backup_002.wav", "session.json" })
         {
             var path = Path.Combine(folder, name);
             if (!File.Exists(path) || new FileInfo(path).Length < 100)
@@ -296,7 +327,7 @@ internal static class Program
             }
         }
         Control<ToggleButton>(window, "CameraEnabledToggle").SetCurrentValue(ToggleButton.IsCheckedProperty, false);
-        Console.WriteLine("PASS Podcast video, processed mix, raw backup, pause/resume and metadata");
+        Console.WriteLine("PASS Podcast video, processed mix, raw backup, pause/resume, segment rotation and metadata");
 
         Click(window, "StartRecordingButton");
         await Task.Delay(300);
@@ -315,6 +346,8 @@ internal static class Program
         (T)target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target)!;
     private static void Click(FrameworkElement root, string name) =>
         Control<Button>(root, name).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    private static void Invoke(object target, string name, params object?[] arguments) =>
+        target.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, arguments);
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)

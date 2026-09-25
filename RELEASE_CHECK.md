@@ -6,23 +6,25 @@ Status: software checks pass; live Yamaha AG06/ASIO verification remains open.
 
 - Disposed microphone services could reopen capture. Start/stop/recovery now serialize, pending recovery is invalidated by stopping, and disposal prevents reopening.
 - A restart could open a new stream before the old driver finished stopping. It now waits for release and reports a timeout without overlapping streams.
+- Repeated device-open failures now pause automatic recovery after three failed cycles. Window activation respects the retry limit; File > Refresh Audio Devices or an explicit input change allows recovery again. Signal rendering no longer overwrites the failure with a false Listening status.
 - WAV recording could truncate an existing file. Recording destinations now use exclusive creation; rapid karaoke recordings choose distinct names.
 - Export normalized the destination extension after checking whether it matched the source. The final destination is now checked, and replacement no longer deletes the old export before moving the completed file.
-- Podcast Record started video but never created the advertised session audio. It now saves the optional processed program mix plus a raw primary-input backup, pauses/resumes them with video, writes their names in metadata, and finalizes on stop/close or capture interruption.
+- Podcast Record started video but never created the advertised session audio. It now saves the optional processed program mix plus a raw primary-input backup, pauses/resumes and rotates them with video, writes their names in metadata, and finalizes on stop/close or capture interruption.
 
 Podcast audio is saved as separate WAV files alongside the MP4. It is not muxed into the video. The raw backup preserves the primary capture device's channels; it is not a multitrack backup of every auxiliary input.
 
 ## Verification Evidence
 
 - Release solution build: 0 warnings, 0 errors.
-- Regression harness: 133 tests passed, including reproduced failures before their fixes, live generated audio recording, pause behavior, and stop/disposal finalization.
-- WPF smoke: actual main window, all five tabs twice, selection/mute on all 11 mixer strips, EQ loopback exclusion, recording/pause/resume/stop and decoding the saved WAV, karaoke playback/recording chain, clean shutdown marker, and no binding errors.
-- Podcast smoke: connected HD Webcam, video MP4, audible mix and raw WAVs, metadata, pause/resume, and capture interruption handling.
+- Regression harness: 162 tests passed after merging the newer GitHub module, EQ, ASIO, and camera changes.
+- WPF smoke: actual main window, MIDI opt-in, all five tabs twice, selection/mute on all 11 mixer strips, EQ loopback exclusion, recording/pause/resume/stop and decoding the saved WAV, karaoke playback/recording chain, bounded failed recovery and manual refresh, clean shutdown marker, and no binding or dispatcher errors.
+- Podcast smoke: connected HD Webcam, video MP4, audible mix and raw WAVs, metadata, pause/resume, forced segment rotation with matching audio/video sets, and capture interruption handling.
 - DX12 camera probe: HD Webcam at 1280x720, 63 frames received and 62 rendered during the initial probe.
 - Live Windows input capture: Intel microphone array, MSI Sound Tune microphone, and MSI system virtual line passed via WASAPI.
 - Default speaker route opened and played generated audio.
 - Release publish succeeded; output includes JerichoDown.exe, runtime metadata, dependencies, and the About asset.
 - Probe processes exited. Tests used isolated temporary settings and did not replace the user's saved Yamaha selection.
+- Desktop launcher targets `bin/Release/net10.0-windows/JerichoDown.exe`, which was rebuilt with these fixes.
 
 ## Open Gate
 

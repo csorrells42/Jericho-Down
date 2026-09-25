@@ -7,9 +7,22 @@ using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using JerichoDown;
-using JerichoDown.Audio;
-using JerichoDown.Video;
-using JerichoDown.Visualization;
+using JerichoDown.Modules.Audio.Asio;
+using JerichoDown.Modules.Audio.Capture;
+using JerichoDown.Modules.Audio.CoreAudio;
+using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Diagnostics;
+using JerichoDown.Modules.Audio.Dsp;
+using JerichoDown.Modules.Audio.Live;
+using JerichoDown.Modules.Audio.Recording;
+using JerichoDown.Modules.Audio.Sync;
+using JerichoDown.Modules.Karaoke;
+using JerichoDown.Modules.Midi;
+using JerichoDown.Modules.Mixer;
+using JerichoDown.Modules.Webcam;
+using JerichoDown.Modules.Webcam.Dx12;
+using JerichoDown.Modules.Visualization;
+using JerichoDown.Modules.Visualization.Dx12;
 using NAudio.Midi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -36,6 +49,13 @@ var tests = new (string Name, Action Test)[]
     ("Voice notch filter cuts one ringing tone", VoiceNotchFilterCutsOneRingingTone),
     ("Voice parametric EQ shapes one adjustable band", VoiceParametricEqShapesOneAdjustableBand),
     ("Voice shelf EQ shapes low body and high air", VoiceShelfEqShapesLowBodyAndHighAir),
+    ("Graphic EQ updates while live provider is running", GraphicEqUpdatesWhileLiveProviderIsRunning),
+    ("Graphic EQ processor is zero-latency and reusable", GraphicEqProcessorIsZeroLatencyAndReusable),
+    ("Voice processor reports EQ and limiter monitoring latency", VoiceProcessorReportsEqAndLimiterMonitoringLatency),
+    ("Graphic EQ modeled response describes expected curves", GraphicEqModeledResponseDescribesExpectedCurves),
+    ("Graphic EQ adjustment audit quantifies every slider", GraphicEqAdjustmentAuditQuantifiesEverySlider),
+    ("Graphic EQ verification measures all bands and adjacent response", GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse),
+    ("DSP verification report proves custom EQ/DSP claims", DspVerificationReportProvesCustomDspClaims),
     ("NAudio BiQuad rack exposes every EQ shape", NAudioBiQuadRackExposesEveryEqShape),
     ("NAudio pitch shift moves tone frequency", NAudioPitchShiftMovesToneFrequency),
     ("NAudio convolution adds generated impulse tail", NAudioConvolutionAddsGeneratedImpulseTail),
@@ -56,6 +76,11 @@ var tests = new (string Name, Action Test)[]
     ("Equalizer band raises expected notifications", EqualizerBandRaisesNotifications),
     ("EQ screen binds every voice processor setting", EqScreenBindsEveryVoiceProcessorSetting),
     ("Main menu exposes global device and help actions", MainMenuExposesGlobalDeviceAndHelpActions),
+    ("Module readmes define ownership", ModuleReadmesDefineOwnership),
+    ("Podcast session playback prefers DX12 file renderer", PodcastSessionPlaybackPrefersDx12FileRenderer),
+    ("Camera denoise stays on DX12 preview paths", CameraDenoiseStaysOnDx12PreviewPaths),
+    ("DX12 webcam module probe uses reusable facade", Dx12WebcamModuleProbeUsesReusableFacade),
+    ("MIDI tab is opt-in and ordered after Karaoke", MidiTabIsOptInAndOrderedAfterKaraoke),
     ("Voice processor uses every DSP setting", VoiceProcessorUsesEveryDspSetting),
     ("Audio device format display text is stable", AudioDeviceFormatDisplayText),
     ("Audio device diagnostics names selected device risks", AudioDeviceDiagnosticsNamesSelectedDeviceRisks),
@@ -64,15 +89,24 @@ var tests = new (string Name, Action Test)[]
     ("Audio restart waits for old driver", CaptureLifecycleTests.RestartWaitsForOldDriver),
     ("Stopping audio cancels queued recovery", CaptureLifecycleTests.StopCancelsPendingRecovery),
     ("Live tone records and restarts", CaptureLifecycleTests.LiveToneRecordsAndRestarts),
-    ("Processed monitor uses stability-first buffering", ProcessedMonitorUsesStabilityFirstBuffering),
+    ("Processed monitor follows WASAPI latency profile", ProcessedMonitorFollowsWasapiLatencyProfile),
+    ("Mic DSP monitor exposes processed EQ audition", MicDspMonitorExposesProcessedEqAudition),
+    ("Mic DSP mono copy exposes dual-ear audition", MicDspMonoCopyExposesDualEarAudition),
+    ("Graphic EQ sliders sync live settings and graph", GraphicEqSlidersSyncLiveSettingsAndGraph),
     ("Processed output routing prefers WASAPI before WaveOut", ProcessedOutputRoutingPrefersWasapiBeforeWaveOut),
     ("WASAPI expert output settings are persisted and routed", WasapiExpertOutputSettingsArePersistedAndRouted),
     ("ASIO output routing is opt-in", AsioOutputRoutingIsOptIn),
     ("ASIO control panel rejects non-ASIO endpoints", AsioControlPanelRejectsNonAsioEndpoints),
     ("ASIO settings menu prefers selected and installed drivers", AsioSettingsMenuPrefersSelectedAndInstalledDrivers),
+    ("ASIO callback test exposes driver modes", AsioCallbackTestExposesDriverModes),
     ("ASIO input devices carry endpoint identity", AsioInputDevicesCarryEndpointIdentity),
     ("ASIO input selections restore by endpoint", AsioInputSelectionsRestoreByEndpoint),
     ("ASIO restart path preserves endpoint identity", AsioRestartPathPreservesEndpointIdentity),
+    ("ASIO input startup avoids pre-open probe", AsioInputStartupAvoidsPreOpenProbe),
+    ("ASIO STA dispatcher pumps Windows messages", AsioStaDispatcherPumpsWindowsMessages),
+    ("ASIO no-callback state clears stale graphs", AsioNoCallbackStateClearsStaleGraphs),
+    ("ASIO input capture uses record-only live mode", AsioInputCaptureUsesRecordOnlyLiveMode),
+    ("ASIO primary capture holds auxiliary inputs", AsioPrimaryCaptureHoldsAuxiliaryInputs),
     ("ASIO input capture converts interleaved floats", AsioInputCaptureConvertsInterleavedFloats),
     ("CoreAudio session catalog skips ASIO outputs", CoreAudioSessionCatalogSkipsAsioOutputs),
     ("Processed output status reports actual playback format", ProcessedOutputStatusReportsActualPlaybackFormat),
@@ -99,6 +133,8 @@ var tests = new (string Name, Action Test)[]
     ("Live output provider receives program mix", LiveOutputProviderReceivesProgramMix),
     ("Live output provider follows mixer mute and solo", LiveOutputProviderFollowsMixerMuteAndSolo),
     ("Live output provider follows mixer gain pan polarity and delay", LiveOutputProviderFollowsMixerGainPanPolarityAndDelay),
+    ("Live output provider duplicates processed mono to stereo", LiveOutputProviderDuplicatesProcessedMonoToStereo),
+    ("Graphic EQ slider moves change mixer line output", GraphicEqSliderMovesChangeMixerLineOutput),
     ("Live service bus mixes auxiliary capture device", LiveServiceBusMixesAuxiliaryCaptureDevice),
     ("Live service bus publishes auxiliary sync telemetry", LiveServiceBusPublishesAuxiliarySyncTelemetry),
     ("Live service bus records auxiliary mic in program mix", LiveServiceBusRecordsAuxiliaryMicInProgramMix),
@@ -118,8 +154,10 @@ var tests = new (string Name, Action Test)[]
     ("Live mix audibility gates mute and solo", LiveMixAudibilityGatesMuteAndSolo),
     ("Mixer strip clicks select channels cheaply", MixerStripClicksSelectChannelsCheaply),
     ("Active mic selection avoids synchronous format probe", ActiveMicSelectionAvoidsSynchronousFormatProbe),
+    ("Mic DSP editor rebinds after mixer selection", MicDspEditorRebindsAfterMixerSelection),
     ("Mixer channel controls debounce state persistence", MixerChannelControlsDebounceStatePersistence),
     ("Mixer volume controls mark and snap unity", MixerVolumeControlsMarkAndSnapUnity),
+    ("Dual mono provider copies mono samples to both sides", DualMonoProviderCopiesMonoSamplesToBothSides),
     ("Stereo pan provider routes mono mics across stereo bus", StereoPanProviderRoutesMonoMicsAcrossStereoBus),
     ("Audio delay line delays and resets samples", AudioDelayLineDelaysAndResetsSamples),
     ("Stereo audio delay line preserves left and right", StereoAudioDelayLinePreservesLeftAndRight),
@@ -135,6 +173,10 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke lyric cache is scoped by track file", KaraokeLyricCacheIsScopedByTrackFile),
     ("Karaoke M4A duration reads MP4 movie header", KaraokeM4aDurationReadsMovieHeader),
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
+    ("Karaoke sample reader failures use media fallback", KaraokeSampleReaderFailuresUseMediaFallback),
+    ("Karaoke playback-stopped codec failures use media fallback", KaraokePlaybackStoppedCodecFailuresUseMediaFallback),
+    ("Karaoke play restarts after track end", KaraokePlayRestartsAfterTrackEnd),
+    ("Karaoke add tracks loads idle selection", KaraokeAddTracksLoadsIdleSelection),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
     ("Audio recording exporter supports compressed targets", AudioRecordingExporterSupportsCompressedTargets),
     ("Recording preserves existing destination", RecordingSafetyTests.RecordingPreservesExistingFile),
@@ -301,14 +343,14 @@ static void FileBrowserWatcherIgnoresChangedEvents()
 
 static void AppStorageUsesLocalAppDataAndRotatesDiagnostics()
 {
-    var storageSource = File.ReadAllText(FindRepoFile("AppStoragePaths.cs"));
+    var storageSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStoragePaths.cs")));
     Assert(storageSource.Contains("Environment.SpecialFolder.LocalApplicationData", StringComparison.Ordinal), "app storage should use the per-user LocalAppData folder");
     Assert(storageSource.Contains("AppDataFolderName = \"JerichoDown\"", StringComparison.Ordinal), "app storage should be rooted in a JerichoDown folder");
     Assert(storageSource.Contains("LegacySettingsFolder", StringComparison.Ordinal), "app storage should retain a legacy settings migration path");
     Assert(storageSource.Contains("CopyLegacyDirectory", StringComparison.Ordinal), "legacy settings should be migrated into LocalAppData without user data loss");
     Assert(storageSource.Contains("run-state.json", StringComparison.Ordinal) && storageSource.Contains("diagnostics.log", StringComparison.Ordinal), "legacy volatile run state and logs should not be copied as persistent state");
 
-    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    var stateSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStateStore.cs")));
     Assert(stateSource.Contains("MaximumDiagnosticsLogBytes", StringComparison.Ordinal), "diagnostics logging should have a size cap");
     Assert(stateSource.Contains("RetainedDiagnosticsLogCount", StringComparison.Ordinal), "diagnostics logging should retain a bounded number of rotated logs");
     Assert(stateSource.Contains("RotateDiagnosticsLogIfNeeded", StringComparison.Ordinal), "diagnostics logging should rotate before appending forever");
@@ -317,20 +359,23 @@ static void AppStorageUsesLocalAppDataAndRotatesDiagnostics()
 
 static void AppGeneratedFilesUseAtomicWrites()
 {
-    var atomicSource = File.ReadAllText(FindRepoFile("AtomicFile.cs"));
+    var atomicSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "AtomicFile.cs")));
     Assert(atomicSource.Contains("File.Replace", StringComparison.Ordinal), "atomic writes should replace existing files through the filesystem replace primitive");
     Assert(atomicSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "atomic writes should use unique temp files");
 
-    var stateSource = File.ReadAllText(FindRepoFile("AppStateStore.cs"));
+    var stateSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStateStore.cs")));
     Assert(!stateSource.Contains("            File.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should not be written directly");
     Assert(!stateSource.Contains("            File.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should not be written directly");
     Assert(stateSource.Contains("AtomicFile.WriteAllText(SettingsPath", StringComparison.Ordinal), "settings state should use atomic writes");
     Assert(stateSource.Contains("AtomicFile.WriteAllText(RunMarkerPath", StringComparison.Ordinal), "run state should use atomic writes");
 
-    var cameraSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "CameraProfileStore.cs")));
-    Assert(cameraSource.Contains("AtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use atomic writes");
+    var cameraSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfileStore.cs")));
+    var webcamAtomicSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamAtomicFile.cs")));
+    Assert(cameraSource.Contains("WebcamAtomicFile.WriteAllText", StringComparison.Ordinal), "camera profiles should use webcam-module atomic writes");
+    Assert(!cameraSource.Contains("using JerichoDown;", StringComparison.Ordinal), "camera profiles should not depend on app-specific helpers");
+    Assert(webcamAtomicSource.Contains("File.Replace", StringComparison.Ordinal), "webcam-module atomic writes should replace existing files through the filesystem replace primitive");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("AtomicFile.WriteAllText(metadataPath", StringComparison.Ordinal), "podcast session metadata should use atomic writes");
     Assert(windowSource.Contains("AtomicFile.WriteAllText(cachePath", StringComparison.Ordinal), "karaoke lyric cache should use atomic writes");
     Assert(windowSource.Contains("AtomicFile.WriteAllText(GetUserPresetPath", StringComparison.Ordinal), "user presets should use atomic writes");
@@ -338,13 +383,13 @@ static void AppGeneratedFilesUseAtomicWrites()
 
 static void RecordingDeletesArePathBounded()
 {
-    var pathSafetySource = File.ReadAllText(FindRepoFile("PathSafety.cs"));
+    var pathSafetySource = File.ReadAllText(FindRepoFile(Path.Combine("src", "PathSafety.cs")));
     Assert(pathSafetySource.Contains("IsRegularFileUnderFolder", StringComparison.Ordinal), "path safety should validate files against configured roots");
     Assert(pathSafetySource.Contains("IsDirectoryUnderFolder", StringComparison.Ordinal), "path safety should validate folders against configured roots");
     Assert(pathSafetySource.Contains("FileAttributes.ReparsePoint", StringComparison.Ordinal), "path safety should reject reparse points before destructive operations");
     Assert(pathSafetySource.Contains("ArgumentList.Add", StringComparison.Ordinal), "explorer launch should use structured argument passing");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var audioDelete = ExtractSourceBetween(windowSource, "    private void DeleteSelectedAudioRecording()", "    private void SessionFilesSelectionChanged");
     Assert(audioDelete.Contains("PathSafety.IsRegularFileUnderFolder(selectedPath, _audioRecordingFolder", StringComparison.Ordinal), "audio recording deletes should be bounded to the recording folder");
     Assert(audioDelete.Contains("Delete blocked", StringComparison.Ordinal), "audio recording deletes should fail closed when path checks fail");
@@ -362,7 +407,7 @@ static void RecordingDeletesArePathBounded()
 
 static void KaraokeAiToolsUseStructuredProcessArguments()
 {
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("CreateKaraokeAiWorkFolder", StringComparison.Ordinal), "AI lyric detection should create isolated work folders per run");
     Assert(windowSource.Contains("detect_{DateTime.UtcNow", StringComparison.Ordinal) && windowSource.Contains("Guid.NewGuid", StringComparison.Ordinal), "AI lyric detection work folders should be unique");
     Assert(windowSource.Contains("PathSafety.IsDirectoryUnderFolder(workFolder, KaraokeAiWorkFolder, allowRoot: false)", StringComparison.Ordinal), "AI work-folder cleanup should stay under the app work root");
@@ -544,6 +589,257 @@ static void VoiceShelfEqShapesLowBodyAndHighAir()
     Assert(lowShaped.All(float.IsFinite) && highShaped.All(float.IsFinite), "shelf EQ output should stay finite");
 }
 
+static void GraphicEqUpdatesWhileLiveProviderIsRunning()
+{
+    const int sampleRate = 48_000;
+    var source = GenerateSine(sampleRate, 1_000d, 0.25d, 0.5d);
+    var settings = CreateTransparentVoiceSettings();
+    var blockProvider = new LiveMicBlockSampleProvider(sampleRate);
+    var provider = new VoiceProcessorSampleProvider(blockProvider, new VoiceSampleProcessor(settings, sampleRate));
+    var bypass = new float[source.Length];
+    var boosted = new float[source.Length];
+
+    blockProvider.SetBlock(source);
+    provider.Read(bypass, 0, bypass.Length);
+
+    var gains = new double[20];
+    gains[10] = 12d;
+    settings.SetEqualizerGains(gains);
+    blockProvider.SetBlock(source);
+    provider.Read(boosted, 0, boosted.Length);
+
+    var start = sampleRate / 5;
+    var bypassMagnitude = CalculateToneMagnitude(bypass, sampleRate, 1_000d, start);
+    var boostedMagnitude = CalculateToneMagnitude(boosted, sampleRate, 1_000d, start);
+
+    Assert(provider.LastProcessedSampleCount == source.Length, "live DSP provider should process the whole live block");
+    Assert(boostedMagnitude > bypassMagnitude * 1.45d, "graphic EQ gain changes should update a running live DSP provider without a restart");
+    Assert(boosted.All(float.IsFinite), "live graphic EQ output should stay finite");
+}
+
+static void GraphicEqProcessorIsZeroLatencyAndReusable()
+{
+    const int sampleRate = 48_000;
+    var settings = GraphicEqualizerSettings.Default;
+    var processor = new GraphicEqualizerProcessor(settings, sampleRate);
+    var gains = settings.CreateFlatGains();
+    gains[10] = 6d;
+    var impulse = new float[256];
+    var processed = new float[256];
+    impulse[0] = 1f;
+
+    processor.Update(gains, 1, impulse.Length);
+    processor.Process(impulse, processed);
+
+    Assert(processor.LatencySamples == 0, "graphic EQ should not add algorithmic monitoring latency");
+    Assert(Math.Abs(processor.LatencyMilliseconds) < 0.000001d, "graphic EQ latency should report 0 ms");
+    Assert(processor.ActiveBandCount == 1, "graphic EQ should process only the active adjusted band");
+    Assert(Math.Abs(processed[0]) > 0.5f, "graphic EQ should respond on the first sample instead of delaying the monitor path");
+    Assert(processed.All(float.IsFinite), "graphic EQ output should stay finite");
+
+    var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+    processor.Process(impulse, processed);
+    var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+    Assert(allocatedAfter == allocatedBefore, "steady graphic EQ block processing should not allocate on the audio thread");
+}
+
+static void VoiceProcessorReportsEqAndLimiterMonitoringLatency()
+{
+    const int sampleRate = 48_000;
+    var lowLatencySettings = CreateTransparentVoiceSettings();
+    var blockProvider = new LiveMicBlockSampleProvider(sampleRate);
+    var provider = new VoiceProcessorSampleProvider(blockProvider, new VoiceSampleProcessor(lowLatencySettings, sampleRate));
+    var samples = GenerateSine(sampleRate, 1_000d, 0.25d, 0.05d);
+    var output = new float[samples.Length];
+
+    blockProvider.SetBlock(samples);
+    provider.Read(output, 0, output.Length);
+
+    Assert(provider.GraphicEqualizerLatencySamples == 0, "live provider should report graphic EQ as zero-latency");
+    Assert(Math.Abs(provider.GraphicEqualizerLatencyMilliseconds) < 0.000001d, "live provider should report graphic EQ latency as 0 ms");
+    Assert(provider.LimiterLookaheadLatencySamples == 0, "transparent low-latency voice settings should not add limiter lookahead");
+    Assert(provider.KnownDspAlgorithmicLatencySamples == 0, "transparent live provider should have no known algorithmic DSP delay");
+    Assert(provider.Processor.Telemetry.KnownDspAlgorithmicLatencySamples == 0, "telemetry should preserve the provider DSP latency total");
+
+    var limiterSettings = CreateTransparentVoiceSettings();
+    limiterSettings.LimiterEnabled = true;
+    limiterSettings.LimiterLookaheadEnabled = true;
+    limiterSettings.LimiterLookaheadMs = 3d;
+    limiterSettings.LimiterSoftClipEnabled = false;
+    var limiterProcessor = new VoiceSampleProcessor(limiterSettings, sampleRate);
+    var limiterOutput = new float[samples.Length];
+
+    limiterProcessor.Process(samples, limiterOutput);
+
+    Assert(limiterProcessor.GraphicEqualizerLatencySamples == 0, "graphic EQ latency should stay zero even when limiter lookahead is enabled");
+    Assert(limiterProcessor.LimiterLookaheadLatencySamples == 144, "3 ms limiter lookahead at 48 kHz should report 144 samples");
+    Assert(Math.Abs(limiterProcessor.LimiterLookaheadLatencyMilliseconds - 3d) < 0.001d, "limiter lookahead should report the matching milliseconds");
+    Assert(limiterProcessor.KnownDspAlgorithmicLatencySamples == 144, "known DSP latency should separate limiter lookahead from graphic EQ");
+    Assert(limiterProcessor.Telemetry.GraphicEqualizerLatencySamples == 0, "telemetry should report zero graphic EQ latency");
+    Assert(limiterProcessor.Telemetry.LimiterLookaheadLatencySamples == 144, "telemetry should report limiter lookahead latency");
+    Assert(limiterProcessor.Telemetry.KnownDspAlgorithmicLatencySamples == 144, "telemetry should expose known total algorithmic DSP latency");
+}
+
+static void GraphicEqModeledResponseDescribesExpectedCurves()
+{
+    const int sampleRate = 48_000;
+    var settings = GraphicEqualizerSettings.Default;
+    var flat = settings.CreateFlatGains();
+    var processor = new GraphicEqualizerProcessor(settings, sampleRate);
+    var singleBoost = settings.CreateFlatGains();
+    singleBoost[10] = 6d;
+
+    var flatCurve = GraphicEqualizerVerification.ModelCurve(flat);
+    Assert(flatCurve.Passed, "flat graphic EQ model should produce finite response points");
+    Assert(flatCurve.Points.Count == settings.BandCount * 2 - 1, "default model curve should include band centers and between-band midpoints");
+    Assert(flatCurve.Points.All(point => Math.Abs(point.ModeledDeltaDb) < 0.000001d), "flat graphic EQ model should stay flat at every modeled point");
+
+    var centerModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 1_000d);
+    var lowerAdjacentModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 710d);
+    var farHighModelDb = GraphicEqualizerProcessor.CalculateModeledResponseDb(settings, sampleRate, singleBoost, 4_000d);
+    Assert(Math.Abs(centerModelDb - 6d) < 0.01d, "1 kHz graphic EQ boost should model the requested center-band gain");
+    Assert(lowerAdjacentModelDb > 0.5d && lowerAdjacentModelDb < centerModelDb, "1 kHz graphic EQ boost should shape the adjacent band less than the center");
+    Assert(Math.Abs(farHighModelDb) < 0.5d, "1 kHz graphic EQ boost should leave far high bands mostly unchanged");
+
+    processor.Update(singleBoost, 1, sampleRate);
+    var liveCoefficientModelDb = processor.CalculateCurrentResponseDb(1_000d);
+    Assert(Math.Abs(liveCoefficientModelDb - centerModelDb) < 0.001d, "pure graphic EQ model should match the live processor coefficients after update");
+
+    var lowCurveGains = settings.CreateFlatGains();
+    for (var i = 0; i < Math.Min(6, lowCurveGains.Length); i++)
+    {
+        lowCurveGains[i] = settings.MaximumGainDb;
+    }
+
+    var lowCurve = GraphicEqualizerVerification.ModelCurve(lowCurveGains);
+    var lowAverageDb = lowCurve.Points.Where(point => point.FrequencyHz <= 250d).Average(point => point.ModeledDeltaDb);
+    var highAverageDb = lowCurve.Points.Where(point => point.FrequencyHz >= 2_000d).Average(point => point.ModeledDeltaDb);
+    Assert(lowCurve.Passed, "stacked low-band graphic EQ model should produce finite response points");
+    Assert(lowAverageDb > highAverageDb + 8d, "stacked low-band graphic EQ boosts should model a clearly larger low-frequency curve");
+    Assert(lowCurve.Points.Any(point => point.NearestBandGainDb == settings.MaximumGainDb), "modeled curve should expose nearest-band requested gain metadata");
+}
+
+static void GraphicEqAdjustmentAuditQuantifiesEverySlider()
+{
+    var settings = GraphicEqualizerSettings.Default;
+    var gains = settings.CreateFlatGains();
+    gains[0] = 12d;
+    gains[1] = 9d;
+    gains[10] = -6d;
+    gains[19] = 3d;
+
+    var audit = GraphicEqualizerVerification.AuditAdjustments(gains);
+
+    Assert(audit.Passed, "graphic EQ adjustment audit should pass all requested/model/measured rows: " + audit.Summary);
+    Assert(audit.BandCount == settings.BandCount, "graphic EQ adjustment audit should include one row per slider");
+    Assert(audit.AdjustedBandCount == 4, "graphic EQ adjustment audit should count adjusted sliders");
+    Assert(audit.RequestedGainsDb.Count == settings.BandCount, "graphic EQ adjustment audit should preserve clamped requested gains");
+    Assert(audit.MaximumMeasuredModelErrorDb < 0.45d, "graphic EQ adjustment audit should keep measured and modeled response aligned");
+    Assert(audit.MaximumInteractionMagnitudeDb > 0.5d, "graphic EQ adjustment audit should quantify adjacent-band interaction");
+    Assert(audit.Adjustments.All(adjustment => adjustment.IsFinite), "every graphic EQ adjustment audit row should expose finite numbers");
+    Assert(audit.Adjustments[0].LowerMidpointModeledDeltaDb is null, "lowest EQ band should have no lower midpoint");
+    Assert(audit.Adjustments[0].UpperMidpointModeledDeltaDb.HasValue, "lowest EQ band should expose upper midpoint interaction");
+    Assert(audit.Adjustments[^1].LowerMidpointModeledDeltaDb.HasValue, "highest EQ band should expose lower midpoint interaction");
+    Assert(audit.Adjustments[^1].UpperMidpointModeledDeltaDb is null, "highest EQ band should have no upper midpoint");
+    Assert(audit.Adjustments[10].RequestedGainDb < 0d && audit.Adjustments[10].MeasuredCenterDeltaDb < -4d, "audited cut slider should measure a real center-band cut");
+}
+
+static void GraphicEqVerificationMeasuresAllBandsAndAdjacentResponse()
+{
+    var expectedBands = GraphicEqualizerVerification.BandFrequenciesHz.Count;
+    var boostResponse = GraphicEqualizerVerification.Measure(GraphicEqualizerVerification.BoostGainDb);
+    var lowCurveGains = GraphicEqualizerSettings.Default.CreateFlatGains();
+    for (var i = 0; i < Math.Min(6, lowCurveGains.Length); i++)
+    {
+        lowCurveGains[i] = GraphicEqualizerSettings.Default.MaximumGainDb;
+    }
+
+    var lowCurveResponse = GraphicEqualizerVerification.MeasureCurve(lowCurveGains);
+    var boosts = GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.BoostGainDb);
+    var cuts = GraphicEqualizerVerification.MeasureAllBands(GraphicEqualizerVerification.CutGainDb);
+
+    Assert(boostResponse.Passed, "graphic EQ response object should summarize passing measured boost response: " + boostResponse.Summary);
+    Assert(boostResponse.BandCount == expectedBands, "graphic EQ response object should cover every band");
+    Assert(boostResponse.MaximumMeasuredModelErrorDb < 0.35d, "graphic EQ measured response should match the modeled biquad response closely");
+    Assert(lowCurveResponse.Passed, "graphic EQ curve response should summarize passing measured full-curve response: " + lowCurveResponse.Summary);
+    Assert(lowCurveResponse.Bands.Count == expectedBands, "graphic EQ curve response should cover every band");
+    Assert(lowCurveResponse.MaximumMeasuredModelErrorDb < 0.45d, "graphic EQ full-curve measured response should match the modeled biquad response closely");
+    var lowCurveAverageDb = lowCurveResponse.Bands.Take(6).Average(band => band.DeltaDb);
+    var highCurveAverageDb = lowCurveResponse.Bands.Skip(12).Average(band => band.DeltaDb);
+    Assert(lowCurveAverageDb > highCurveAverageDb + 8d, "maxed low graphic EQ bands should produce a clearly larger measured low-frequency curve");
+    Assert(boosts.Count == expectedBands, "boost measurements should cover every graphic EQ band");
+    Assert(cuts.Count == expectedBands, "cut measurements should cover every graphic EQ band");
+
+    foreach (var measurement in boosts.Concat(cuts))
+    {
+        var expectedAdjacentCount = measurement.BandIndex == 0 || measurement.BandIndex == expectedBands - 1 ? 1 : 2;
+        Assert(measurement.Passed, $"graphic EQ band {measurement.BandLabel} should track requested gain with measured adjacent response: {measurement.MeasurementSummary}; {measurement.Details}");
+        Assert(measurement.AdjacentResponses.Count == expectedAdjacentCount, $"graphic EQ band {measurement.BandLabel} should measure the available neighboring bands");
+        Assert(measurement.Center.IsFinite, $"graphic EQ band {measurement.BandLabel} center measurement should be finite");
+        Assert(Math.Abs(measurement.Center.ModelErrorDb) < 0.35d, $"graphic EQ band {measurement.BandLabel} measured center response should match the modeled response");
+        Assert(measurement.AdjacentResponses.All(response => response.IsFinite), $"graphic EQ band {measurement.BandLabel} adjacent measurements should be finite");
+        Assert(measurement.MeasurementSummary.Contains("center", StringComparison.Ordinal), "graphic EQ measurement summary should include center response");
+        Assert(measurement.MeasurementSummary.Contains("lower", StringComparison.Ordinal), "graphic EQ measurement summary should include lower adjacent response");
+        Assert(measurement.MeasurementSummary.Contains("upper", StringComparison.Ordinal), "graphic EQ measurement summary should include upper adjacent response");
+    }
+
+    Assert(boosts.All(measurement => measurement.Center.DeltaDb > 4d), "graphic EQ boost measurements should show a clear positive center-band change");
+    Assert(cuts.All(measurement => measurement.Center.DeltaDb < -4d), "graphic EQ cut measurements should show a clear negative center-band change");
+}
+
+static void DspVerificationReportProvesCustomDspClaims()
+{
+    var report = DspVerificationReportGenerator.Run();
+    var failedChecks = report.Checks
+        .Where(check => !check.Passed)
+        .Select(check => $"{check.Effect}: {check.Claim} measured {check.Measurement}, required {check.Requirement} ({check.Details})");
+
+    Assert(report.Passed, "DSP verification report should pass all custom EQ/DSP checks: " + string.Join("; ", failedChecks));
+    Assert(report.Checks.Count >= 40, "DSP verification report should include the practical customer-facing custom DSP proof checks");
+    var graphicEqChecks = report.Checks.Where(check => check.Effect == "Graphic EQ").ToList();
+    var graphicEqPerBandChecks = graphicEqChecks.Where(check => check.Claim.Contains("measures center and adjacent", StringComparison.Ordinal)).ToList();
+    Assert(graphicEqPerBandChecks.Count >= 40, "DSP verification report should include per-band boost and cut graphic EQ response measurements");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("+6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include boost measurements");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("-6.00 dB", StringComparison.Ordinal)), "graphic EQ verification should include cut measurements");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("Stacked adjacent low-frequency sliders", StringComparison.Ordinal)), "graphic EQ verification should include a measured full-curve low-slider check");
+    Assert(graphicEqChecks.Any(check => check.Claim.Contains("Every graphic EQ slider adjustment is audited", StringComparison.Ordinal)), "graphic EQ verification should include an every-slider adjustment audit");
+    Assert(graphicEqPerBandChecks.All(check => check.Claim.Contains("adjacent", StringComparison.Ordinal)), "graphic EQ per-band verification should explicitly measure adjacent-band response");
+    Assert(graphicEqPerBandChecks.All(check => check.Details.Contains("Center error", StringComparison.Ordinal)), "graphic EQ per-band verification should report numeric center error");
+    foreach (var effect in new[]
+    {
+        "Graphic EQ",
+        "Input trim",
+        "Makeup gain",
+        "High-pass filter",
+        "Low-pass filter",
+        "Hum removal",
+        "Notch filter",
+        "Parametric EQ",
+        "Shelf EQ",
+        "De-popper",
+        "Noise gate",
+        "Expander",
+        "Noise suppression",
+        "Echo reducer",
+        "Compressor",
+        "Breath reducer",
+        "De-esser",
+        "Presence enhancer",
+        "Saturation",
+        "Limiter",
+        "Full custom DSP chain"
+    })
+    {
+        Assert(report.Checks.Any(check => check.Effect == effect), $"DSP verification report should include {effect}");
+    }
+
+    var markdown = DspVerificationReportGenerator.CreateMarkdownReport(report);
+    Assert(markdown.Contains("Jericho Down DSP Verification", StringComparison.Ordinal), "verification report should have a clear title");
+    Assert(markdown.Contains("known tone, noise, transient, and composite test signals", StringComparison.Ordinal), "verification report should explain the test method");
+    Assert(markdown.Contains("NAudio-branded effects are intentionally outside", StringComparison.Ordinal), "verification report should explain why NAudio effects are out of scope");
+    Assert(markdown.Contains("| Effect | Claim | Measurement | Requirement | Result | Details |", StringComparison.Ordinal), "verification report should include a customer-readable table");
+}
+
 static void NAudioBiQuadRackExposesEveryEqShape()
 {
     const int sampleRate = 48_000;
@@ -569,7 +865,7 @@ static void NAudioBiQuadRackExposesEveryEqShape()
     Assert(CalculateTailRms(notch, start) < bypassRms * 0.35d, "NAudio notch should cut the selected frequency");
     Assert(peaking.All(float.IsFinite) && notch.All(float.IsFinite), "NAudio BiQuad output should stay finite");
 
-    var rackSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs")));
+    var rackSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs")));
     foreach (var factory in new[]
     {
         "LowPassFilter",
@@ -586,7 +882,7 @@ static void NAudioBiQuadRackExposesEveryEqShape()
         Assert(rackSource.Contains($"BiQuadFilter.{factory}", StringComparison.Ordinal), $"NAudio BiQuad rack should expose {factory}");
     }
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "BiQuad controls should be labeled as one NAudio family");
     Assert(xaml.Contains("BiQuad family", StringComparison.Ordinal), "BiQuad controls should show the shared BiQuad family frame label");
     var biQuadGroup = ExtractSourceBetween(
@@ -630,10 +926,10 @@ static void NAudioPitchShiftMovesToneFrequency()
     Assert(shiftedMagnitude > sourceMagnitude * 1.25d, "NAudio SmbPitchShifter should move a +12 semitone tone toward the octave");
     Assert(shifted.All(float.IsFinite), "NAudio pitch shift output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs")));
     Assert(processor.Contains("SmbPitchShifter", StringComparison.Ordinal), "NAudio pitch shift should use SmbPitchShifter");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio Special Effects", StringComparison.Ordinal), "NAudio special effects controls should be labeled as one family");
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
@@ -670,12 +966,12 @@ static void NAudioConvolutionAddsGeneratedImpulseTail()
     Assert(CalculateTailRms(convolved, tailStart) > CalculateTailRms(bypass, tailStart) * 3d + 0.0005d, "NAudio convolution should add an audible generated impulse tail");
     Assert(convolved.All(float.IsFinite), "NAudio convolution output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs")));
     Assert(processor.Contains("ImpulseResponseConvolution", StringComparison.Ordinal), "NAudio convolution should use ImpulseResponseConvolution");
     Assert(processor.Contains(".Convolve(", StringComparison.Ordinal), "NAudio convolution should call Convolve");
     Assert(processor.Contains(".Normalize(", StringComparison.Ordinal), "NAudio convolution should normalize generated impulses");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
         "Text=\"NAudio Special Effects\"",
@@ -703,10 +999,10 @@ static void NAudioEnvelopeGeneratorShapesAttack()
     Assert(earlyRms < sustainedRms * 0.45d, "NAudio EnvelopeGenerator should ramp in with a long attack");
     Assert(shaped.All(float.IsFinite), "NAudio envelope output should stay finite");
 
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs")));
     Assert(processor.Contains("EnvelopeGenerator", StringComparison.Ordinal), "NAudio envelope should use EnvelopeGenerator");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     var specialEffectsGroup = ExtractSourceBetween(
         xaml,
         "Text=\"NAudio Special Effects\"",
@@ -716,7 +1012,7 @@ static void NAudioEnvelopeGeneratorShapesAttack()
 
 static void NAudioDmoEffectChainExposesDirectSoundEffects()
 {
-    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs")));
+    var processor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs")));
     foreach (var effectType in new[]
     {
         "DmoChorus",
@@ -736,7 +1032,7 @@ static void NAudioDmoEffectChainExposesDirectSoundEffects()
     Assert(processor.Contains("MediaObjectInPlace.Process", StringComparison.Ordinal), "NAudio DMO chain should process blocks through MediaObjectInPlace");
     Assert(processor.Contains("SupportsInputWaveFormat", StringComparison.Ordinal), "NAudio DMO chain should check DMO format compatibility");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("NAudio DMO Effects", StringComparison.Ordinal), "NAudio DMO controls should be labeled as one family");
     Assert(xaml.Contains("DMO I3DL2 Reverb", StringComparison.Ordinal), "NAudio DMO controls should include I3DL2 reverb");
     Assert(xaml.Contains("DMO Waves Reverb", StringComparison.Ordinal), "NAudio DMO controls should include Waves reverb");
@@ -744,7 +1040,7 @@ static void NAudioDmoEffectChainExposesDirectSoundEffects()
 
 static void DspScreenSeparatesCustomAndNaudioFamilies()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
 
     Assert(xaml.Contains("Text=\"Jericho DSP\"", StringComparison.Ordinal), "custom DSP controls should have a Jericho DSP family bubble");
     Assert(xaml.Contains("Text=\"Custom chain\"", StringComparison.Ordinal), "custom DSP bubble should be labeled as the custom chain");
@@ -782,7 +1078,7 @@ static void DspScreenSeparatesCustomAndNaudioFamilies()
     Assert(!customGroup.Contains("NAudio BiQuad Filter Rack", StringComparison.Ordinal), "Jericho DSP group should not contain NAudio controls");
     Assert(Regex.Matches(customGroup, "StaticResource DspGroupedPanel").Count >= 10, "custom DSP controls should be nested inside the Jericho DSP bubble");
 
-    var naudioGroup = ExtractSourceBetween(xaml, "Text=\"NAudio DSP\"", "<TabItem Header=\"Mixing\">");
+    var naudioGroup = ExtractSourceBetween(xaml, "Text=\"NAudio DSP\"", "<TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
     foreach (var marker in new[]
     {
         "Text=\"NAudio BiQuad Filter Rack\"",
@@ -827,32 +1123,32 @@ static void NAudioDmoEffectChainProcessesSafely()
 
 static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
 {
-    var catalog = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiDeviceCatalog.cs")));
+    var catalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
     Assert(catalog.Contains("MidiIn.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio input devices");
     Assert(catalog.Contains("MidiOut.NumberOfDevices", StringComparison.Ordinal), "MIDI catalog should enumerate NAudio output devices");
 
-    var monitor = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiInputMonitor.cs")));
+    var monitor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiInputMonitor.cs")));
     Assert(monitor.Contains("MessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive short messages");
     Assert(monitor.Contains("ErrorReceived", StringComparison.Ordinal), "MIDI input monitor should surface input errors");
     Assert(monitor.Contains("SysexMessageReceived", StringComparison.Ordinal), "MIDI input monitor should receive sysex messages");
     Assert(monitor.Contains("CreateSysexBuffers", StringComparison.Ordinal), "MIDI input monitor should allocate sysex buffers");
 
-    var output = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiOutputPort.cs")));
+    var output = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiOutputPort.cs")));
     foreach (var api in new[] { "StartNote", "StopNote", "ChangeControl", "ChangePatch", "SendBankSelect", "SendAllNotesOff", "SendResetAllControllers", "SendBuffer", "Reset" })
     {
         Assert(output.Contains(api, StringComparison.Ordinal), $"MIDI output should expose NAudio {api}");
     }
 
-    var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiFileService.cs")));
+    var fileService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiFileService.cs")));
     Assert(fileService.Contains("new MidiFile", StringComparison.Ordinal), "MIDI file service should read NAudio MIDI files");
     Assert(fileService.Contains("MidiFile.Export", StringComparison.Ordinal), "MIDI file service should export NAudio MIDI files");
     Assert(fileService.Contains("MidiTrackSummary", StringComparison.Ordinal), "MIDI file service should expose file-test track summaries");
 
-    var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MidiSequenceService.cs")));
+    var sequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiSequenceService.cs")));
     Assert(sequenceService.Contains("GetAsShortMessage", StringComparison.Ordinal), "MIDI sequence service should emit playable short messages");
     Assert(sequenceService.Contains("TempoEvent", StringComparison.Ordinal), "MIDI sequence service should respect MIDI tempo events");
 
-    var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SoundFontLibrary.cs")));
+    var soundFontLibrary = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "SoundFontLibrary.cs")));
     Assert(soundFontLibrary.Contains("new SoundFont", StringComparison.Ordinal), "SoundFont library should read NAudio SoundFont files");
     Assert(soundFontLibrary.Contains("Presets", StringComparison.Ordinal), "SoundFont library should expose presets");
     Assert(soundFontLibrary.Contains("Instruments", StringComparison.Ordinal), "SoundFont library should expose instruments");
@@ -860,7 +1156,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
     Assert(soundFontLibrary.Contains("CreateSamplePreviewStream", StringComparison.Ordinal), "SoundFont library should create sample preview streams");
     Assert(soundFontLibrary.Contains("RawSourceWaveStream", StringComparison.Ordinal), "SoundFont sample preview should use NAudio wave playback primitives");
 
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Main tabs should expose a MIDI tab");
     Assert(xaml.Contains("MIDI Utility", StringComparison.Ordinal), "MIDI tab should present itself as a utility surface");
     Assert(xaml.Contains("MidiInputDeviceComboBox", StringComparison.Ordinal), "MIDI tab should expose input device selection");
@@ -901,7 +1197,7 @@ static void NAudioMidiSupportExposesInputOutputAndFileFeatures()
 
     Assert(xaml.Contains("Refresh MIDI Devices", StringComparison.Ordinal), "File menu should expose MIDI device refresh");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("RestoreMidiWorkflowState", StringComparison.Ordinal), "MIDI workflow should restore persisted state");
     Assert(windowSource.Contains("SelectMidiInputDevice", StringComparison.Ordinal), "MIDI input selection should restore by saved device identity");
     Assert(windowSource.Contains("SelectMidiOutputDevice", StringComparison.Ordinal), "MIDI output selection should restore by saved device identity");
@@ -1144,14 +1440,23 @@ static void VoiceTelemetrySnapshotIsIndependent()
     var telemetry = new VoiceProcessingTelemetry
     {
         CompressorGainReductionDb = 4.5,
+        GraphicEqualizerLatencySamples = 0,
+        GraphicEqualizerLatencyMilliseconds = 0d,
+        LimiterLookaheadLatencySamples = 144,
+        LimiterLookaheadLatencyMilliseconds = 3d,
         AudioLateFrameCount = 7
     };
     var snapshot = telemetry.Snapshot();
 
     telemetry.CompressorGainReductionDb = 0;
+    telemetry.LimiterLookaheadLatencySamples = 0;
+    telemetry.LimiterLookaheadLatencyMilliseconds = 0d;
     telemetry.AudioLateFrameCount = 0;
 
     Assert(Math.Abs(snapshot.CompressorGainReductionDb - 4.5) < 0.001, "snapshot should preserve compressor reduction");
+    Assert(snapshot.GraphicEqualizerLatencySamples == 0, "snapshot should preserve graphic EQ zero-latency reporting");
+    Assert(snapshot.LimiterLookaheadLatencySamples == 144, "snapshot should preserve limiter lookahead latency samples");
+    Assert(Math.Abs(snapshot.KnownDspAlgorithmicLatencyMilliseconds - 3d) < 0.001d, "snapshot should preserve known DSP latency milliseconds");
     Assert(snapshot.AudioLateFrameCount == 7, "snapshot should preserve late frame count");
 }
 
@@ -1171,7 +1476,7 @@ static void EqualizerBandRaisesNotifications()
 
 static void EqScreenBindsEveryVoiceProcessorSetting()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !HasDirectBinding(xaml, property.Name))
         .Select(property => property.Name)
@@ -1182,12 +1487,16 @@ static void EqScreenBindsEveryVoiceProcessorSetting()
 
 static void MainMenuExposesGlobalDeviceAndHelpActions()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(xaml.Contains("Header=\"_File\"", StringComparison.Ordinal), "main window should expose a File menu");
     Assert(xaml.Contains("Header=\"Refresh Audio Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Audio Devices");
     Assert(xaml.Contains("Click=\"RefreshAudioDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Audio Devices should be wired to a handler");
     Assert(xaml.Contains("Header=\"Refresh Video Devices\"", StringComparison.Ordinal), "File menu should expose Refresh Video Devices");
     Assert(xaml.Contains("Click=\"RefreshVideoDevicesMenuClicked\"", StringComparison.Ordinal), "Refresh Video Devices should be wired to a handler");
+    Assert(xaml.Contains("x:Name=\"EnableMidiMenuItem\"", StringComparison.Ordinal), "File menu should expose an Enable MIDI toggle");
+    Assert(xaml.Contains("Header=\"Enable MIDI\"", StringComparison.Ordinal), "Enable MIDI toggle should use the requested label");
+    Assert(xaml.Contains("IsCheckable=\"True\"", StringComparison.Ordinal), "Enable MIDI should be a checkbox-style menu item");
+    Assert(xaml.Contains("Checked=\"EnableMidiChanged\"", StringComparison.Ordinal), "Enable MIDI checked state should be wired to a handler");
     Assert(xaml.Contains("Header=\"Settings\"", StringComparison.Ordinal), "File menu should expose a Settings submenu");
     Assert(xaml.Contains("Header=\"Podcast Settings\"", StringComparison.Ordinal), "Settings submenu should expose Podcast Settings");
     Assert(xaml.Contains("Click=\"PodcastSettingsMenuClicked\"", StringComparison.Ordinal), "Podcast Settings should be wired to a handler");
@@ -1196,27 +1505,711 @@ static void MainMenuExposesGlobalDeviceAndHelpActions()
     Assert(xaml.Contains("Header=\"Audio Device Diagnostics\"", StringComparison.Ordinal), "Settings submenu should expose Audio Device Diagnostics");
     Assert(xaml.Contains("Click=\"AudioDeviceDiagnosticsMenuClicked\"", StringComparison.Ordinal), "Audio Device Diagnostics should be wired to a handler");
     Assert(xaml.Contains("Header=\"ASIO Settings\"", StringComparison.Ordinal), "File menu should expose ASIO Settings");
+    Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose the ASIO callback test");
+    Assert(xaml.Contains("Click=\"AsioCallbackTestMenuClicked\"", StringComparison.Ordinal), "ASIO callback test should be wired to a handler");
     Assert(xaml.Contains("Header=\"_Help\"", StringComparison.Ordinal), "main window should expose a Help menu");
+    Assert(xaml.Contains("Header=\"Podcast\"", StringComparison.Ordinal), "Help menu should expose the Podcast guide");
+    Assert(xaml.Contains("Click=\"PodcastHelpMenuClicked\"", StringComparison.Ordinal), "Podcast guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Karaoke\"", StringComparison.Ordinal), "Help menu should expose the Karaoke guide");
+    Assert(xaml.Contains("Click=\"KaraokeHelpMenuClicked\"", StringComparison.Ordinal), "Karaoke guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Mic / DSP\"", StringComparison.Ordinal), "Help menu should expose the Mic / DSP guide");
+    Assert(xaml.Contains("Click=\"MicDspHelpMenuClicked\"", StringComparison.Ordinal), "Mic / DSP guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"Mixing\"", StringComparison.Ordinal), "Help menu should expose the Mixing guide");
+    Assert(xaml.Contains("Click=\"MixingHelpMenuClicked\"", StringComparison.Ordinal), "Mixing guide should be wired to a handler");
+    Assert(xaml.Contains("Header=\"MIDI\"", StringComparison.Ordinal), "Help menu should expose the MIDI guide");
+    Assert(xaml.Contains("Click=\"MidiHelpMenuClicked\"", StringComparison.Ordinal), "MIDI guide should be wired to a handler");
+    Assert(!xaml.Contains("Header=\"Tabs and Features\"", StringComparison.Ordinal), "Help menu should not expose a grouped tab guide");
+    Assert(!xaml.Contains("TabsHelpMenuClicked", StringComparison.Ordinal), "grouped tab guide handler should not be wired");
     Assert(xaml.Contains("Header=\"About\"", StringComparison.Ordinal), "Help menu should expose About");
+    Assert(xaml.Contains("Header=\"Verification\"", StringComparison.Ordinal), "About menu should expose DSP Verification");
+    Assert(xaml.Contains("Click=\"VerificationMenuClicked\"", StringComparison.Ordinal), "DSP Verification should be wired to a handler");
     Assert(xaml.Contains("SystemColors.MenuHighlightBrushKey", StringComparison.Ordinal), "main menu should override bright system highlight colors");
     Assert(xaml.Contains("PART_Popup", StringComparison.Ordinal), "main menu should use a custom readable dark popup template");
     Assert(xaml.Contains("Color=\"#1D1D1D\"", StringComparison.Ordinal), "main menu popup should use the dark menu background");
     Assert(xaml.Contains("Color=\"#7E858C\"", StringComparison.Ordinal), "main menu disabled text should remain readable");
     Assert(!xaml.Contains("<TabItem Header=\"About\"", StringComparison.Ordinal), "About should live under Help instead of the main tab strip");
     Assert(!xaml.Contains("RecordRawBackupCheckBox", StringComparison.Ordinal), "Podcast recording UI should not expose a raw-backup checkbox unless it is wired to recording behavior");
-    Assert(File.ReadAllText(FindRepoFile("AboutView.xaml")).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+    var project = File.ReadAllText(FindRepoFile("JerichoDown.csproj"));
+    string[] tabGuideFiles =
+    [
+        "jericho-down-podcast-guide.pdf",
+        "jericho-down-karaoke-guide.pdf",
+        "jericho-down-mic-dsp-guide.pdf",
+        "jericho-down-mixing-guide.pdf",
+        "jericho-down-midi-guide.pdf"
+    ];
+    foreach (var guideFile in tabGuideFiles)
+    {
+        Assert(project.Contains($"Docs\\{guideFile}", StringComparison.Ordinal), $"{guideFile} should be copied to output");
+        Assert(File.Exists(FindRepoFile(Path.Combine("Docs", guideFile))), $"{guideFile} should exist");
+    }
+
+    Assert(!project.Contains("Docs\\jericho-down-tabs-guide.pdf", StringComparison.Ordinal), "grouped tab guide PDF should not be copied to output");
+    Assert(File.ReadAllText(FindRepoFile(".gitattributes")).Contains("*.pdf binary", StringComparison.Ordinal), "PDF guides should be treated as binary files");
+    Assert(File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml"))).Contains("About Jericho Down", StringComparison.Ordinal), "About popup should preserve the previous About content");
+    Assert(File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml"))).Contains("DSP Verification", StringComparison.Ordinal), "Verification popup should preserve customer-facing proof content");
+}
+
+static void PodcastSessionPlaybackPrefersDx12FileRenderer()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var playbackService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "MediaFoundationFilePlaybackService.cs")));
+    var audioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
+    var recordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionRecordingCatalog.cs")));
+    var interop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
+
+    Assert(xaml.Contains("x:Name=\"SessionDx12PlaybackHostPanel\"", StringComparison.Ordinal), "Podcast tab should reserve a DX12 host for session playback");
+    Assert(xaml.Contains("x:Name=\"SessionPlaybackElement\"", StringComparison.Ordinal), "legacy MediaElement fallback should remain available");
+    Assert(windowCode.Contains("using JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "Jericho Down shell should reference the SessionPlayback module namespace explicitly");
+    Assert(windowCode.Contains("new Direct3D12PreviewHost", StringComparison.Ordinal), "session playback should render through the existing DX12 swap-chain host");
+    Assert(windowCode.Contains("new MediaFoundationFilePlaybackService()", StringComparison.Ordinal), "session playback should use the Media Foundation file reader service");
+    Assert(playbackService.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "file playback service should live in the SessionPlayback module namespace");
+    Assert(audioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session sidecar audio resolver should live in the SessionPlayback module namespace");
+    Assert(recordingCatalog.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session recording catalog should live in the SessionPlayback module namespace");
+    Assert(recordingCatalog.Contains("public static class SessionRecordingCatalog", StringComparison.Ordinal), "session recording catalog should be a module entry point");
+    Assert(windowCode.Contains("SessionRecordingCatalog.CreateRecordingTarget(_outputFolder)", StringComparison.Ordinal), "recording set creation should be delegated to the session catalog module");
+    Assert(windowCode.Contains("SessionRecordingCatalog.IsSessionBrowserPath", StringComparison.Ordinal), "session browser watcher should use the module-owned predicate");
+    Assert(windowCode.Contains("SessionPlaybackAudioResolver.ResolveAudioPlaybackPath(path)", StringComparison.Ordinal), "DX12 video playback should resolve the matching session sidecar audio through the module");
+    Assert(audioResolver.Contains("$\"mix_{number}.wav\"", StringComparison.Ordinal), "session playback should prefer the recorded mix WAV beside the MP4");
+    Assert(audioResolver.Contains("$\"raw_backup_{number}.wav\"", StringComparison.Ordinal), "session playback should fall back to the raw backup WAV when a mix is missing");
+    Assert(recordingCatalog.Contains("Podcast_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}", StringComparison.Ordinal), "session catalog should own podcast session folder recognition");
+    Assert(recordingCatalog.Contains("video_{number}.mp4", StringComparison.Ordinal), "session catalog should own video file naming");
+    Assert(recordingCatalog.Contains("mix_{number}.wav", StringComparison.Ordinal), "session catalog should own mix sidecar naming");
+    Assert(recordingCatalog.Contains("raw_backup_{number}.wav", StringComparison.Ordinal), "session catalog should own raw backup sidecar naming");
+    Assert(windowCode.Contains("new AudioFileReader(audioPath)", StringComparison.Ordinal), "DX12 video playback should keep resolved session audio routed through NAudio");
+    Assert(windowCode.Contains("CreateSelectedPlaybackOutput(reader.ToWaveProvider()", StringComparison.Ordinal), "session audio should use the selected Jericho output route");
+    Assert(windowCode.Contains("TryStartSessionSidecarAudioPlayback(path", StringComparison.Ordinal), "Windows media fallback should still play sidecar audio for podcast session videos");
+
+    var startMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void StartSessionPlayback(string path)",
+        "    private bool TryStartDx12SessionPlayback");
+    var dx12Index = startMethod.IndexOf("TryStartDx12SessionPlayback(path", StringComparison.Ordinal);
+    var fallbackIndex = startMethod.IndexOf("StartSessionMediaElementFallbackPlayback(path)", StringComparison.Ordinal);
+    Assert(dx12Index >= 0 && fallbackIndex > dx12Index, "session playback should try DX12 before Windows media fallback");
+    Assert(startMethod.Contains("_isCameraEnabled = false;", StringComparison.Ordinal), "session playback should not leave the webcam marked live while the file player owns the preview surface");
+
+    Assert(playbackService.Contains("MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS", StringComparison.Ordinal), "file playback should request Media Foundation hardware transforms");
+    Assert(playbackService.Contains("MFCreateSourceReaderFromURL(path, attributes", StringComparison.Ordinal), "file playback should open MP4 sessions with a source reader");
+    Assert(playbackService.Contains("MFVideoFormat_RGB32", StringComparison.Ordinal), "file playback should decode to a DX12-uploadable BGRA path");
+    Assert(playbackService.Contains("MFVideoFormat_NV12", StringComparison.Ordinal), "file playback should keep an NV12 fallback for efficient video frames");
+    Assert(playbackService.Contains("ResolvePresentationTicks(", StringComparison.Ordinal), "file playback should normalize or synthesize presentation timestamps");
+    Assert(playbackService.Contains("sourceDeltaTicks >= minimumSourceDeltaTicks", StringComparison.Ordinal), "file playback should reject implausibly tiny camera timestamps that make real-camera recordings race");
+    Assert(playbackService.Contains("syntheticPresentationTicks = syntheticTicks + frameDurationTicks", StringComparison.Ordinal), "file playback should pace bad-timestamp frames from the decoded frame rate");
+    Assert(interop.Contains("MFCreateSourceReaderFromURL", StringComparison.Ordinal), "Media Foundation interop should expose file source readers");
+}
+
+static void ModuleReadmesDefineOwnership()
+{
+    var rootReadme = File.ReadAllText(FindRepoFile("README.md"));
+    var moduleIndex = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "README.md")));
+    string[] moduleReadmes =
+    [
+        Path.Combine("src", "README.md"),
+        Path.Combine("Modules", "Audio", "README.md"),
+        Path.Combine("Modules", "Audio", "Asio", "README.md"),
+        Path.Combine("Modules", "Audio", "Dsp", "README.md"),
+        Path.Combine("Modules", "Audio", "Live", "README.md"),
+        Path.Combine("Modules", "Mixer", "README.md"),
+        Path.Combine("Modules", "Webcam", "README.md"),
+        Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md"),
+        Path.Combine("Modules", "Webcam", "DirectShow", "README.md"),
+        Path.Combine("Modules", "Webcam", "Dx12", "README.md"),
+        Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md"),
+        Path.Combine("Modules", "SessionPlayback", "README.md"),
+        Path.Combine("Modules", "Karaoke", "README.md"),
+        Path.Combine("Modules", "Midi", "README.md"),
+        Path.Combine("Modules", "Help", "README.md"),
+        Path.Combine("Modules", "Visualization", "README.md"),
+        Path.Combine("Modules", "Visualization", "Dx12", "README.md")
+    ];
+
+    Assert(rootReadme.Contains("[src/Modules](src/Modules/README.md)", StringComparison.Ordinal), "root README should point maintainers at the module map under src");
+    Assert(Directory.Exists(FindRepoDirectory(Path.Combine("src", "Modules"))), "source modules should live under src/Modules for reuse");
+    Assert(moduleIndex.Contains("move one small ownership boundary at a time", StringComparison.OrdinalIgnoreCase), "module index should preserve the safe migration rule");
+    var retiredAppModuleName = "App" + "Shell";
+    Assert(!moduleIndex.Contains(retiredAppModuleName, StringComparison.Ordinal), "reusable module index should not list app-specific WPF code as a module");
+    Assert(moduleIndex.Contains("Help` owns `AboutView` and `VerificationView`", StringComparison.Ordinal), "module index should record migrated Help view ownership");
+    Assert(moduleIndex.Contains("Karaoke` owns `KaraokePlaybackPolicy`, `KaraokeTrackAudioReader`, `KaraokeRateSampleProvider`, and `KaraokeVocalReductionSampleProvider`", StringComparison.Ordinal), "module index should record migrated Karaoke audio playback ownership");
+    Assert(moduleIndex.Contains("SessionPlayback", StringComparison.Ordinal), "module index should list session playback ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12", StringComparison.Ordinal), "module index should list DX12 webcam ownership");
+    Assert(moduleIndex.Contains("Webcam` owns `WebcamModule`", StringComparison.Ordinal), "module index should record the reusable webcam facade ownership");
+    Assert(!moduleIndex.Contains("`DirectX12Viewport`", StringComparison.Ordinal), "module index should not list a shared DX12 viewport module after localizing viewport hosts");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraStatusText` and `VideoRecordingPolicy`", StringComparison.Ordinal), "module index should record migrated webcam status/policy helpers");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraDevice`, `CameraVideoMode`, `CameraFrame`, `CameraControlKind`, and `CameraControlItem`", StringComparison.Ordinal), "module index should record migrated webcam vocabulary helpers");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraDeviceCatalog`, `CameraControlText`, `CameraProfile`, `CameraProfileStore`, and `WebcamAtomicFile`", StringComparison.Ordinal), "module index should record migrated webcam catalog/profile helpers");
+    Assert(moduleIndex.Contains("Webcam` owns `CameraSourceSelection` and `TextureNativePreviewPolicy`", StringComparison.Ordinal), "module index should record migrated webcam selection/policy helpers");
+    Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationGuids` and `MediaFoundationInterop`", StringComparison.Ordinal), "module index should record migrated Media Foundation interop ownership");
+    Assert(moduleIndex.Contains("Webcam/MediaFoundation` owns `MediaFoundationCameraEnumerator`, `MediaFoundationCameraModeService`, `MediaFoundationCameraDeviceFactory`, `MediaFoundationVideoRecorder`, and `MediaFoundationCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated Media Foundation discovery/factory/writer/preview ownership");
+    Assert(moduleIndex.Contains("Webcam/DirectShow` owns `DirectShowCameraEnumerator`, `DirectShowCameraControlService`, and `DirectShowCameraPreviewService`", StringComparison.Ordinal), "module index should record migrated DirectShow discovery/control/preview ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx11Bridge` owns `Direct3D11DeviceManager` and `Direct3D11SharedTextureBridge`", StringComparison.Ordinal), "module index should record migrated DX11 bridge ownership");
+    Assert(moduleIndex.Contains("Webcam/Dx12` owns `Direct3D12DeviceManager`, `ITextureNativeDeviceManager`, `Direct3D12PreviewHost`, `Direct3D12PreviewDiagnostics`, `ICameraPreviewPresenter`, `WebcamDirectX12ViewportHost`, `Dx12Camera`, `Dx12CameraOptions`, `CameraPreviewFramePumps`, `TextureNativeCameraRecorder`, and `TextureNativeCameraProbe`", StringComparison.Ordinal), "module index should record migrated DX12 camera ownership");
+    Assert(moduleIndex.Contains("Visualization` owns `SpectrumAnalyzer`, `SpectrumFrame`, `SpectrumFrameRouter`, and `FeedbackDangerDetector`", StringComparison.Ordinal), "module index should record migrated visualization data ownership");
+    Assert(moduleIndex.Contains("Visualization/Dx12` owns `Direct3D12AudioGraphHost`, `Direct3D12AudioGraphMode`, and `VisualizationDirectX12ViewportHost`", StringComparison.Ordinal), "module index should record migrated DX12 audio graph ownership");
+    Assert(moduleIndex.Contains("Audio/Asio` owns `AsioInputCapture`, `AsioCallbackProbe`, `AsioOutputPlayer`, and `StaThreadDispatcher`", StringComparison.Ordinal), "module index should record migrated ASIO ownership");
+    Assert(moduleIndex.Contains("Audio/Capture` owns `ProcessLoopbackCapture` and `SignalGeneratorCapture`", StringComparison.Ordinal), "module index should record migrated audio capture source ownership");
+    Assert(moduleIndex.Contains("Audio/CoreAudio` owns `CoreAudioSessionCatalog` and `AudioDeviceNotificationWatcher`", StringComparison.Ordinal), "module index should record migrated CoreAudio ownership");
+    Assert(moduleIndex.Contains("Audio/Devices` owns `AudioInputDevice`, `AudioOutputDevice`, `AudioDeviceFormat`, `InputChannelMode`, `PrimaryCaptureSelector`, `ProcessedOutputRoutePlanner`, and `WasapiOutputSettings`", StringComparison.Ordinal), "module index should record migrated audio device ownership");
+    Assert(moduleIndex.Contains("Audio/Diagnostics` owns `AudioDeviceDiagnostics`", StringComparison.Ordinal), "module index should record migrated audio diagnostics ownership");
+    Assert(moduleIndex.Contains("Audio/Dsp` owns `DspVerificationReportGenerator`, `GraphicEqualizerProcessor`, `GraphicEqualizerSettings`, `GraphicEqualizerResponse`, `GraphicEqualizerVerification`, `VoiceProcessorSettings`, `BuiltInVoicePresetCatalog`, `VoiceProcessingTelemetry`, `EqualizerBand`, `VoiceSampleProcessor`, `VoiceProcessorSampleProvider`, `StereoVoiceProcessorSampleProvider`, and NAudio DSP effect wrappers", StringComparison.Ordinal), "module index should record migrated DSP ownership");
+    Assert(moduleIndex.Contains("Audio/Live` owns `MicrophoneSpectrumService`", StringComparison.Ordinal), "module index should record migrated live audio service ownership");
+    Assert(moduleIndex.Contains("Audio/Recording` owns `AudioRecordingCatalog`, `ProcessedRecordingSource`, `ProcessedAudioSampleConverter`, `AudioFileAnalyzer`, and `AudioRecordingExporter`", StringComparison.Ordinal), "module index should record migrated audio recording ownership");
+    Assert(moduleIndex.Contains("Audio/Sync` owns `AudioDelayLine`, `AudioStereoDelayLine`, `AudioSyncBuffer`, and `NAudioSampleRateConverter`", StringComparison.Ordinal), "module index should record migrated audio sync ownership");
+    Assert(moduleIndex.Contains("Mixer` owns `MixBusProcessor`, `LiveProgramMixBus`, live block sample providers, audibility gating, pan/balance sample providers, and `NaudioPeakMeterSampleProvider`", StringComparison.Ordinal), "module index should record migrated mixer ownership");
+    Assert(moduleIndex.Contains("Midi` owns `MidiDeviceCatalog`, `MidiFileService`, `MidiHexParser`, `MidiInputMonitor`, `MidiMessageSnapshot`, `MidiOutputPort`, `MidiSequenceService`, MIDI control mappings, and `SoundFontLibrary`", StringComparison.Ordinal), "module index should record migrated MIDI ownership");
+
+    foreach (var readmePath in moduleReadmes)
+    {
+        var text = File.ReadAllText(FindRepoFile(readmePath));
+        Assert(text.Contains("Owns", StringComparison.OrdinalIgnoreCase) || text.Contains("Responsibilities", StringComparison.OrdinalIgnoreCase), $"{readmePath} should define ownership or responsibilities");
+    }
+
+    var appReadme = File.ReadAllText(FindRepoFile(Path.Combine("src", "README.md")));
+    var appXaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "App.xaml")));
+    var appCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "App.xaml.cs")));
+    var equalizerWindowXaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var equalizerWindowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var appStateStore = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStateStore.cs")));
+    var appStoragePaths = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStoragePaths.cs")));
+    var atomicFile = File.ReadAllText(FindRepoFile(Path.Combine("src", "AtomicFile.cs")));
+    var pathSafety = File.ReadAllText(FindRepoFile(Path.Combine("src", "PathSafety.cs")));
+    var fileBrowserWatcher = File.ReadAllText(FindRepoFile(Path.Combine("src", "FileBrowserWatcher.cs")));
+    Assert(appReadme.Contains("App.xaml.cs", StringComparison.Ordinal), "src docs should name app bootstrap ownership");
+    Assert(appReadme.Contains("EqualizerWindow.xaml", StringComparison.Ordinal), "src docs should name main window ownership");
+    Assert(appReadme.Contains("AppStateStore.cs", StringComparison.Ordinal), "src docs should name app state ownership");
+    Assert(appReadme.Contains("AppStoragePaths.cs", StringComparison.Ordinal), "src docs should name storage-path ownership");
+    Assert(appReadme.Contains("AtomicFile.cs", StringComparison.Ordinal), "src docs should name atomic-write ownership");
+    Assert(appReadme.Contains("PathSafety.cs", StringComparison.Ordinal), "src docs should name path safety ownership");
+    Assert(appReadme.Contains("FileBrowserWatcher.cs", StringComparison.Ordinal), "src docs should name browser watcher ownership");
+    Assert(appReadme.Contains("Do not create a module for app-specific WPF command wiring", StringComparison.Ordinal), "src docs should keep app-specific WPF code out of reusable modules");
+    Assert(appXaml.Contains("x:Class=\"JerichoDown.App\"", StringComparison.Ordinal), "app XAML should use the JerichoDown app namespace");
+    Assert(appXaml.Contains("StartupUri=\"src/EqualizerWindow.xaml\"", StringComparison.Ordinal), "app bootstrap should start the JerichoDown main window path under src");
+    Assert(appCode.Contains("namespace JerichoDown;", StringComparison.Ordinal), "app code-behind should live in the JerichoDown app namespace");
+    Assert(equalizerWindowXaml.Contains("x:Class=\"JerichoDown.EqualizerWindow\"", StringComparison.Ordinal), "main window XAML should live in the JerichoDown app namespace");
+    Assert(equalizerWindowXaml.Contains("Icon=\"/Assets/jericho-down-icon.ico\"", StringComparison.Ordinal), "main window icon path should remain rooted after moving XAML into src");
+    Assert(equalizerWindowCode.Contains("namespace JerichoDown;", StringComparison.Ordinal), "main window code-behind should live in the JerichoDown app namespace");
+    Assert(appStateStore.Contains("namespace JerichoDown;", StringComparison.Ordinal), "app state store should live in the JerichoDown app namespace");
+    Assert(appStoragePaths.Contains("namespace JerichoDown;", StringComparison.Ordinal), "app storage paths should live in the JerichoDown app namespace");
+    Assert(atomicFile.Contains("namespace JerichoDown;", StringComparison.Ordinal), "atomic file helper should live in the JerichoDown app namespace");
+    Assert(pathSafety.Contains("namespace JerichoDown;", StringComparison.Ordinal), "path safety helper should live in the JerichoDown app namespace");
+    Assert(fileBrowserWatcher.Contains("namespace JerichoDown;", StringComparison.Ordinal), "file browser watcher should live in the JerichoDown app namespace");
+
+    var helpReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "README.md")));
+    var aboutViewXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml")));
+    var aboutViewCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "AboutView.xaml.cs")));
+    var verificationViewXaml = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml")));
+    var verificationViewCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Help", "VerificationView.xaml.cs")));
+    Assert(helpReadme.Contains("AboutView.xaml", StringComparison.Ordinal), "Help docs should name migrated About view ownership");
+    Assert(helpReadme.Contains("VerificationView.xaml", StringComparison.Ordinal), "Help docs should name migrated Verification view ownership");
+    Assert(aboutViewXaml.Contains("x:Class=\"JerichoDown.Modules.Help.AboutView\"", StringComparison.Ordinal), "About view XAML should live in the Help module namespace");
+    Assert(aboutViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "About view code-behind should live in the Help module namespace");
+    Assert(verificationViewXaml.Contains("x:Class=\"JerichoDown.Modules.Help.VerificationView\"", StringComparison.Ordinal), "Verification view XAML should live in the Help module namespace");
+    Assert(verificationViewCode.Contains("namespace JerichoDown.Modules.Help;", StringComparison.Ordinal), "Verification view code-behind should live in the Help module namespace");
+
+    var karaokeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "README.md")));
+    var karaokePlaybackPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "KaraokePlaybackPolicy.cs")));
+    var karaokeTrackAudioReader = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Karaoke", "KaraokeTrackAudioReader.cs")));
+    Assert(karaokeReadme.Contains("KaraokePlaybackPolicy.cs", StringComparison.Ordinal), "Karaoke docs should name migrated playback policy ownership");
+    Assert(karaokeReadme.Contains("KaraokeTrackAudioReader.cs", StringComparison.Ordinal), "Karaoke docs should name migrated track audio reader ownership");
+    Assert(karaokePlaybackPolicy.Contains("namespace JerichoDown.Modules.Karaoke;", StringComparison.Ordinal), "karaoke playback policy should live in the Karaoke module namespace");
+    Assert(karaokePlaybackPolicy.Contains("public static class KaraokePlaybackPolicy", StringComparison.Ordinal), "karaoke playback policy should be a module entry point");
+    Assert(karaokePlaybackPolicy.Contains("ShouldTryMediaFallbackAfterSampleReaderFailure", StringComparison.Ordinal), "karaoke playback policy should own sample-reader fallback decisions");
+    Assert(karaokeTrackAudioReader.Contains("namespace JerichoDown.Modules.Karaoke;", StringComparison.Ordinal), "karaoke track audio reader should live in the Karaoke module namespace");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeTrackAudioReader", StringComparison.Ordinal), "karaoke sample-reader playback should be a module entry point");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeRateSampleProvider", StringComparison.Ordinal), "karaoke tempo provider should be a module entry point");
+    Assert(karaokeTrackAudioReader.Contains("public sealed class KaraokeVocalReductionSampleProvider", StringComparison.Ordinal), "karaoke vocal-reduction provider should be a module entry point");
+
+    var sessionPlaybackReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "README.md")));
+    var sessionPlaybackAudioResolver = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionPlaybackAudioResolver.cs")));
+    var sessionRecordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "SessionPlayback", "SessionRecordingCatalog.cs")));
+    Assert(sessionPlaybackReadme.Contains("mix_###.wav", StringComparison.Ordinal), "session playback docs should preserve sidecar audio behavior");
+    Assert(sessionPlaybackReadme.Contains("raw_backup_###.wav", StringComparison.Ordinal), "session playback docs should preserve raw backup fallback behavior");
+    Assert(sessionPlaybackReadme.Contains("SessionPlaybackAudioResolver.cs", StringComparison.Ordinal), "session playback docs should name migrated sidecar audio resolver ownership");
+    Assert(sessionPlaybackReadme.Contains("SessionRecordingCatalog.cs", StringComparison.Ordinal), "session playback docs should name migrated recording catalog ownership");
+    Assert(sessionPlaybackAudioResolver.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session playback audio resolver should live in the SessionPlayback module namespace");
+    Assert(sessionRecordingCatalog.Contains("namespace JerichoDown.Modules.SessionPlayback;", StringComparison.Ordinal), "session recording catalog should live in the SessionPlayback module namespace");
+    Assert(sessionRecordingCatalog.Contains("public sealed record SessionRecordingItem", StringComparison.Ordinal), "session recording catalog should expose browser item records");
+    Assert(sessionRecordingCatalog.Contains("public sealed record SessionRecordingTarget", StringComparison.Ordinal), "session recording catalog should expose recording target records");
+
+    var visualizationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "README.md")));
+    var spectrumAnalyzer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumAnalyzer.cs")));
+    var spectrumFrame = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumFrame.cs")));
+    var spectrumFrameRouter = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "SpectrumFrameRouter.cs")));
+    var feedbackDangerDetector = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "FeedbackDangerDetector.cs")));
+    Assert(visualizationReadme.Contains("SpectrumAnalyzer.cs", StringComparison.Ordinal), "Visualization docs should name migrated analyzer ownership");
+    Assert(visualizationReadme.Contains("SpectrumFrame.cs", StringComparison.Ordinal), "Visualization docs should name migrated frame ownership");
+    Assert(visualizationReadme.Contains("SpectrumFrameRouter.cs", StringComparison.Ordinal), "Visualization docs should name migrated frame router ownership");
+    Assert(visualizationReadme.Contains("FeedbackDangerDetector.cs", StringComparison.Ordinal), "Visualization docs should name migrated feedback detector ownership");
+    Assert(spectrumAnalyzer.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum analyzer should live in the Visualization module namespace");
+    Assert(spectrumFrame.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame should live in the Visualization module namespace");
+    Assert(spectrumFrameRouter.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "spectrum frame router should live in the Visualization module namespace");
+    Assert(feedbackDangerDetector.Contains("namespace JerichoDown.Modules.Visualization;", StringComparison.Ordinal), "feedback detector should live in the Visualization module namespace");
+
+    var audioCaptureReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "README.md")));
+    var processLoopbackCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
+    var signalGeneratorCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "SignalGeneratorCapture.cs")));
+    Assert(audioCaptureReadme.Contains("ProcessLoopbackCapture.cs", StringComparison.Ordinal), "Audio capture docs should name migrated process-loopback capture ownership");
+    Assert(audioCaptureReadme.Contains("SignalGeneratorCapture.cs", StringComparison.Ordinal), "Audio capture docs should name migrated signal-generator capture ownership");
+    Assert(audioCaptureReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio capture docs should name the live audio service consumer");
+    Assert(processLoopbackCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "process-loopback capture should live in the Audio Capture module namespace");
+    Assert(signalGeneratorCapture.Contains("namespace JerichoDown.Modules.Audio.Capture;", StringComparison.Ordinal), "signal-generator capture should live in the Audio Capture module namespace");
+
+    var audioCoreAudioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "README.md")));
+    var coreAudioSessionCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "CoreAudioSessionCatalog.cs")));
+    var audioDeviceNotificationWatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "AudioDeviceNotificationWatcher.cs")));
+    Assert(audioCoreAudioReadme.Contains("CoreAudioSessionCatalog.cs", StringComparison.Ordinal), "CoreAudio docs should name migrated session catalog ownership");
+    Assert(audioCoreAudioReadme.Contains("AudioDeviceNotificationWatcher.cs", StringComparison.Ordinal), "CoreAudio docs should name migrated notification watcher ownership");
+    Assert(audioCoreAudioReadme.Contains("EqualizerWindow.xaml.cs", StringComparison.Ordinal), "CoreAudio docs should name the shell consumer");
+    Assert(audioCoreAudioReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "CoreAudio docs should name the live audio service consumer");
+    Assert(coreAudioSessionCatalog.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "CoreAudio session catalog should live in the Audio CoreAudio module namespace");
+    Assert(audioDeviceNotificationWatcher.Contains("namespace JerichoDown.Modules.Audio.CoreAudio;", StringComparison.Ordinal), "audio device notification watcher should live in the Audio CoreAudio module namespace");
+
+    var audioDiagnosticsReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "README.md")));
+    var audioDeviceDiagnostics = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
+    Assert(audioDiagnosticsReadme.Contains("AudioDeviceDiagnostics.cs", StringComparison.Ordinal), "Audio diagnostics docs should name migrated device diagnostics ownership");
+    Assert(audioDiagnosticsReadme.Contains("EqualizerWindow.xaml.cs", StringComparison.Ordinal), "Audio diagnostics docs should name the shell consumer");
+    Assert(audioDeviceDiagnostics.Contains("namespace JerichoDown.Modules.Audio.Diagnostics;", StringComparison.Ordinal), "audio device diagnostics should live in the Audio Diagnostics module namespace");
+
+    var audioDevicesReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "README.md")));
+    var audioDeviceSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioInputDevice.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioOutputDevice.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "AudioDeviceFormat.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "InputChannelMode.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "PrimaryCaptureSelector.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "ProcessedOutputRoutePlanner.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Devices", "WasapiOutputSettings.cs")))
+    };
+    Assert(audioDevicesReadme.Contains("AudioInputDevice.cs", StringComparison.Ordinal), "Audio device docs should name migrated input device ownership");
+    Assert(audioDevicesReadme.Contains("AudioOutputDevice.cs", StringComparison.Ordinal), "Audio device docs should name migrated output device ownership");
+    Assert(audioDevicesReadme.Contains("AudioDeviceFormat.cs", StringComparison.Ordinal), "Audio device docs should name migrated device format ownership");
+    Assert(audioDevicesReadme.Contains("InputChannelMode.cs", StringComparison.Ordinal), "Audio device docs should name migrated input channel mode ownership");
+    Assert(audioDevicesReadme.Contains("PrimaryCaptureSelector.cs", StringComparison.Ordinal), "Audio device docs should name migrated primary capture selector ownership");
+    Assert(audioDevicesReadme.Contains("ProcessedOutputRoutePlanner.cs", StringComparison.Ordinal), "Audio device docs should name migrated processed output route ownership");
+    Assert(audioDevicesReadme.Contains("WasapiOutputSettings.cs", StringComparison.Ordinal), "Audio device docs should name migrated WASAPI settings ownership");
+    Assert(audioDevicesReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio device docs should name the live audio service consumer");
+    Assert(audioDeviceSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Devices;", StringComparison.Ordinal)), "Audio device vocabulary should live in the Audio Devices module namespace");
+
+    var audioRecordingReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "README.md")));
+    var audioRecordingSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingCatalog.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedRecordingSource.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "ProcessedAudioSampleConverter.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioFileAnalyzer.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingExporter.cs")))
+    };
+    Assert(audioRecordingReadme.Contains("AudioRecordingCatalog.cs", StringComparison.Ordinal), "Audio recording docs should name migrated recording catalog ownership");
+    Assert(audioRecordingReadme.Contains("ProcessedRecordingSource.cs", StringComparison.Ordinal), "Audio recording docs should name migrated recording source ownership");
+    Assert(audioRecordingReadme.Contains("ProcessedAudioSampleConverter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated sample converter ownership");
+    Assert(audioRecordingReadme.Contains("AudioFileAnalyzer.cs", StringComparison.Ordinal), "Audio recording docs should name migrated analyzer ownership");
+    Assert(audioRecordingReadme.Contains("AudioRecordingExporter.cs", StringComparison.Ordinal), "Audio recording docs should name migrated exporter ownership");
+    Assert(audioRecordingReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio recording docs should name the live audio service consumer");
+    Assert(audioRecordingSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Recording;", StringComparison.Ordinal)), "Audio recording helpers should live in the Audio Recording module namespace");
+    Assert(audioRecordingSources[0].Contains("public static class AudioRecordingCatalog", StringComparison.Ordinal), "Audio recording catalog should be a module entry point");
+    Assert(audioRecordingSources[0].Contains("public sealed record AudioRecordingFileItem", StringComparison.Ordinal), "Audio recording catalog should expose browser item records");
+
+    var mixerReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "README.md")));
+    var mixerSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "MixBusProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveProgramMixBus.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMicBlockSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveStereoBlockSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "LiveMixAudibility.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "DualMonoSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoPanSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "StereoBalanceSampleProvider.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Mixer", "NaudioPeakMeterSampleProvider.cs")))
+    };
+    Assert(mixerReadme.Contains("MixBusProcessor.cs", StringComparison.Ordinal), "Mixer docs should name migrated mix bus processor ownership");
+    Assert(mixerReadme.Contains("LiveProgramMixBus.cs", StringComparison.Ordinal), "Mixer docs should name migrated live program bus ownership");
+    Assert(mixerReadme.Contains("LiveMicBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated mono block provider ownership");
+    Assert(mixerReadme.Contains("LiveStereoBlockSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated stereo block provider ownership");
+    Assert(mixerReadme.Contains("LiveMixAudibility.cs", StringComparison.Ordinal), "Mixer docs should name migrated audibility ownership");
+    Assert(mixerReadme.Contains("DualMonoSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name dual-mono provider ownership");
+    Assert(mixerReadme.Contains("StereoPanSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated pan provider ownership");
+    Assert(mixerReadme.Contains("StereoBalanceSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated balance provider ownership");
+    Assert(mixerReadme.Contains("NaudioPeakMeterSampleProvider.cs", StringComparison.Ordinal), "Mixer docs should name migrated peak meter ownership");
+    Assert(mixerReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Mixer docs should name the live audio service consumer");
+    Assert(mixerSources.All(source => source.Contains("namespace JerichoDown.Modules.Mixer;", StringComparison.Ordinal)), "Mixer primitives should live in the Mixer module namespace");
+
+    var audioSyncReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "README.md")));
+    var audioSyncSources = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioDelayLine.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioStereoDelayLine.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioSyncBuffer.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "NAudioSampleRateConverter.cs")))
+    };
+    Assert(audioSyncReadme.Contains("AudioDelayLine.cs", StringComparison.Ordinal), "Audio sync docs should name migrated delay line ownership");
+    Assert(audioSyncReadme.Contains("AudioStereoDelayLine.cs", StringComparison.Ordinal), "Audio sync docs should name migrated stereo delay line ownership");
+    Assert(audioSyncReadme.Contains("AudioSyncBuffer.cs", StringComparison.Ordinal), "Audio sync docs should name migrated sync buffer ownership");
+    Assert(audioSyncReadme.Contains("NAudioSampleRateConverter.cs", StringComparison.Ordinal), "Audio sync docs should name migrated sample-rate converter ownership");
+    Assert(audioSyncReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "Audio sync docs should name the live audio service consumer");
+    Assert(audioSyncSources.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Sync;", StringComparison.Ordinal)), "Audio sync helpers should live in the Audio Sync module namespace");
+
+    var audioAsioReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "README.md")));
+    var asioInputCapture = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
+    var asioCallbackProbe = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioCallbackProbe.cs")));
+    var asioOutputPlayer = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioOutputPlayer.cs")));
+    var staThreadDispatcher = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "StaThreadDispatcher.cs")));
+    Assert(audioAsioReadme.Contains("AsioInputCapture.cs", StringComparison.Ordinal), "ASIO docs should name migrated input capture ownership");
+    Assert(audioAsioReadme.Contains("AsioCallbackProbe.cs", StringComparison.Ordinal), "ASIO docs should name migrated callback probe ownership");
+    Assert(audioAsioReadme.Contains("AsioOutputPlayer.cs", StringComparison.Ordinal), "ASIO docs should name migrated output player ownership");
+    Assert(audioAsioReadme.Contains("StaThreadDispatcher.cs", StringComparison.Ordinal), "ASIO docs should name migrated STA dispatcher ownership");
+    Assert(asioInputCapture.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO input capture should live in the Audio ASIO module namespace");
+    Assert(asioCallbackProbe.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO callback probe should live in the Audio ASIO module namespace");
+    Assert(asioOutputPlayer.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO output player should live in the Audio ASIO module namespace");
+    Assert(staThreadDispatcher.Contains("namespace JerichoDown.Modules.Audio.Asio;", StringComparison.Ordinal), "ASIO STA dispatcher should live in the Audio ASIO module namespace");
+
+    var audioDspReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "README.md")));
+    var dspVerificationReportGenerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "DspVerificationReportGenerator.cs")));
+    var graphicEqualizerProcessor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "GraphicEqualizerProcessor.cs")));
+    var graphicEqualizerSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "GraphicEqualizerSettings.cs")));
+    var graphicEqualizerResponse = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "GraphicEqualizerResponse.cs")));
+    var graphicEqualizerVerification = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "GraphicEqualizerVerification.cs")));
+    var voiceProcessorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessorSettings.cs")));
+    var builtInVoicePresetCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "BuiltInVoicePresetCatalog.cs")));
+    var voiceProcessingTelemetry = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessingTelemetry.cs")));
+    var equalizerBand = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "EqualizerBand.cs")));
+    var voiceSampleProcessor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceSampleProcessor.cs")));
+    var voiceProcessorSampleProvider = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceProcessorSampleProvider.cs")));
+    var stereoVoiceProcessorSampleProvider = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "StereoVoiceProcessorSampleProvider.cs")));
+    var nAudioDspProcessors = new[]
+    {
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs")))
+    };
+    Assert(audioDspReadme.Contains("DspVerificationReportGenerator.cs", StringComparison.Ordinal), "DSP docs should name migrated verification report ownership");
+    Assert(audioDspReadme.Contains("GraphicEqualizerProcessor.cs", StringComparison.Ordinal), "DSP docs should name graphic EQ processor ownership");
+    Assert(audioDspReadme.Contains("GraphicEqualizerSettings.cs", StringComparison.Ordinal), "DSP docs should name graphic EQ settings ownership");
+    Assert(audioDspReadme.Contains("GraphicEqualizerResponse.cs", StringComparison.Ordinal), "DSP docs should name graphic EQ response ownership");
+    Assert(audioDspReadme.Contains("GraphicEqualizerVerification.cs", StringComparison.Ordinal), "DSP docs should name graphic EQ verification ownership");
+    Assert(audioDspReadme.Contains("VoiceProcessorSettings.cs", StringComparison.Ordinal), "DSP docs should name migrated settings ownership");
+    Assert(audioDspReadme.Contains("BuiltInVoicePresetCatalog.cs", StringComparison.Ordinal), "DSP docs should name migrated preset ownership");
+    Assert(audioDspReadme.Contains("VoiceProcessingTelemetry.cs", StringComparison.Ordinal), "DSP docs should name migrated telemetry ownership");
+    Assert(audioDspReadme.Contains("EqualizerBand.cs", StringComparison.Ordinal), "DSP docs should name migrated equalizer band ownership");
+    Assert(audioDspReadme.Contains("VoiceSampleProcessor.cs", StringComparison.Ordinal), "DSP docs should name migrated voice processor ownership");
+    Assert(audioDspReadme.Contains("VoiceProcessorSampleProvider.cs", StringComparison.Ordinal), "DSP docs should name migrated mono provider ownership");
+    Assert(audioDspReadme.Contains("StereoVoiceProcessorSampleProvider.cs", StringComparison.Ordinal), "DSP docs should name migrated stereo provider ownership");
+    Assert(audioDspReadme.Contains("NAudioDmoEffectChain.cs", StringComparison.Ordinal), "DSP docs should name migrated NAudio effect chain ownership");
+    Assert(audioDspReadme.Contains("JerichoDown.Modules.Audio.Live.MicrophoneSpectrumService", StringComparison.Ordinal), "DSP docs should name the live audio service consumer");
+    Assert(dspVerificationReportGenerator.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "DSP verification report generator should live in the Audio DSP module namespace");
+    Assert(!dspVerificationReportGenerator.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "DSP verification report generator should not depend on the legacy audio namespace");
+    Assert(graphicEqualizerProcessor.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "graphic EQ processor should live in the Audio DSP module namespace");
+    Assert(graphicEqualizerSettings.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "graphic EQ settings should live in the Audio DSP module namespace");
+    Assert(graphicEqualizerResponse.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "graphic EQ response should live in the Audio DSP module namespace");
+    Assert(graphicEqualizerVerification.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "graphic EQ verification should live in the Audio DSP module namespace");
+    Assert(!graphicEqualizerProcessor.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "graphic EQ processor should not depend on the legacy audio namespace");
+    Assert(!graphicEqualizerSettings.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "graphic EQ settings should not depend on the legacy audio namespace");
+    Assert(!graphicEqualizerResponse.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "graphic EQ response should not depend on the legacy audio namespace");
+    Assert(!graphicEqualizerVerification.Contains("using JerichoDown.Audio;", StringComparison.Ordinal), "graphic EQ verification should not depend on the legacy audio namespace");
+    Assert(voiceProcessorSettings.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processor settings should live in the Audio DSP module namespace");
+    Assert(builtInVoicePresetCatalog.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "built-in voice preset catalog should live in the Audio DSP module namespace");
+    Assert(voiceProcessingTelemetry.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice processing telemetry should live in the Audio DSP module namespace");
+    Assert(equalizerBand.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "equalizer band should live in the Audio DSP module namespace");
+    Assert(voiceSampleProcessor.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "voice sample processor should live in the Audio DSP module namespace");
+    Assert(voiceProcessorSampleProvider.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "mono voice sample provider should live in the Audio DSP module namespace");
+    Assert(stereoVoiceProcessorSampleProvider.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal), "stereo voice sample provider should live in the Audio DSP module namespace");
+    Assert(nAudioDspProcessors.All(source => source.Contains("namespace JerichoDown.Modules.Audio.Dsp;", StringComparison.Ordinal)), "NAudio DSP wrappers should live in the Audio DSP module namespace");
+
+    var audioLiveReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "README.md")));
+    var microphoneSpectrumService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    Assert(audioLiveReadme.Contains("MicrophoneSpectrumService.cs", StringComparison.Ordinal), "Audio live docs should name migrated service ownership");
+    Assert(audioLiveReadme.Contains("JerichoDown.Modules.Audio.Asio", StringComparison.Ordinal), "Audio live docs should name ASIO dependency");
+    Assert(microphoneSpectrumService.Contains("namespace JerichoDown.Modules.Audio.Live;", StringComparison.Ordinal), "microphone spectrum service should live in the Audio Live module namespace");
+
+    var midiReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "README.md")));
+    var midiDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiDeviceCatalog.cs")));
+    var midiFileService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiFileService.cs")));
+    var midiHexParser = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiHexParser.cs")));
+    var midiInputMonitor = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiInputMonitor.cs")));
+    var midiMessageSnapshot = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiMessageSnapshot.cs")));
+    var midiOutputPort = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiOutputPort.cs")));
+    var midiSequenceService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiSequenceService.cs")));
+    var midiControlMappingRule = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiControlMappingRule.cs")));
+    var midiControlMappingTriggerState = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "MidiControlMappingTriggerState.cs")));
+    var soundFontLibrarySource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Midi", "SoundFontLibrary.cs")));
+    Assert(midiReadme.Contains("MidiDeviceCatalog.cs", StringComparison.Ordinal), "MIDI docs should name migrated device catalog ownership");
+    Assert(midiReadme.Contains("MidiFileService.cs", StringComparison.Ordinal), "MIDI docs should name migrated file service ownership");
+    Assert(midiReadme.Contains("MidiHexParser.cs", StringComparison.Ordinal), "MIDI docs should name migrated hex parser ownership");
+    Assert(midiReadme.Contains("MidiInputMonitor.cs", StringComparison.Ordinal), "MIDI docs should name migrated input monitor ownership");
+    Assert(midiReadme.Contains("MidiMessageSnapshot.cs", StringComparison.Ordinal), "MIDI docs should name migrated message snapshot ownership");
+    Assert(midiReadme.Contains("MidiOutputPort.cs", StringComparison.Ordinal), "MIDI docs should name migrated output port ownership");
+    Assert(midiReadme.Contains("MidiSequenceService.cs", StringComparison.Ordinal), "MIDI docs should name migrated sequence service ownership");
+    Assert(midiReadme.Contains("MidiControlMappingRule.cs", StringComparison.Ordinal), "MIDI docs should name migrated control mapping rule ownership");
+    Assert(midiReadme.Contains("MidiControlMappingTriggerState.cs", StringComparison.Ordinal), "MIDI docs should name migrated control mapping trigger ownership");
+    Assert(midiReadme.Contains("SoundFontLibrary.cs", StringComparison.Ordinal), "MIDI docs should name migrated SoundFont ownership");
+    Assert(midiDeviceCatalog.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI device catalog should live in the MIDI module namespace");
+    Assert(midiFileService.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI file service should live in the MIDI module namespace");
+    Assert(midiHexParser.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI hex parser should live in the MIDI module namespace");
+    Assert(midiInputMonitor.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI input monitor should live in the MIDI module namespace");
+    Assert(midiMessageSnapshot.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI message snapshot should live in the MIDI module namespace");
+    Assert(midiOutputPort.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI output port should live in the MIDI module namespace");
+    Assert(midiSequenceService.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI sequence service should live in the MIDI module namespace");
+    Assert(midiControlMappingRule.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI control mapping rule should live in the MIDI module namespace");
+    Assert(midiControlMappingTriggerState.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "MIDI control mapping trigger state should live in the MIDI module namespace");
+    Assert(soundFontLibrarySource.Contains("namespace JerichoDown.Modules.Midi;", StringComparison.Ordinal), "SoundFont library should live in the MIDI module namespace");
+
+    Assert(!Directory.Exists(Path.Combine(FindRepoDirectory(Path.Combine("src", "Modules")), "DirectX12Viewport")), "shared DX12 viewport module should be removed after localizing viewport hosts");
+
+    var visualizationDx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "README.md")));
+    var direct3D12AudioGraphHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
+    var visualizationDirectX12ViewportHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "VisualizationDirectX12ViewportHost.cs")));
+    Assert(visualizationDx12Readme.Contains("Direct3D12AudioGraphHost.cs", StringComparison.Ordinal), "Visualization DX12 docs should name migrated audio graph host ownership");
+    Assert(visualizationDx12Readme.Contains("VisualizationDirectX12ViewportHost.cs", StringComparison.Ordinal), "Visualization DX12 docs should name the local viewport host");
+    Assert(!visualizationDx12Readme.Contains("Use `DirectX12Viewport`", StringComparison.Ordinal), "Visualization DX12 docs should not depend on the removed shared viewport module");
+    Assert(direct3D12AudioGraphHost.Contains("namespace JerichoDown.Modules.Visualization.Dx12;", StringComparison.Ordinal), "DX12 audio graph host should live in the Visualization DX12 module namespace");
+    Assert(!direct3D12AudioGraphHost.Contains("using JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "DX12 audio graph host should not use the removed shared viewport module");
+    Assert(direct3D12AudioGraphHost.Contains(": VisualizationDirectX12ViewportHost, IDisposable", StringComparison.Ordinal), "DX12 audio graph host should inherit the visualization-local viewport host");
+    Assert(visualizationDirectX12ViewportHost.Contains("abstract class VisualizationDirectX12ViewportHost : HwndHost", StringComparison.Ordinal), "Visualization viewport host should own WPF child-window hosting");
+    Assert(visualizationDirectX12ViewportHost.Contains("ViewportStateDescription", StringComparison.Ordinal), "Visualization viewport host should expose local diagnostics");
+    Assert(visualizationDirectX12ViewportHost.Contains("CreateWindowEx", StringComparison.Ordinal), "Visualization viewport host should own child HWND creation");
+
+    var mediaFoundationReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "README.md")));
+    var mediaFoundationCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraEnumerator.cs")));
+    var mediaFoundationCameraModeService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraModeService.cs")));
+    var mediaFoundationCameraDeviceFactory = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraDeviceFactory.cs")));
+    var mediaFoundationCameraPreviewService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
+    var mediaFoundationVideoRecorder = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationVideoRecorder.cs")));
+    var mediaFoundationGuids = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationGuids.cs")));
+    var mediaFoundationInterop = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationInterop.cs")));
+    Assert(mediaFoundationReadme.Contains("MediaFoundationCameraEnumerator.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera enumerator ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationCameraModeService.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera mode service ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationCameraDeviceFactory.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera device factory ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationCameraPreviewService.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated camera preview service ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationVideoRecorder.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated video recorder ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationGuids.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated GUID ownership");
+    Assert(mediaFoundationReadme.Contains("MediaFoundationInterop.cs", StringComparison.Ordinal), "Media Foundation docs should name migrated interop ownership");
+    Assert(mediaFoundationCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera enumerator should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationCameraModeService.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera mode service should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationCameraDeviceFactory.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera device factory should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationCameraPreviewService.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation camera preview service should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationCameraPreviewService.Contains("using JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "Media Foundation camera preview service should document its DX12 preview upload dependency");
+    Assert(mediaFoundationVideoRecorder.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation video recorder should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationGuids.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation GUIDs should live in the MediaFoundation module namespace");
+    Assert(mediaFoundationInterop.Contains("namespace JerichoDown.Modules.Webcam.MediaFoundation;", StringComparison.Ordinal), "Media Foundation interop should live in the MediaFoundation module namespace");
+
+    var directShowReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "README.md")));
+    var directShowCameraEnumerator = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraEnumerator.cs")));
+    var directShowCameraControlService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraControlService.cs")));
+    var directShowCameraPreviewService = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
+    Assert(directShowReadme.Contains("DirectShowCameraEnumerator.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera enumerator ownership");
+    Assert(directShowReadme.Contains("DirectShowCameraControlService.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera control ownership");
+    Assert(directShowReadme.Contains("DirectShowCameraPreviewService.cs", StringComparison.Ordinal), "DirectShow docs should name migrated camera preview ownership");
+    Assert(directShowCameraEnumerator.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera enumerator should live in the DirectShow module namespace");
+    Assert(directShowCameraControlService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera control service should live in the DirectShow module namespace");
+    Assert(directShowCameraPreviewService.Contains("namespace JerichoDown.Modules.Webcam.DirectShow;", StringComparison.Ordinal), "DirectShow camera preview service should live in the DirectShow module namespace");
+
+    var dx12Readme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "README.md")));
+    var direct3D12DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12DeviceManager.cs")));
+    var direct3D12PreviewHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
+    var direct3D12PreviewDiagnostics = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewDiagnostics.cs")));
+    var cameraPreviewPresenter = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "ICameraPreviewPresenter.cs")));
+    var webcamDirectX12ViewportHost = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "WebcamDirectX12ViewportHost.cs")));
+    var dx12Camera = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12Camera.cs")));
+    var dx12CameraOptions = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Dx12CameraOptions.cs")));
+    var cameraPreviewFramePumps = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "CameraPreviewFramePumps.cs")));
+    var textureNativeCameraRecorder = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraRecorder.cs")));
+    var textureNativeCameraProbe = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraProbe.cs")));
+    Assert(dx12Readme.Contains("Direct3D12DeviceManager.cs", StringComparison.Ordinal), "DX12 docs should name migrated device manager ownership");
+    Assert(dx12Readme.Contains("Direct3D12PreviewHost.cs", StringComparison.Ordinal), "DX12 docs should name migrated preview host ownership");
+    Assert(dx12Readme.Contains("Direct3D12PreviewDiagnostics.cs", StringComparison.Ordinal), "DX12 docs should name preview diagnostics ownership");
+    Assert(dx12Readme.Contains("ICameraPreviewPresenter.cs", StringComparison.Ordinal), "DX12 docs should name the reusable preview presenter contract");
+    Assert(dx12Readme.Contains("WebcamDirectX12ViewportHost.cs", StringComparison.Ordinal), "DX12 docs should name the webcam-local viewport host");
+    Assert(dx12Readme.Contains("GPU denoise and color-polish shader paths", StringComparison.Ordinal), "DX12 docs should document GPU color polish ownership");
+    Assert(dx12Readme.Contains("Dx12Camera.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera ownership");
+    Assert(dx12Readme.Contains("Dx12CameraOptions.cs", StringComparison.Ordinal), "DX12 docs should name migrated camera options ownership");
+    Assert(dx12Readme.Contains("CameraPreviewFramePumps.cs", StringComparison.Ordinal), "DX12 docs should name migrated frame pump ownership");
+    Assert(dx12Readme.Contains("TextureNativeCameraRecorder.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native recorder ownership");
+    Assert(dx12Readme.Contains("TextureNativeCameraProbe.cs", StringComparison.Ordinal), "DX12 docs should name migrated texture-native probe ownership");
+    Assert(!dx12Readme.Contains("Use `DirectX12Viewport`", StringComparison.Ordinal), "DX12 camera docs should not depend on the removed shared viewport module");
+    Assert(direct3D12DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 device manager should live in the DX12 module namespace");
+    Assert(direct3D12DeviceManager.Contains("interface ITextureNativeDeviceManager", StringComparison.Ordinal), "D3D12 device manager should own the texture-native device-manager abstraction");
+    Assert(direct3D12PreviewHost.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D12 preview host should live in the DX12 module namespace");
+    Assert(!direct3D12PreviewHost.Contains("using JerichoDown.Modules.DirectX12Viewport;", StringComparison.Ordinal), "D3D12 preview host should not use the removed shared viewport module");
+    Assert(direct3D12PreviewHost.Contains(": WebcamDirectX12ViewportHost, ICameraPreviewPresenter", StringComparison.Ordinal), "D3D12 preview host should use the webcam-local viewport host and preview presenter contract");
+    Assert(direct3D12PreviewHost.Contains("RecordDroppedFrame()", StringComparison.Ordinal), "D3D12 preview host should track dropped frames");
+    Assert(dx12Camera.Contains("OpenTextureNativeAsync", StringComparison.Ordinal), "DX12 camera should expose non-blocking async native open helper");
+    Assert(dx12Camera.Contains("WaitForFirstFrameAsync", StringComparison.Ordinal), "DX12 camera should expose async first frame wait helper");
+    Assert(direct3D12PreviewHost.Contains("SetRecordingMode", StringComparison.Ordinal), "D3D12 preview host should report recording mode in diagnostics");
+    Assert(direct3D12PreviewDiagnostics.Contains("public sealed record Direct3D12PreviewDiagnostics", StringComparison.Ordinal), "preview diagnostics should be a reusable record");
+    Assert(direct3D12PreviewDiagnostics.Contains("FormatStatusLine()", StringComparison.Ordinal), "preview diagnostics should expose a compact status line");
+    Assert(cameraPreviewPresenter.Contains("public interface ICameraPreviewPresenter", StringComparison.Ordinal), "preview presenter should expose a reusable interface");
+    Assert(cameraPreviewPresenter.Contains("Direct3D12PreviewDiagnostics Diagnostics", StringComparison.Ordinal), "preview presenter should expose diagnostics");
+    Assert(webcamDirectX12ViewportHost.Contains("abstract class WebcamDirectX12ViewportHost : HwndHost", StringComparison.Ordinal), "webcam viewport host should own WPF child-window hosting");
+    Assert(webcamDirectX12ViewportHost.Contains("ViewportStateDescription", StringComparison.Ordinal), "webcam viewport host should expose local diagnostics");
+    Assert(webcamDirectX12ViewportHost.Contains("CreateWindowEx", StringComparison.Ordinal), "webcam viewport host should own child HWND creation");
+    Assert(dx12Camera.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera should live in the DX12 module namespace");
+    Assert(dx12Camera.Contains("DiagnosticsChanged", StringComparison.Ordinal), "DX12 camera should surface preview diagnostics");
+    Assert(dx12Camera.Contains("FormatTextureRecordingMode", StringComparison.Ordinal), "DX12 camera should label raw versus processed recording modes");
+    Assert(dx12CameraOptions.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "DX12 camera options should live in the DX12 module namespace");
+    Assert(dx12CameraOptions.Contains("EventHandler<Direct3D12PreviewDiagnostics>? DiagnosticsChanged", StringComparison.Ordinal), "DX12 camera options should allow diagnostics subscriptions");
+    Assert(cameraPreviewFramePumps.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera preview frame pumps should live in the DX12 module namespace");
+    Assert(textureNativeCameraRecorder.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "texture-native recorder should live in the DX12 module namespace");
+    Assert(textureNativeCameraProbe.Contains("namespace JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "texture-native probe should live in the DX12 module namespace");
+
+    var dx11BridgeReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "README.md")));
+    var direct3D11DeviceManager = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11DeviceManager.cs")));
+    var direct3D11SharedTextureBridge = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx11Bridge", "Direct3D11SharedTextureBridge.cs")));
+    Assert(dx11BridgeReadme.Contains("Direct3D11DeviceManager.cs", StringComparison.Ordinal), "DX11 bridge docs should name migrated device manager ownership");
+    Assert(dx11BridgeReadme.Contains("Direct3D11SharedTextureBridge.cs", StringComparison.Ordinal), "DX11 bridge docs should name migrated shared texture bridge ownership");
+    Assert(dx11BridgeReadme.Contains("Webcam/Dx12", StringComparison.Ordinal), "DX11 bridge docs should name its DX12 device-manager dependency");
+    Assert(direct3D11DeviceManager.Contains("namespace JerichoDown.Modules.Webcam.Dx11Bridge;", StringComparison.Ordinal), "D3D11 device manager should live in the DX11 bridge module namespace");
+    Assert(direct3D11DeviceManager.Contains("using JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "D3D11 device manager should document its texture-native interface dependency");
+    Assert(direct3D11SharedTextureBridge.Contains("namespace JerichoDown.Modules.Webcam.Dx11Bridge;", StringComparison.Ordinal), "D3D11 shared texture bridge should live in the DX11 bridge module namespace");
+
+    var webcamReadme = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "README.md")));
+    var webcamModule = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamModule.cs")));
+    var cameraDevice = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDevice.cs")));
+    var cameraDeviceCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraDeviceCatalog.cs")));
+    var cameraVideoMode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraVideoMode.cs")));
+    var cameraFrame = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraFrame.cs")));
+    var cameraControlKind = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraControlKind.cs")));
+    var cameraControlItem = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraControlItem.cs")));
+    var cameraControlText = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraControlText.cs")));
+    var cameraSourceSelection = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraSourceSelection.cs")));
+    var cameraProfile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfile.cs")));
+    var cameraProfileStore = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraProfileStore.cs")));
+    var webcamAtomicFile = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamAtomicFile.cs")));
+    var cameraStatusText = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "CameraStatusText.cs")));
+    var textureNativePreviewPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "TextureNativePreviewPolicy.cs")));
+    var videoRecordingPolicy = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoRecordingPolicy.cs")));
+    var videoFrameDenoiser = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameDenoiser.cs")));
+    Assert(webcamReadme.Contains("WebcamModule.cs", StringComparison.Ordinal), "webcam docs should name the standalone facade ownership");
+    Assert(webcamReadme.Contains("tools/CameraPreviewProbe --module-sample", StringComparison.Ordinal), "webcam docs should name the standalone module sample probe");
+    Assert(webcamReadme.Contains("CameraDevice.cs", StringComparison.Ordinal), "webcam docs should name migrated camera device ownership");
+    Assert(webcamReadme.Contains("CameraDeviceCatalog.cs", StringComparison.Ordinal), "webcam docs should name migrated camera catalog ownership");
+    Assert(webcamReadme.Contains("CameraVideoMode.cs", StringComparison.Ordinal), "webcam docs should name migrated camera mode ownership");
+    Assert(webcamReadme.Contains("CameraFrame.cs", StringComparison.Ordinal), "webcam docs should name migrated camera frame ownership");
+    Assert(webcamReadme.Contains("CameraControlKind.cs", StringComparison.Ordinal), "webcam docs should name migrated camera control kind ownership");
+    Assert(webcamReadme.Contains("CameraControlItem.cs", StringComparison.Ordinal), "webcam docs should name migrated camera control item ownership");
+    Assert(webcamReadme.Contains("CameraControlText.cs", StringComparison.Ordinal), "webcam docs should name migrated camera control text ownership");
+    Assert(webcamReadme.Contains("CameraSourceSelection.cs", StringComparison.Ordinal), "webcam docs should name migrated camera source selection ownership");
+    Assert(webcamReadme.Contains("CameraProfile.cs", StringComparison.Ordinal), "webcam docs should name migrated camera profile ownership");
+    Assert(webcamReadme.Contains("CameraProfileStore.cs", StringComparison.Ordinal), "webcam docs should name migrated camera profile store ownership");
+    Assert(webcamReadme.Contains("CameraStatusText.cs", StringComparison.Ordinal), "webcam docs should name migrated camera status ownership");
+    Assert(webcamReadme.Contains("TextureNativePreviewPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated texture-native preview policy ownership");
+    Assert(webcamReadme.Contains("VideoRecordingPolicy.cs", StringComparison.Ordinal), "webcam docs should name migrated recording policy ownership");
+    Assert(webcamReadme.Contains("VideoFrameDenoiser.cs", StringComparison.Ordinal), "webcam docs should name migrated frame denoiser ownership");
+    Assert(webcamReadme.Contains("VideoFrameColorSettings.cs", StringComparison.Ordinal), "webcam docs should name migrated color settings ownership");
+    Assert(webcamReadme.Contains("WebcamAtomicFile.cs", StringComparison.Ordinal), "webcam docs should name module-local atomic file ownership");
+    Assert(webcamModule.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "webcam facade should live in the Webcam module namespace");
+    Assert(webcamModule.Contains("public static class WebcamModule", StringComparison.Ordinal), "webcam facade should be a public reusable module entry point");
+    Assert(webcamModule.Contains("CameraSourceSelection.GetCameras", StringComparison.Ordinal), "webcam facade should expose merged camera discovery");
+    Assert(webcamModule.Contains("CreateMediaFoundationPreviewService", StringComparison.Ordinal), "webcam facade should expose Media Foundation preview creation");
+    Assert(webcamModule.Contains("CreateDirectShowPreviewService", StringComparison.Ordinal), "webcam facade should expose DirectShow preview creation");
+    Assert(webcamModule.Contains("CreateDirect3D12PreviewHost", StringComparison.Ordinal), "webcam facade should expose the DX12 preview host");
+    Assert(webcamModule.Contains("Dx12Camera.Start(camera, mode, previewPanel, options)", StringComparison.Ordinal), "webcam facade should expose the option-aware DX12 camera starter");
+    Assert(cameraDevice.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device should live in the Webcam module namespace");
+    Assert(cameraDeviceCatalog.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera device catalog should live in the Webcam module namespace");
+    Assert(cameraVideoMode.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera video mode should live in the Webcam module namespace");
+    Assert(cameraFrame.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera frame should live in the Webcam module namespace");
+    Assert(cameraControlKind.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control kind should live in the Webcam module namespace");
+    Assert(cameraControlItem.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control item should live in the Webcam module namespace");
+    Assert(cameraControlText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera control text should live in the Webcam module namespace");
+    Assert(cameraControlText.Contains("public static class CameraControlText", StringComparison.Ordinal), "camera control text should be public reusable webcam UI text");
+    Assert(cameraSourceSelection.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera source selection should live in the Webcam module namespace");
+    Assert(cameraSourceSelection.Contains("public static class CameraSourceSelection", StringComparison.Ordinal), "camera source selection should be a public reusable camera-routing helper");
+    Assert(cameraSourceSelection.Contains("using JerichoDown.Modules.Webcam.Dx12;", StringComparison.Ordinal), "camera source selection should document its DX12 camera dependency");
+    Assert(cameraProfile.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile should live in the Webcam module namespace");
+    Assert(cameraProfile.Contains("public sealed class CameraProfile", StringComparison.Ordinal), "camera profile should be public so another app can persist camera profiles");
+    Assert(cameraProfileStore.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera profile store should live in the Webcam module namespace");
+    Assert(cameraProfileStore.Contains("public static class CameraProfileStore", StringComparison.Ordinal), "camera profile store should be public reusable profile persistence");
+    Assert(cameraProfileStore.Contains("WebcamAtomicFile.WriteAllText", StringComparison.Ordinal), "camera profile store should use the module-local atomic writer");
+    Assert(!cameraProfileStore.Contains("using JerichoDown;", StringComparison.Ordinal), "camera profile store should not depend on the Jericho Down app namespace");
+    Assert(webcamAtomicFile.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "webcam atomic file writer should live in the Webcam module namespace");
+    Assert(cameraStatusText.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "camera status text should live in the Webcam module namespace");
+    Assert(cameraStatusText.Contains("public static class CameraStatusText", StringComparison.Ordinal), "camera status text should be public reusable webcam UI text");
+    Assert(textureNativePreviewPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "texture-native preview policy should live in the Webcam module namespace");
+    Assert(textureNativePreviewPolicy.Contains("public static class TextureNativePreviewPolicy", StringComparison.Ordinal), "texture-native preview policy should be public reusable preview policy");
+    Assert(videoRecordingPolicy.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video recording policy should live in the Webcam module namespace");
+    Assert(videoRecordingPolicy.Contains("public static class VideoRecordingPolicy", StringComparison.Ordinal), "video recording policy should be public reusable recording policy");
+    Assert(videoFrameDenoiser.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame denoiser should live in the Webcam module namespace");
+    var videoFrameColorSettings = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "VideoFrameColorSettings.cs")));
+    Assert(videoFrameColorSettings.Contains("namespace JerichoDown.Modules.Webcam;", StringComparison.Ordinal), "video frame color settings should live in the Webcam module namespace");
+}
+
+static void CameraDenoiseStaysOnDx12PreviewPaths()
+{
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var mediaFoundationPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
+    var directShowPreview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "DirectShow", "DirectShowCameraPreviewService.cs")));
+    var dx12Preview = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "Direct3D12PreviewHost.cs")));
+
+    Assert(windowCode.Contains("DenoiseHandledByPreviewRenderer = denoiseHandledByPreviewRenderer || _dx12Camera?.IsReady == true", StringComparison.Ordinal), "CPU preview services should know when the DX12 preview renderer owns denoise");
+    Assert(windowCode.Contains("denoiseHandledByPreviewRenderer: denoiseEnabled", StringComparison.Ordinal), "Media Foundation denoise startup should avoid capture-thread denoise when DX12 will render the preview");
+    Assert(windowCode.Contains("denoiseHandledByPreviewRenderer: _pendingVideoDenoiseEnabled", StringComparison.Ordinal), "DirectShow fallback denoise startup should avoid capture-thread denoise when DX12 will render the preview");
+    Assert(mediaFoundationPreview.Contains("DenoiseEnabled && !DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "Media Foundation preview should not denoise BGRA frames on CPU when DX12 owns denoise");
+    Assert(mediaFoundationPreview.Contains("if (DenoiseEnabled && !DenoiseHandledByPreviewRenderer)", StringComparison.Ordinal), "Media Foundation preview should only force BGRA conversion for CPU denoise");
+    Assert(directShowPreview.Contains("DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "DirectShow preview should expose the same renderer-owned denoise switch");
+    Assert(directShowPreview.Contains("DenoiseEnabled && !DenoiseHandledByPreviewRenderer", StringComparison.Ordinal), "DirectShow preview should not denoise on CPU when DX12 owns denoise");
+    Assert(dx12Preview.Contains("ApplyBgraDenoise", StringComparison.Ordinal), "DX12 BGRA preview shader should perform GPU denoise for non-NV12 fallback frames");
+    Assert(dx12Preview.Contains("SetNv12ShaderConstants(width, height, colorSettings, denoiseEnabled, denoiseStrength)", StringComparison.Ordinal), "DX12 NV12 preview shader should keep the GPU denoise path");
+    Assert(dx12Preview.Contains("ApplyColorPolish(saturate(rgb))", StringComparison.Ordinal), "DX12 NV12 preview shader should apply GPU color polish");
+    Assert(dx12Preview.Contains("new RootParameter(new RootConstants(0, 0, 8)", StringComparison.Ordinal), "DX12 NV12 preview shader constants should include color and denoise controls");
+}
+
+static void Dx12WebcamModuleProbeUsesReusableFacade()
+{
+    var rootReadme = File.ReadAllText(FindRepoFile("README.md"));
+    var probe = File.ReadAllText(FindRepoFile(Path.Combine("tools", "CameraPreviewProbe", "Program.cs")));
+    var webcamModule = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "WebcamModule.cs")));
+
+    Assert(rootReadme.Contains("--module-sample", StringComparison.Ordinal), "root README should document the reusable webcam module sample");
+    Assert(rootReadme.Contains("--stress-count 5", StringComparison.Ordinal), "root README should document the repeatable webcam module stress probe");
+    Assert(probe.Contains("WebcamModule.GetCameras().ToList()", StringComparison.Ordinal), "camera probe should discover cameras through the reusable webcam facade");
+    Assert(probe.Contains("WebcamModule.StartDx12Camera(camera, mode, previewPanel, startupOptions)", StringComparison.Ordinal), "camera probe should prove the option-aware facade start path");
+    Assert(probe.Contains("--module-sample", StringComparison.Ordinal), "camera probe should expose the module sample switch");
+    Assert(probe.Contains("--stress-count", StringComparison.Ordinal), "camera probe should expose a repeated start/stop probe");
+    Assert(probe.Contains("DiagnosticsChanged", StringComparison.Ordinal), "camera probe should print DX12 diagnostics");
+    Assert(probe.Contains("CreateProbeSurface", StringComparison.Ordinal), "camera probe should host the module in a plain WPF surface");
+    Assert(webcamModule.Contains("Dx12Camera.Start(camera, mode, previewPanel, options)", StringComparison.Ordinal), "webcam facade should route option-aware DX12 startup through the reusable camera API");
+}
+
+static void MidiTabIsOptInAndOrderedAfterKaraoke()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var stateCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "AppStateStore.cs")));
+
+    Assert(xaml.Contains("x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\"", StringComparison.Ordinal), "MIDI tab should be hidden by default");
+    Assert(xaml.Contains("x:Name=\"RefreshMidiDevicesMenuItem\"", StringComparison.Ordinal), "MIDI refresh menu item should be addressable");
+    Assert(xaml.Contains("x:Name=\"MidiHelpMenuItem\"", StringComparison.Ordinal), "MIDI help menu item should be addressable");
+
+    var orderMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void OrderMainTabs()",
+        "    public ObservableCollection<EqualizerBand> Bands");
+    var karaokeIndex = orderMethod.IndexOf("\"Karaoke\"", StringComparison.Ordinal);
+    var midiIndex = orderMethod.IndexOf("\"MIDI\"", StringComparison.Ordinal);
+    Assert(karaokeIndex >= 0 && midiIndex > karaokeIndex, "MIDI tab should be ordered after Karaoke when enabled");
+
+    Assert(windowCode.Contains("_midiEnabled = _appSettings.MidiEnabled;", StringComparison.Ordinal), "MIDI enabled state should restore from app settings");
+    Assert(windowCode.Contains("ApplyMidiEnabledState(refreshDevices: _midiEnabled", StringComparison.Ordinal), "MIDI enable state should drive tab visibility and refresh behavior");
+    Assert(windowCode.Contains("MidiTabItem.Visibility = _midiEnabled ? Visibility.Visible : Visibility.Collapsed;", StringComparison.Ordinal), "MIDI tab visibility should follow the File menu toggle");
+    Assert(windowCode.Contains("RefreshMidiDevicesMenuItem.IsEnabled = _midiEnabled;", StringComparison.Ordinal), "MIDI refresh command should follow the File menu toggle");
+    Assert(windowCode.Contains("MidiHelpMenuItem.IsEnabled = _midiEnabled;", StringComparison.Ordinal), "MIDI help command should follow the File menu toggle");
+    Assert(windowCode.Contains("MidiEnabled = _midiEnabled,", StringComparison.Ordinal), "MIDI enabled state should be saved");
+    Assert(stateCode.Contains("public bool MidiEnabled { get; set; }", StringComparison.Ordinal), "app settings should persist the MIDI enabled state");
 }
 
 static void VoiceProcessorUsesEveryDspSetting()
 {
     var processor = string.Join(
         Environment.NewLine,
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "VoiceSampleProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioBiQuadFilterRack.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioPitchShiftProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioImpulseConvolutionProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioEnvelopeGeneratorProcessor.cs"))),
-        File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioDmoEffectChain.cs"))));
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "VoiceSampleProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioBiQuadFilterRack.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioPitchShiftProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioImpulseConvolutionProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioEnvelopeGeneratorProcessor.cs"))),
+        File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Dsp", "NAudioDmoEffectChain.cs"))));
     var missing = GetVoiceProcessorDspSettingProperties()
         .Where(property => !processor.Contains($".{property.Name}", StringComparison.Ordinal))
         .Select(property => property.Name)
@@ -1254,13 +2247,22 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
 {
     var appInput = AudioInputDevice.CreateProcessLoopback(4242, "MusicApp");
     var output = new AudioOutputDevice(-1, "Default playback device");
+    var lowLatencyOutput = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
     var report = AudioDeviceDiagnostics.BuildReport(
         appInput,
         output,
         new AudioDeviceFormat(48_000, 2, 32),
         new AudioDeviceFormat(44_100, 2, 16),
         [appInput],
-        [output]);
+        [output],
+        liveTelemetry: new VoiceProcessingTelemetry
+        {
+            GraphicEqualizerLatencySamples = 0,
+            GraphicEqualizerLatencyMilliseconds = 0d,
+            LimiterLookaheadLatencySamples = 144,
+            LimiterLookaheadLatencyMilliseconds = 3d
+        },
+        wasapiOutputSettings: lowLatencyOutput);
 
     Assert(report.Contains("Audio Device Diagnostics", StringComparison.Ordinal), "diagnostics report should have a clear title");
     Assert(report.Contains("Selected Input", StringComparison.Ordinal), "diagnostics report should identify the selected input");
@@ -1268,27 +2270,89 @@ static void AudioDeviceDiagnosticsNamesSelectedDeviceRisks()
     Assert(report.Contains("Process loopback target PID: 4242", StringComparison.Ordinal), "diagnostics report should show app-loopback process IDs");
     Assert(report.Contains("sample rates differ", StringComparison.OrdinalIgnoreCase), "diagnostics report should warn when output resampling will be used");
     Assert(report.Contains("refresh audio devices", StringComparison.OrdinalIgnoreCase), "diagnostics report should explain app-loopback refresh behavior");
+    Assert(report.Contains("Live DSP / Monitor Latency", StringComparison.Ordinal), "diagnostics report should include live DSP latency when telemetry is available");
+    Assert(report.Contains("Graphic EQ algorithmic latency: 0 sample", StringComparison.Ordinal), "diagnostics report should make graphic EQ zero-latency explicit");
+    Assert(report.Contains("Limiter lookahead latency: 144 sample", StringComparison.Ordinal), "diagnostics report should separate limiter lookahead from graphic EQ latency");
+    Assert(report.Contains("Driver, capture, sync, and output buffering are separate", StringComparison.Ordinal), "diagnostics report should not blame DSP latency for driver/output buffering");
+    Assert(report.Contains("Processed Monitor Output", StringComparison.Ordinal), "diagnostics report should include processed monitor output settings");
+    Assert(report.Contains("WASAPI profile: Low latency shared, 35 ms", StringComparison.Ordinal), "diagnostics report should name the selected low-latency WASAPI profile");
+    Assert(report.Contains("Target monitor buffer: 35 ms", StringComparison.Ordinal), "diagnostics report should show the live monitor target buffer");
+    Assert(report.Contains("Maximum monitor buffer before trimming: 160 ms", StringComparison.Ordinal), "diagnostics report should show the low-latency trim ceiling");
 
-    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioDeviceDiagnostics.cs")));
+    var asioEndpoint = MicrophoneSpectrumService.CreateAsioEndpointId("Focusrite USB ASIO");
+    var asioInput = new AudioInputDevice(
+        AudioInputDevice.AsioInputDeviceNumber,
+        "ASIO: Focusrite USB ASIO",
+        10,
+        asioEndpoint,
+        AudioInputBackend.Asio);
+    var asioDiagnostics = new AsioInputCaptureDiagnostics(
+        "Focusrite USB ASIO",
+        48_000,
+        10,
+        0,
+        10,
+        2,
+        10,
+        2,
+        true,
+        "STA",
+        true,
+        37,
+        DateTimeOffset.UtcNow,
+        DateTimeOffset.UtcNow,
+        0,
+        null);
+    var asioReport = AudioDeviceDiagnostics.BuildReport(
+        asioInput,
+        output,
+        new AudioDeviceFormat(48_000, 10, 32),
+        new AudioDeviceFormat(48_000, 2, 32),
+        [asioInput],
+        [output],
+        asioDiagnostics,
+        "48 kHz, 10 ch, 32-bit float via ASIO input Focusrite USB ASIO");
+    Assert(asioReport.Contains("ASIO Runtime Diagnostics", StringComparison.Ordinal), "diagnostics report should include ASIO runtime details when a live ASIO capture exists");
+    Assert(asioReport.Contains("Audio callbacks received: 0", StringComparison.Ordinal), "ASIO diagnostics should report callback count");
+    Assert(asioReport.Contains("Silent output clock: 2 channel", StringComparison.Ordinal), "ASIO diagnostics should report the silent output clock path");
+    Assert(asioReport.Contains("No-callback diagnosis", StringComparison.Ordinal), "ASIO diagnostics should explain the no-callback failure mode");
+    Assert(asioReport.Contains("Focusrite Control", StringComparison.Ordinal), "ASIO diagnostics should name Focusrite routing/clock checks");
+    Assert(asioReport.Contains("stopped automatic ASIO retries", StringComparison.Ordinal), "ASIO diagnostics should explain that automatic driver reopen loops are stopped");
+
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
     Assert(diagnosticsSource.Contains("AudioEndpointVolume", StringComparison.Ordinal), "diagnostics should inspect Windows endpoint volume/mute state");
     Assert(diagnosticsSource.Contains("AudioMeterInformation", StringComparison.Ordinal), "diagnostics should inspect current endpoint meter state");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("AudioDeviceDiagnostics.BuildReport", StringComparison.Ordinal), "diagnostics menu should build a device report");
     Assert(windowSource.Contains("ShowAudioDeviceDiagnosticsDialog", StringComparison.Ordinal), "diagnostics menu should open a popup window");
+    Assert(windowSource.Contains("ShowAsioNoCallbackDiagnosticsOnce(selectedDevice)", StringComparison.Ordinal), "ASIO no-callback failures should open the diagnostic report once");
+    Assert(windowSource.Contains("_asioNoCallbackAutoStartSuppressedDeviceKey", StringComparison.Ordinal), "ASIO no-callback failures should suppress automatic reopen loops for the same driver");
+    Assert(windowSource.Contains("CreateAsioNoCallbackSuppressedStatus()", StringComparison.Ordinal), "ASIO no-callback suppression should give the user a clear stable status");
+    Assert(!windowSource.Contains("RotateAsioInputSampleRateAfterNoCallbacks", StringComparison.Ordinal), "ASIO no-callback failures should not rotate sample rates automatically");
+
+    var loadMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void WindowLoaded(object sender, RoutedEventArgs e)",
+        "    private bool HasPersistedAppState()");
+    Assert(loadMethod.Contains("_isCameraEnabled = false;", StringComparison.Ordinal), "camera preview should not auto-start from persisted state on app launch");
+    Assert(!loadMethod.Contains("_isCameraEnabled = hasPersistedState && _appSettings.CameraEnabled", StringComparison.Ordinal), "persisted camera state should not power the webcam during startup");
 }
 
 static void AudioStreamRestartFailuresBackOff()
 {
+    var maximumFailures = GetPrivateStaticValue<int>(typeof(EqualizerWindow), "MaximumAudioStreamRestartFailures");
+    Assert(maximumFailures == 3, "unavailable input devices should stop automatic recovery after three failed cycles");
     var baseBackoff = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "AudioStreamRestartBaseBackoff");
     var maximumBackoff = GetPrivateStaticValue<TimeSpan>(typeof(EqualizerWindow), "AudioStreamRestartMaximumBackoff");
     Assert(baseBackoff >= TimeSpan.FromSeconds(5), "audio restart retries should not hammer the driver immediately after a failure");
     Assert(maximumBackoff >= baseBackoff && maximumBackoff <= TimeSpan.FromSeconds(60), "audio restart backoff should be bounded and user-visible");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowSource.Contains("_nextAudioStreamRestartAttemptUtc", StringComparison.Ordinal), "window should track the next allowed automatic audio restart");
     Assert(windowSource.Contains("_audioStreamRestartFailureCount", StringComparison.Ordinal), "window should track repeated audio restart failures");
     Assert(windowSource.Contains("Auto-retry in", StringComparison.Ordinal), "failed audio restarts should tell the user when the app will retry");
+    Assert(windowSource.Contains("Automatic retries paused", StringComparison.Ordinal), "exhausted recovery should explain how to retry manually");
     Assert(windowSource.Contains("\"audio-stream-refresh-failed\"", StringComparison.Ordinal), "failed audio restarts should be logged for diagnostics");
 
     var timerMethod = ExtractSourceBetween(
@@ -1314,21 +2378,117 @@ static void AudioStreamRestartFailuresBackOff()
     Assert(restartMethod.Contains("RegisterAudioStreamRestartFailure(ex);", StringComparison.Ordinal), "failed automatic restart should register a bounded retry instead of looping every timer tick");
 }
 
-static void ProcessedMonitorUsesStabilityFirstBuffering()
+static void ProcessedMonitorFollowsWasapiLatencyProfile()
 {
-    var wasapiLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WasapiProcessedOutputLatencyMilliseconds");
     var waveOutLatency = GetPrivateStaticValue<int>(typeof(MicrophoneSpectrumService), "WaveOutProcessedOutputLatencyMilliseconds");
-    var providerBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "ProcessedOutputBufferDuration");
-    var initialBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "InitialLiveOutputBufferedDuration");
-    var targetBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "TargetLiveOutputBufferedDuration");
-    var maximumBuffer = GetPrivateStaticValue<TimeSpan>(typeof(MicrophoneSpectrumService), "MaximumLiveOutputBufferedDuration");
+    var stability = WasapiOutputSettings.Default;
+    var lowLatency = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
+    var customMinimum = WasapiOutputSettings.FromPersisted("Custom", exclusiveMode: true, customLatencyMilliseconds: WasapiOutputSettings.MinimumCustomLatencyMilliseconds);
 
-    Assert(wasapiLatency >= 100 && wasapiLatency <= 180, "WASAPI monitor latency should favor reliability over minimum delay");
+    Assert(stability.EffectiveLatencyMilliseconds == WasapiOutputSettings.StabilityLatencyMilliseconds, "stability profile should keep the conservative WASAPI latency request");
+    Assert(stability.ProcessedOutputInitialBufferDuration >= TimeSpan.FromMilliseconds(100), "stability profile should prime enough monitor audio to absorb startup jitter");
+    Assert(stability.ProcessedOutputTargetBufferDuration >= TimeSpan.FromMilliseconds(100), "stability profile should retain a large target monitor buffer");
+    Assert(stability.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(300), "stability profile should avoid over-trimming on slower computers");
+    Assert(stability.ProcessedOutputProviderBufferDuration >= stability.ProcessedOutputMaximumBufferDuration, "processed output provider must hold the stability buffer");
+
+    Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should request the low-latency WASAPI buffer");
+    Assert(lowLatency.EffectiveLatencyMilliseconds == 35, "low-latency profile should shave monitor buffering without using the experimental 6 ms custom floor");
+    Assert(lowLatency.ProcessedOutputInitialBufferDuration <= TimeSpan.FromMilliseconds(40), "low-latency profile should prime only a small live monitor buffer");
+    Assert(lowLatency.ProcessedOutputTargetBufferDuration <= TimeSpan.FromMilliseconds(40), "low-latency profile should trim toward a small headphone monitor buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration <= TimeSpan.FromMilliseconds(160), "low-latency profile should not silently keep the old 350 ms live buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(waveOutLatency), "low-latency maximum should still leave room for WaveOut fallback stability");
+    Assert(lowLatency.ProcessedOutputProviderBufferDuration >= lowLatency.ProcessedOutputMaximumBufferDuration, "low-latency provider capacity should hold its maximum buffer");
+
+    Assert(customMinimum.ProcessedOutputInitialBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.MinimumCustomLatencyMilliseconds), "minimum custom profile should be able to request the smallest supported WASAPI buffer");
+    Assert(customMinimum.EffectiveLatencyMilliseconds == 6, "minimum custom profile should expose an experimental 6 ms monitor request");
+    Assert(customMinimum.ProcessedOutputTargetBufferDuration == customMinimum.ProcessedOutputInitialBufferDuration, "custom monitor target should follow the custom WASAPI request");
+    Assert(customMinimum.ProcessedOutputMaximumBufferDuration >= TimeSpan.FromMilliseconds(120), "custom monitor maximum should keep a minimum safety cushion");
     Assert(waveOutLatency >= 120 && waveOutLatency <= 220, "WaveOut fallback latency should give physical devices room to stay smooth");
-    Assert(initialBuffer >= TimeSpan.FromMilliseconds(100), "initial live monitor buffer should absorb startup jitter");
-    Assert(targetBuffer >= TimeSpan.FromMilliseconds(100), "target live monitor buffer should absorb callback jitter");
-    Assert(maximumBuffer >= TimeSpan.FromMilliseconds(300), "maximum live monitor buffer should avoid over-trimming on slower computers");
-    Assert(providerBuffer >= maximumBuffer, "processed output provider must be able to hold the stability buffer");
+
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputProviderBufferDuration", StringComparison.Ordinal), "processed output provider capacity should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputInitialBufferDuration", StringComparison.Ordinal), "processed output startup priming should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputMaximumBufferDuration", StringComparison.Ordinal), "processed output trimming maximum should come from the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputTargetBufferDuration", StringComparison.Ordinal), "processed output trim target should come from the active latency profile");
+}
+
+static void MicDspMonitorExposesProcessedEqAudition()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var micDspTab = ExtractSourceBetween(
+        xaml,
+        "      <TabItem x:Name=\"MicDspTabItem\" Header=\"Mic / DSP\">",
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
+    var toggleSyncMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void SetProcessedOutputToggleState(bool enabled)",
+        "    private bool IsProcessedOutputRequested()");
+    var outputRequestedMethod = ExtractSourceBetween(
+        windowCode,
+        "    private bool IsProcessedOutputRequested()",
+        "    private void ApplyWasapiOutputSettingsToUi()");
+    var eqStatusMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ReportEqualizerAuditionStatus()",
+        "    private static void SyncEqualizerSettings(MicChannelStrip channel)");
+
+    Assert(micDspTab.Contains("x:Name=\"MicDspMonitorOutputCheckBox\"", StringComparison.Ordinal), "Mic/DSP should expose a local processed monitor toggle beside the EQ controls");
+    Assert(micDspTab.Contains("Content=\"MONITOR EQ\"", StringComparison.Ordinal), "Mic/DSP monitor toggle should make EQ audition explicit");
+    Assert(micDspTab.Contains("Checked=\"ProcessedOutputChanged\" Unchecked=\"ProcessedOutputChanged\"", StringComparison.Ordinal), "Mic/DSP monitor toggle should use the existing processed-output route");
+    Assert(micDspTab.Contains("Direct monitoring on an audio interface bypasses these controls", StringComparison.Ordinal), "Mic/DSP monitor tooltip should explain why direct interface monitoring will not hear EQ");
+    Assert(toggleSyncMethod.Contains("MicDspMonitorOutputCheckBox.IsChecked = enabled;", StringComparison.Ordinal), "processed-output toggle sync should include the Mic/DSP monitor switch");
+    Assert(outputRequestedMethod.Contains("MicDspMonitorOutputCheckBox?.IsChecked == true", StringComparison.Ordinal), "processed-output routing should honor the Mic/DSP monitor switch");
+    Assert(eqStatusMethod.Contains("MONITOR EQ is off", StringComparison.Ordinal), "EQ changes should warn when the processed monitor is off");
+    Assert(eqStatusMethod.Contains("Direct/interface monitoring bypasses Jericho DSP", StringComparison.Ordinal), "EQ status should explain that direct monitoring bypasses DSP");
+}
+
+static void MicDspMonoCopyExposesDualEarAudition()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var micDspTab = ExtractSourceBetween(
+        xaml,
+        "      <TabItem x:Name=\"MicDspTabItem\" Header=\"Mic / DSP\">",
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">");
+    var handler = ExtractSourceBetween(
+        windowCode,
+        "    private void MicDspMonoToStereoChanged(object sender, RoutedEventArgs e)",
+        "    private bool TrySnapMixerUnitySlider(object sender)");
+    var liveMixFactory = ExtractSourceBetween(
+        windowCode,
+        "    private List<MicrophoneLiveChannelSettings> CreateLiveMixChannelSettings(bool coerceInputModes)",
+        "    private List<MidiControlMappingSettingsState> CaptureMidiControlMappingStates()");
+
+    Assert(micDspTab.Contains("x:Name=\"MicDspMonoToStereoCheckBox\"", StringComparison.Ordinal), "Mic/DSP should expose a mono-to-stereo checkbox beside the EQ monitor controls");
+    Assert(micDspTab.Contains("Content=\"Mono to both ears\"", StringComparison.Ordinal), "mono-to-stereo checkbox should use user-facing headphone language");
+    Assert(micDspTab.Contains("Checked=\"MicDspMonoToStereoChanged\" Unchecked=\"MicDspMonoToStereoChanged\"", StringComparison.Ordinal), "mono-to-stereo checkbox should update the live mic route immediately");
+    Assert(micDspTab.Contains("final processed EQ/DSP signal into both left and right outputs", StringComparison.Ordinal), "mono-to-stereo tooltip should describe post-EQ dual-mono routing");
+    Assert(handler.Contains("_activeMicChannel.DuplicateMonoToStereo = enabled;", StringComparison.Ordinal), "mono-to-stereo handler should persist the active mic route flag");
+    Assert(handler.Contains("ConfigureLiveMixFromChannels();", StringComparison.Ordinal), "mono-to-stereo handler should rebuild the channel provider graph");
+    Assert(liveMixFactory.Contains("DuplicateMonoToStereo: channel.DuplicateMonoToStereo", StringComparison.Ordinal), "live mix settings should carry the per-mic mono-to-stereo flag");
+}
+
+static void GraphicEqSlidersSyncLiveSettingsAndGraph()
+{
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var sliderHandlerAndHelpers = ExtractSourceBetween(
+        windowCode,
+        "    private void EqSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
+        "    private void ProcessingSliderValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)");
+    var bandChangeHandler = ExtractSourceBetween(
+        windowCode,
+        "    private void EqualizerBandPropertyChanged(object? sender, PropertyChangedEventArgs e)",
+        "    private void SyncEqualizerSettings()");
+
+    Assert(sliderHandlerAndHelpers.Contains("ApplyEqualizerSliderValue(slider);", StringComparison.Ordinal), "manual EQ slider movement should write the slider value back to the band model");
+    Assert(sliderHandlerAndHelpers.Contains("band.GainDb = slider.Value;", StringComparison.Ordinal), "manual EQ slider movement should not depend only on WPF binding timing");
+    Assert(sliderHandlerAndHelpers.Contains("QueueEqualizerSliderSync();", StringComparison.Ordinal), "manual EQ slider movement should queue a live EQ sync");
+    Assert(sliderHandlerAndHelpers.Contains("Dispatcher.BeginInvoke", StringComparison.Ordinal), "manual EQ sync should run after WPF data binding settles");
+    Assert(sliderHandlerAndHelpers.Contains("SyncEqualizerSettings();", StringComparison.Ordinal), "manual EQ slider movement should push graphic EQ gains into active processor settings");
+    Assert(sliderHandlerAndHelpers.Contains("ReportEqualizerAuditionStatus();", StringComparison.Ordinal), "manual EQ slider movement should keep the audition status honest");
+    Assert(sliderHandlerAndHelpers.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "manual EQ slider movement should request an immediate graph refresh");
+    Assert(bandChangeHandler.Contains("_spectrumService.RequestImmediateSpectrumAnalysis();", StringComparison.Ordinal), "band enable or gain changes should also refresh the graph");
 }
 
 static void ProcessedOutputRoutingPrefersWasapiBeforeWaveOut()
@@ -1427,6 +2587,25 @@ static void AsioSettingsMenuPrefersSelectedAndInstalledDrivers()
     Assert(missingResult is null, "ASIO settings should report no endpoint when no ASIO driver is available");
 }
 
+static void AsioCallbackTestExposesDriverModes()
+{
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var probeSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioCallbackProbe.cs")));
+
+    Assert(xaml.Contains("Header=\"ASIO Callback Test\"", StringComparison.Ordinal), "File menu should expose an ASIO callback test");
+    Assert(windowCode.Contains("AsioCallbackTestMenuClicked", StringComparison.Ordinal), "ASIO callback test menu item should have a handler");
+    Assert(windowCode.Contains("_spectrumService.Stop();", StringComparison.Ordinal), "ASIO callback test should stop the live ASIO stream before probing the same driver");
+    Assert(windowCode.Contains("AsioCallbackProbe.BuildReport", StringComparison.Ordinal), "ASIO callback test should open a focused probe report");
+    Assert(windowCode.Contains("ClearAsioNoCallbackAutoStartSuppression();", StringComparison.Ordinal), "ASIO callback test should clear no-callback suppression after probing");
+    Assert(windowCode.Contains("StartSelectedDevice();", StringComparison.Ordinal), "ASIO callback test should restart the selected input after probing");
+    Assert(probeSource.Contains("Output-only silent callback test", StringComparison.Ordinal), "ASIO callback probe should test output-only callback clocking");
+    Assert(probeSource.Contains("Record-only input callback test", StringComparison.Ordinal), "ASIO callback probe should test NAudio record-only callbacks");
+    Assert(probeSource.Contains("Full-duplex input plus silent output callback test", StringComparison.Ordinal), "ASIO callback probe should test full-duplex input with silent output");
+    Assert(probeSource.Contains("AudioAvailable callbacks", StringComparison.Ordinal), "ASIO callback probe should report input callback counts");
+    Assert(probeSource.Contains("Silent output reads", StringComparison.Ordinal), "ASIO callback probe should report output provider reads");
+}
+
 static void AsioInputDevicesCarryEndpointIdentity()
 {
     var endpointId = MicrophoneSpectrumService.CreateAsioEndpointId("Interface ASIO Driver");
@@ -1481,13 +2660,173 @@ static void AsioRestartPathPreservesEndpointIdentity()
         [typeof(AudioInputDevice), typeof(VoiceProcessorSettings), typeof(InputChannelMode), typeof(TimeSpan)]);
     Assert(restartOverload is not null, "audio stream restart should accept a full input device so ASIO endpoint/backend identity is preserved");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(
         windowCode.Contains("_spectrumService.RestartCapture(selectedDevice,", StringComparison.Ordinal),
         "UI audio stream restart must pass the selected AudioInputDevice instead of only DeviceNumber; ASIO uses endpoint/backend identity");
     Assert(
         !windowCode.Contains("_spectrumService.RestartCapture(selectedDevice.DeviceNumber", StringComparison.Ordinal),
         "UI audio stream restart should not use the Windows-only DeviceNumber overload for selected devices");
+}
+
+static void AsioInputStartupAvoidsPreOpenProbe()
+{
+    var serviceCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    Assert(!serviceCode.Contains("TryGetAsioInputChannelCount", StringComparison.Ordinal), "ASIO input startup should not pre-open drivers just to count channels");
+
+    var inputEnumeration = ExtractSourceBetween(
+        serviceCode,
+        "    private static void AddAsioInputDevices(List<AudioInputDevice> devices)",
+        "    private static AudioDeviceFormat? TryGetAsioInputDeviceFormat(AudioInputDevice device)");
+    Assert(!inputEnumeration.Contains("new AsioOut(driverName)", StringComparison.Ordinal), "ASIO input enumeration should trust registered driver names and avoid opening drivers");
+    Assert(inputEnumeration.Contains("MaximumAsioInputChannels", StringComparison.Ordinal), "ASIO input enumeration should expose safe channel options without probing the driver");
+
+    var formatMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private static AudioDeviceFormat? TryGetAsioInputDeviceFormat(AudioInputDevice device)",
+        "    private static string CreateInputDeviceKey");
+    Assert(!formatMethod.Contains("new AsioOut(driverName)", StringComparison.Ordinal), "ASIO format display should not open the driver");
+
+    var startMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private IWaveIn StartAsioInputCapture(",
+        "    private bool TryStartWasapiCapture");
+    Assert(startMethod.Contains("new AsioInputCapture(", StringComparison.Ordinal), "ASIO capture should let the real capture open clamp to available channels");
+    Assert(startMethod.Contains("useSilentOutputClock: false", StringComparison.Ordinal), "live ASIO capture should use the record-only input mode that the callback probe verifies");
+}
+
+static void AsioStaDispatcherPumpsWindowsMessages()
+{
+    var dispatcherSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "StaThreadDispatcher.cs")));
+    Assert(dispatcherSource.Contains("using System.Windows.Threading;", StringComparison.Ordinal), "ASIO STA helper should use WPF Dispatcher infrastructure");
+    Assert(dispatcherSource.Contains("Dispatcher.CurrentDispatcher", StringComparison.Ordinal), "ASIO STA helper should create a dispatcher on its dedicated thread");
+    Assert(dispatcherSource.Contains("new DispatcherSynchronizationContext(dispatcher)", StringComparison.Ordinal), "ASIO STA helper should install a synchronization context before creating NAudio ASIO objects");
+    Assert(dispatcherSource.Contains("Dispatcher.Run();", StringComparison.Ordinal), "ASIO STA helper should pump Windows messages for hardware drivers that depend on a message loop");
+    Assert(dispatcherSource.Contains("BeginInvokeShutdown", StringComparison.Ordinal), "ASIO STA helper should shut down the dispatcher cleanly");
+    Assert(!dispatcherSource.Contains("BlockingCollection", StringComparison.Ordinal), "ASIO STA helper should not block the thread in a non-pumping work loop");
+}
+
+static void AsioNoCallbackStateClearsStaleGraphs()
+{
+    using var service = new MicrophoneSpectrumService();
+    SetPrivateField<IWaveIn?>(service, "_capture", new FakeWaveIn(WaveFormat.CreateIeeeFloatWaveFormat(48_000, 2)));
+
+    var now = System.Diagnostics.Stopwatch.GetTimestamp();
+    SetPrivateField(service, "_audioStreamStartedTimestamp", now);
+    SetPrivateField(service, "_lastAudioCallbackTimestamp", 0L);
+
+    Assert(!service.HasReceivedAudioCallbacks, "service should expose that an opened capture has not delivered callbacks yet");
+    Assert(service.IsWaitingForFirstAudioCallback(TimeSpan.FromSeconds(3)), "fresh ASIO opens should be reported as waiting for the first callback");
+    Assert(!service.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)), "fresh ASIO opens should not be stale during the startup grace period");
+
+    var oldStart = now - (long)(System.Diagnostics.Stopwatch.Frequency * 5d);
+    SetPrivateField(service, "_audioStreamStartedTimestamp", oldStart);
+    Assert(!service.IsWaitingForFirstAudioCallback(TimeSpan.FromSeconds(3)), "ASIO opens should stop waiting after the startup grace period");
+    Assert(service.AreAudioCallbacksStale(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(1400)), "an ASIO open with no callbacks after grace should be stale");
+
+    SetPrivateField(service, "_lastAudioCallbackTimestamp", now);
+    Assert(service.HasReceivedAudioCallbacks, "service should report true after any real audio callback arrives");
+
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var clearMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ClearLiveSpectrumDisplay()",
+        "    private SpectrumFrame CreateEmptySpectrumFrame()");
+    Assert(clearMethod.Contains("_latestFrame = emptyFrame;", StringComparison.Ordinal), "clearing live audio should replace the cached frame so old graphs cannot freeze in place");
+    Assert(clearMethod.Contains("_silentFrameCount = 0;", StringComparison.Ordinal), "clearing live audio should reset silent-frame state while waiting for callbacks");
+    Assert(clearMethod.Contains("ClearDirect3D12GraphHosts();", StringComparison.Ordinal), "clearing live audio should wipe DX12 graph history before pushing empty frames");
+    Assert(clearMethod.Contains("_waveform3DGraphHost?.AcceptFrame(selectedMicFrame);", StringComparison.Ordinal), "clearing live audio should blank the 3D selected-mic graph");
+    Assert(clearMethod.Contains("_podcastSpectrumWaterfallGraphHost?.AcceptFrame(emptyFrame);", StringComparison.Ordinal), "clearing live audio should blank waterfall graphs too");
+
+    var graphHostCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Visualization", "Dx12", "Direct3D12AudioGraphHost.cs")));
+    Assert(graphHostCode.Contains("public void ClearFrame()", StringComparison.Ordinal), "DX12 graph hosts should expose an explicit visual clear");
+    Assert(graphHostCode.Contains("public void ClearHistory()", StringComparison.Ordinal), "DX12 graph renderer should clear retained waterfall and trace history");
+    Assert(graphHostCode.Contains("Array.Clear(_history);", StringComparison.Ordinal), "DX12 graph clear should remove waterfall history instead of waiting for quiet frames to age it out");
+
+    var timerMethod = ExtractSourceBetween(
+        windowCode,
+        "    private async void AudioDeviceFormatTimerTick",
+        "    private AudioDeviceFormat? GetSelectedDeviceFormat");
+    Assert(timerMethod.Contains("IsWaitingForFirstAudioCallback(AudioCallbackStartupGrace)", StringComparison.Ordinal), "format timer should report the first-callback wait separately from silence");
+    Assert(timerMethod.Contains("CreateWaitingForAudioCallbacksStatus(selectedDevice)", StringComparison.Ordinal), "format timer should show callback-waiting text while ASIO opens");
+    Assert(timerMethod.Contains("!StatusText.Text.Contains(\"no audio callbacks\"", StringComparison.Ordinal), "format timer should keep an explicit no-callback diagnosis visible");
+    Assert(timerMethod.Contains("!_spectrumService.HasReceivedAudioCallbacks && selectedDevice.IsAsio", StringComparison.Ordinal), "stale ASIO opens should be identified as no-callback failures");
+    Assert(timerMethod.Contains("_spectrumService.Stop();", StringComparison.Ordinal), "stale ASIO no-callback streams should be stopped instead of reopened repeatedly");
+    Assert(timerMethod.Contains("_asioNoCallbackAutoStartSuppressedDeviceKey = CreateAsioNoCallbackSuppressionKey(selectedDevice);", StringComparison.Ordinal), "stale ASIO no-callback streams should suppress automatic restarts for the same device");
+    Assert(timerMethod.Contains("CreateAsioNoCallbackSuppressedStatus()", StringComparison.Ordinal), "stale ASIO no-callback streams should show a stable stopped status");
+    Assert(!timerMethod.Contains("RotateAsioInputSampleRateAfterNoCallbacks", StringComparison.Ordinal), "stale ASIO no-callback streams should not rotate sample rates automatically");
+
+    var signalStatusMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void UpdateSignalStatus(double peakLevel)",
+        "    private void EnsureGraphGrid");
+    var callbackGuardIndex = signalStatusMethod.IndexOf("!_spectrumService.HasReceivedAudioCallbacks", StringComparison.Ordinal);
+    var silentMessageIndex = signalStatusMethod.IndexOf("Listening, but this input is silent", StringComparison.Ordinal);
+    Assert(callbackGuardIndex >= 0 && silentMessageIndex > callbackGuardIndex, "silent-input warning should only be possible after audio callbacks arrive");
+    Assert(signalStatusMethod.Contains("!StatusText.Text.Contains(\"no audio callbacks\"", StringComparison.Ordinal), "signal status should preserve a no-callback diagnosis while empty reset frames render");
+}
+
+static void AsioInputCaptureUsesRecordOnlyLiveMode()
+{
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Asio", "AsioInputCapture.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    var diagnosticsSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Diagnostics", "AudioDeviceDiagnostics.cs")));
+
+    Assert(serviceSource.Contains("useSilentOutputClock: false", StringComparison.Ordinal), "live ASIO input should use record-only startup by default");
+    Assert(captureSource.Contains("useSilentOutputClock = false", StringComparison.Ordinal), "ASIO input capture should default to record-only mode");
+    Assert(captureSource.Contains("asio.InitRecordAndPlayback(outputClockProvider, channelCount, _requestedSampleRate)", StringComparison.Ordinal), "ASIO input capture should initialize record plus silent playback when outputs are available");
+    Assert(captureSource.Contains("_useSilentOutputClock", StringComparison.Ordinal), "ASIO input capture should keep silent output clocking optional");
+    Assert(captureSource.Contains("asio.DriverOutputChannelCount", StringComparison.Ordinal), "ASIO input capture should only create output buffers when the driver exposes outputs");
+    Assert(captureSource.Contains("if (InputChannelOffset > 0)", StringComparison.Ordinal), "ASIO input capture should leave the driver's default zero input offset alone");
+    Assert(!captureSource.Contains("PlaybackStopped += AsioPlaybackStopped", StringComparison.Ordinal), "ASIO input startup should not let playback-stopped edges abort the driver before input callbacks arrive");
+    Assert(!captureSource.Contains("DriverResetRequest += AsioDriverResetRequested", StringComparison.Ordinal), "ASIO input startup should match the callback probe and avoid reset hooks before input callbacks arrive");
+    Assert(diagnosticsSource.Contains("disabled (record-only input)", StringComparison.Ordinal), "ASIO diagnostics should make record-only live input mode explicit");
+
+    var providerType = typeof(AsioInputCapture).GetNestedType("SilentAsioOutputProvider", BindingFlags.NonPublic);
+    Assert(providerType is not null, "silent ASIO output provider should be nested inside the input capture wrapper");
+    var provider = (IWaveProvider)Activator.CreateInstance(
+        providerType!,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        args: [48_000, 2],
+        culture: null)!;
+
+    Assert(provider.WaveFormat.SampleRate == 48_000, "silent ASIO output clock should use the requested sample rate");
+    Assert(provider.WaveFormat.Channels == 2, "silent ASIO output clock should use the selected output channel count");
+
+    var buffer = Enumerable.Repeat((byte)0x7F, 48).ToArray();
+    var read = provider.Read(buffer, 8, 24);
+    Assert(read == 24, "silent ASIO output provider should return a full buffer so ASIO playback never auto-stops");
+    Assert(buffer.Take(8).All(value => value == 0x7F), "silent ASIO output provider should not touch bytes before the requested range");
+    Assert(buffer.Skip(8).Take(24).All(value => value == 0), "silent ASIO output provider should clear the requested playback range");
+    Assert(buffer.Skip(32).All(value => value == 0x7F), "silent ASIO output provider should not touch bytes after the requested range");
+}
+
+static void AsioPrimaryCaptureHoldsAuxiliaryInputs()
+{
+    var serviceCode = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
+    var startAdditionalMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private void StartAdditionalCaptures()",
+        "    private static string DescribeInputDevice");
+
+    Assert(
+        startAdditionalMethod.Contains("currentBackend != AudioInputBackend.Asio", StringComparison.Ordinal),
+        "auxiliary capture startup should not open extra inputs while ASIO is the primary capture");
+    Assert(
+        startAdditionalMethod.Contains("channel.Backend != AudioInputBackend.Asio", StringComparison.Ordinal),
+        "auxiliary capture startup should never open ASIO as a secondary client");
+    Assert(
+        startAdditionalMethod.Contains("_suppressedAdditionalCaptureCount", StringComparison.Ordinal),
+        "held auxiliary inputs should be counted so diagnostics explain why aux streams are absent");
+
+    var summaryMethod = ExtractSourceBetween(
+        serviceCode,
+        "    private string GetAdditionalCaptureSummary()",
+        "    private void SetProcessedOutputEnabled");
+    Assert(
+        summaryMethod.Contains("aux held while ASIO is primary", StringComparison.Ordinal),
+        "active stream diagnostics should say when aux inputs are held for ASIO stability");
 }
 
 static void AsioInputCaptureConvertsInterleavedFloats()
@@ -1568,21 +2907,21 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
         [asioDevice, Array.Empty<CoreAudioSessionSnapshot>()]);
     Assert(asioText.Contains("ASIO", StringComparison.Ordinal), "output panel should explain ASIO session visibility");
 
-    var catalogSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "CoreAudioSessionCatalog.cs")));
+    var catalogSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "CoreAudio", "CoreAudioSessionCatalog.cs")));
     Assert(catalogSource.Contains("SimpleAudioVolume", StringComparison.Ordinal), "CoreAudio controls should use Windows SimpleAudioVolume");
     Assert(catalogSource.Contains("simpleVolume.Volume =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session volume");
     Assert(catalogSource.Contains("simpleVolume.Mute =", StringComparison.Ordinal), "CoreAudio controls should be able to set app-session mute");
     Assert(catalogSource.Contains("CollapseDuplicateSessions", StringComparison.Ordinal), "CoreAudio app controls should collapse duplicate Windows sessions");
     Assert(catalogSource.Contains("validTargets.Any", StringComparison.Ordinal), "CoreAudio grouped controls should apply to every hidden session target");
 
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(windowXaml.Contains("CoreAudio App Mix", StringComparison.Ordinal), "Mixing tab should expose CoreAudio app-session controls");
     Assert(windowXaml.Contains("CoreAudioSessionsItemsControl", StringComparison.Ordinal), "CoreAudio session controls should render as a controllable list");
     Assert(windowXaml.Contains("CoreAudioSessionVolumeChanged", StringComparison.Ordinal), "CoreAudio session volume sliders should be wired");
     Assert(windowXaml.Contains("CoreAudioSessionMuteChanged", StringComparison.Ordinal), "CoreAudio session mute toggles should be wired");
     Assert(windowXaml.Contains("PeakLevelPercent", StringComparison.Ordinal), "CoreAudio app-session rows should expose live activity meters");
     Assert(windowXaml.Contains("Value=\"{Binding PeakLevelPercent, Mode=OneWay}\"", StringComparison.Ordinal), "CoreAudio peak meters should bind one-way so the read-only meter property cannot crash the Mixing tab template");
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("ProcessDisplayText", StringComparison.Ordinal), "CoreAudio app-session rows should include stable process identity details");
     var controlMethod = ExtractSourceBetween(
         windowCode,
@@ -1595,8 +2934,8 @@ static void CoreAudioSessionCatalogSkipsAsioOutputs()
 
     var mixingTab = ExtractSourceBetween(
         windowXaml,
-        "      <TabItem Header=\"Mixing\">",
-        "      <TabItem Header=\"MIDI\">");
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">",
+        "      <TabItem x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\">");
     var recordingIndex = mixingTab.IndexOf("Text=\"Recording\"", StringComparison.Ordinal);
     var coreAudioIndex = mixingTab.IndexOf("Text=\"CoreAudio App Mix\"", StringComparison.Ordinal);
     Assert(recordingIndex >= 0, "Mixing tab should include the recording section");
@@ -1658,7 +2997,7 @@ static void InputChannelModeFallsBackForMonoDevices()
 
 static void AudioDeviceRefreshSuppressesMicSelectionChurn()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var method = ExtractSourceBetween(
         windowCode,
         "    private void RefreshAudioDevicesFromSystem()",
@@ -1697,7 +3036,7 @@ static void MicDspTabExcludesLoopbackInputs()
     Assert(!filtered.Any(device => device.IsProcessLoopback), "Mic/DSP input picker should hide app loopback inputs");
     Assert(!filtered.Any(device => device.IsStereoTestTone), "Mic/DSP input picker should hide mixer-only test tone inputs");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var refreshMethod = ExtractSourceBetween(
         windowCode,
         "    private void RefreshAudioDevicesFromSystem()",
@@ -1753,12 +3092,12 @@ static void AppAudioLoopbackRoutesThroughMixerCapturePath()
     Assert(AudioInputDevice.TryGetProcessLoopbackTargetProcessId(appInput.DeviceNumber, appInput.EndpointId, out var processId), "app audio loopback should round-trip its target process ID");
     Assert(processId == 4242, "app audio loopback should preserve the selected target process ID");
 
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
     Assert(captureSource.Contains(@"VAD\Process_Loopback", StringComparison.Ordinal), "process loopback capture should activate the Windows virtual process-loopback device");
     Assert(captureSource.Contains("ActivateAudioInterfaceAsync", StringComparison.Ordinal), "process loopback capture should use the Windows async audio interface activation API");
     Assert(captureSource.Contains("IncludeTargetProcessTree", StringComparison.Ordinal), "process loopback capture should include the selected app process tree");
 
-    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     Assert(serviceSource.Contains("CoreAudioSessionCatalog.GetProcessLoopbackInputDevices()", StringComparison.Ordinal), "audio input discovery should expose active app audio sessions as mixer inputs");
     Assert(serviceSource.Contains("StartProcessLoopbackCapture", StringComparison.Ordinal), "mixer capture startup should route app audio devices through process loopback");
     Assert(serviceSource.Contains("WASAPI process loopback", StringComparison.Ordinal), "stream status should name process loopback clearly");
@@ -1766,13 +3105,14 @@ static void AppAudioLoopbackRoutesThroughMixerCapturePath()
 
 static void LoopbackCapturesShutDownWithoutZombieWorkers()
 {
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "ProcessLoopbackCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "ProcessLoopbackCapture.cs")));
     Assert(captureSource.Contains("IsBackground = true", StringComparison.Ordinal), "process loopback capture should not keep the app process alive if Windows audio is slow to stop");
-    Assert(captureSource.Contains("captureThread.Join(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
+    Assert(captureSource.Contains("captureThread.Join(timeout)", StringComparison.Ordinal), "process loopback capture stop should use a bounded wait");
+    Assert(captureSource.Contains("StopRecordingAndWait(TimeSpan.FromSeconds(2))", StringComparison.Ordinal), "process loopback capture stop should bound the wait to 2 seconds");
     Assert(captureSource.Contains("ReleaseAudioClient();", StringComparison.Ordinal), "process loopback capture should release Windows audio clients on stop and dispose");
     Assert(captureSource.Contains("Windows did not complete process-loopback activation", StringComparison.Ordinal), "process loopback activation should time out instead of hanging forever");
 
-    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     var stopMethod = ExtractSourceBetween(
         serviceSource,
         "    public void Stop()",
@@ -1789,7 +3129,7 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
     Assert(serviceSource.Contains("&& !_isDisposing", StringComparison.Ordinal), "capture recovery should not restart streams while the service is disposing");
     Assert(serviceSource.Contains("capture.Dispose();", StringComparison.Ordinal), "released capture devices should be disposed");
 
-    var windowSource = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var closingMethod = ExtractSourceBetween(
         windowSource,
         "    private void WindowClosing",
@@ -1807,11 +3147,11 @@ static void LoopbackCapturesShutDownWithoutZombieWorkers()
     Assert(shutdownTimerMethod.Contains("StopDispatcherTimer(_sessionPlaybackPositionTimer, SessionPlaybackPositionTimerTick)", StringComparison.Ordinal), "window close should detach the session playback timer");
     Assert(shutdownTimerMethod.Contains("StopDispatcherTimer(_karaokePlaybackPositionTimer, KaraokePlaybackPositionTimerTick)", StringComparison.Ordinal), "window close should detach the karaoke playback timer");
 
-    var mediaFoundationPreviewSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "MediaFoundationCameraPreviewService.cs")));
+    var mediaFoundationPreviewSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "MediaFoundation", "MediaFoundationCameraPreviewService.cs")));
     Assert(mediaFoundationPreviewSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "Media Foundation preview stop should flush ReadSample before waiting for capture shutdown");
     Assert(mediaFoundationPreviewSource.Contains("CaptureStopTimeout", StringComparison.Ordinal), "Media Foundation preview stop should use a named bounded shutdown wait");
 
-    var textureNativeSource = File.ReadAllText(FindRepoFile(Path.Combine("Video", "TextureNativeCameraRecorder.cs")));
+    var textureNativeSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Webcam", "Dx12", "TextureNativeCameraRecorder.cs")));
     Assert(textureNativeSource.Contains("TryFlushSourceReader();", StringComparison.Ordinal), "texture-native preview stop should flush ReadSample before waiting for capture shutdown");
     Assert(textureNativeSource.Contains("StreamStopTimeout", StringComparison.Ordinal), "texture-native preview stop should use a named bounded shutdown wait");
 }
@@ -1862,6 +3202,7 @@ static void StereoInputDspAppliesIndependentlyPerChannel()
     var read = provider.Read(output, 0, output.Length);
 
     Assert(read == sourceSamples.Length, "stereo DSP provider should read the source block");
+    Assert(provider.KnownDspAlgorithmicLatencySamples == 0, "stereo DSP provider should expose zero known latency for transparent settings");
     Assert(output[^2] > 0f && output[^2] < sourceSamples[^2] * 0.6f, "left stereo channel should receive DSP input trim");
     Assert(output[^1] < 0f && Math.Abs(output[^1]) < Math.Abs(sourceSamples[^1]) * 0.6f, "right stereo channel should receive DSP input trim");
     Assert(Math.Abs(output[^2] / output[^1] + 2d) < 0.2d, "stereo DSP should preserve independent left/right proportions");
@@ -1905,11 +3246,11 @@ static void NAudioStereoTestToneRoutesThroughMixerInputs()
     SignalGeneratorCapture.ApplyAlternatingStereoGate(samples, channelCount: 2, sampleRate: 2, startingFrame: 0);
     AssertSequenceEqual([1f, 0f, 1f, 0f, 0f, 1f, 0f, 1f], samples, "stereo test tone should alternate between left and right channels");
 
-    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "SignalGeneratorCapture.cs")));
+    var captureSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Capture", "SignalGeneratorCapture.cs")));
     Assert(captureSource.Contains("SignalGenerator", StringComparison.Ordinal), "stereo test tone should use NAudio SignalGenerator");
     Assert(captureSource.Contains("SignalGeneratorType.Sin", StringComparison.Ordinal), "stereo test tone should use a sine reference tone");
 
-    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     Assert(serviceSource.Contains("CreateStereoTestTone", StringComparison.Ordinal), "input device discovery should expose the stereo test tone");
     Assert(serviceSource.Contains("StartSignalGeneratorCapture", StringComparison.Ordinal), "capture startup should route the stereo test tone through the mixer");
     Assert(serviceSource.Contains("NAudio signal generator", StringComparison.Ordinal), "stream status should name the NAudio signal generator clearly");
@@ -1978,6 +3319,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Set(mic, "VolumePercent", 73d);
     Set(mic, "InputGainDb", -4.5d);
     Set(mic, "Pan", 35d);
+    Set(mic, "DuplicateMonoToStereo", true);
     Set(mic, "PolarityInverted", true);
     Set(mic, "IsSoloed", true);
     Set(mic, "DelayMilliseconds", 18d);
@@ -2047,6 +3389,7 @@ static void AppSettingsRoundtripPreservesMicMixerRoutingState()
     Assert((double)Get(restoredMic, "VolumePercent")! == 73d, "mic volume should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "InputGainDb")! == -4.5d, "mic input gain should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "Pan")! == 35d, "mic pan should survive app-state roundtrip");
+    Assert((bool)Get(restoredMic, "DuplicateMonoToStereo")!, "mic mono-to-stereo copy should survive app-state roundtrip");
     Assert((bool)Get(restoredMic, "PolarityInverted")!, "mic polarity should survive app-state roundtrip");
     Assert((bool)Get(restoredMic, "IsSoloed")!, "solo should survive app-state roundtrip");
     Assert((double)Get(restoredMic, "DelayMilliseconds")! == 18d, "mic delay should survive app-state roundtrip");
@@ -2125,15 +3468,10 @@ static void PrimaryCaptureSelectorMatchesAsioEndpoint()
 
 static void AudioRecordingFilenamesIdentifySelectedSource()
 {
-    var method = typeof(EqualizerWindow).GetMethod(
-        "CreateAudioRecordingFileName",
-        BindingFlags.NonPublic | BindingFlags.Static);
-    Assert(method is not null, "audio recording filename helper should be available");
-
     var timestamp = new DateTime(2026, 7, 9, 14, 3, 5);
-    var program = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.ProgramMix, 3])!;
-    var processed = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicProcessed, 3])!;
-    var raw = (string)method!.Invoke(null, [timestamp, ProcessedRecordingSource.SelectedMicRawBackup, 3])!;
+    var program = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.ProgramMix, 3);
+    var processed = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.SelectedMicProcessed, 3);
+    var raw = AudioRecordingCatalog.CreateRecordingFileName(timestamp, ProcessedRecordingSource.SelectedMicRawBackup, 3);
 
     Assert(program == "jericho_program_mix_2026-07-09_14-03-05.wav", "program mix recordings should be clearly named");
     Assert(processed == "jericho_mic3_processed_2026-07-09_14-03-05.wav", "selected processed mic recordings should identify the mic");
@@ -2520,6 +3858,80 @@ static void LiveOutputProviderFollowsMixerGainPanPolarityAndDelay()
     Assert(lateLeftPeak > 0.20f, "per-mic delay should release the delayed live output after the requested time");
 }
 
+static void LiveOutputProviderDuplicatesProcessedMonoToStereo()
+{
+    using var service = CreateLiveOutputService(out var outputProvider);
+    service.ConfigureLiveMix(
+        [
+            new MicrophoneLiveChannelSettings(
+                1,
+                0,
+                InputChannelMode.StereoPair,
+                CreateTransparentVoiceSettings(),
+                100d,
+                0d,
+                100d,
+                false,
+                false,
+                0d,
+                true,
+                false,
+                DuplicateMonoToStereo: true)
+        ],
+        new MixBusSettings(100d, false, false, -1d, MixBusOutputMode.Stereo));
+
+    const int frameCount = 384;
+    var stereoSamples = new float[frameCount * 2];
+    for (var frame = 0; frame < frameCount; frame++)
+    {
+        var sign = frame % 2 == 0 ? 1f : -1f;
+        stereoSamples[frame * 2] = 0.60f * sign;
+        stereoSamples[frame * 2 + 1] = 0f;
+    }
+
+    InvokePrimaryCapture(service, stereoSamples);
+    var outputSamples = ReadBufferedFloatSamples(outputProvider);
+    Assert(outputSamples.Length >= frameCount * 2, "mono-to-stereo copy should write a stereo live output block");
+    var (leftPeak, rightPeak) = MeasureStereoPeaks(outputSamples);
+    Assert(leftPeak > 0.10f, "mono-to-stereo copy should leave the processed mic audible in the left output");
+    Assert(rightPeak > 0.10f, "mono-to-stereo copy should leave the processed mic audible in the right output");
+
+    var maxDifference = 0f;
+    for (var i = 0; i + 1 < outputSamples.Length; i += 2)
+    {
+        maxDifference = Math.Max(maxDifference, Math.Abs(outputSamples[i] - outputSamples[i + 1]));
+    }
+
+    Assert(maxDifference < 0.0001f, "mono-to-stereo copy should send the same processed samples to left and right");
+}
+
+static void GraphicEqSliderMovesChangeMixerLineOutput()
+{
+    const int sampleRate = 48_000;
+    using var service = CreateLiveOutputService(out var outputProvider);
+    var micSettings = CreateTransparentVoiceSettings();
+    var mutedMicSettings = CreateTransparentVoiceSettings();
+    ConfigureTwoMicOutputService(service, micSettings, mutedMicSettings, mic1Pan: 0d, mic2Muted: true);
+
+    var lineInputBlock = GenerateGraphicEqCompositeStereoBlock(sampleRate, frameCount: 4_800);
+    var baselineOutput = CaptureMixerLineOutputBlock(service, outputProvider, lineInputBlock, warmupBlocks: 4);
+    var baselineLeftRms = CalculateStereoChannelRms(baselineOutput, channel: 0, startFrame: 600);
+    var baselineRightRms = CalculateStereoChannelRms(baselineOutput, channel: 1, startFrame: 600);
+    Assert(baselineLeftRms > 0.002d, "flat EQ should still produce measurable left line output");
+    Assert(baselineRightRms > 0.002d, "flat EQ should still produce measurable right line output");
+
+    var allSlidersAtMaximum = Enumerable.Repeat(12d, 20).ToArray();
+    micSettings.SetEqualizerGains(allSlidersAtMaximum);
+    var movedOutput = CaptureMixerLineOutputBlock(service, outputProvider, lineInputBlock, warmupBlocks: 10);
+    var movedLeftRms = CalculateStereoChannelRms(movedOutput, channel: 0, startFrame: 600);
+    var movedRightRms = CalculateStereoChannelRms(movedOutput, channel: 1, startFrame: 600);
+    var changedRms = CalculateStereoDifferenceRms(baselineOutput, movedOutput, startFrame: 600);
+
+    Assert(movedLeftRms > baselineLeftRms * 1.7d, $"moving all EQ sliders should boost left mixer line output, flat {baselineLeftRms:0.000000}, moved {movedLeftRms:0.000000}");
+    Assert(movedRightRms > baselineRightRms * 1.7d, $"moving all EQ sliders should boost right mixer line output, flat {baselineRightRms:0.000000}, moved {movedRightRms:0.000000}");
+    Assert(changedRms > baselineLeftRms * 0.45d, $"mixer line output waveform should measurably change after all EQ sliders move, delta {changedRms:0.000000}");
+}
+
 static void LiveServiceBusMixesAuxiliaryCaptureDevice()
 {
     using var service = CreateLiveOutputServiceWithoutPrimaryCapture(out var outputProvider);
@@ -2867,6 +4279,44 @@ static void FeedAlternatingStereoBlock(MicrophoneSpectrumService service)
     InvokePrimaryCaptureBytes(service, buffer);
 }
 
+static float[] GenerateGraphicEqCompositeStereoBlock(int sampleRate, int frameCount)
+{
+    var frequencies = new[]
+    {
+        31d, 45d, 63d, 90d, 125d, 180d, 250d, 355d, 500d, 710d,
+        1000d, 1400d, 2000d, 2800d, 4000d, 5600d, 8000d, 11200d, 16000d, 20000d
+    };
+    var samples = new float[Math.Max(1, frameCount) * 2];
+    for (var frame = 0; frame < samples.Length / 2; frame++)
+    {
+        var mono = 0d;
+        foreach (var frequency in frequencies)
+        {
+            mono += Math.Sin(2d * Math.PI * frequency * frame / sampleRate) * 0.0035d;
+        }
+
+        samples[frame * 2] = (float)mono;
+    }
+
+    return samples;
+}
+
+static float[] CaptureMixerLineOutputBlock(
+    MicrophoneSpectrumService service,
+    BufferedWaveProvider outputProvider,
+    float[] interleavedStereoSamples,
+    int warmupBlocks)
+{
+    float[] lineOutput = [];
+    for (var i = 0; i < Math.Max(1, warmupBlocks); i++)
+    {
+        InvokePrimaryCapture(service, interleavedStereoSamples);
+        lineOutput = ReadBufferedFloatSamples(outputProvider);
+    }
+
+    return lineOutput;
+}
+
 static void InvokePrimaryCapture(MicrophoneSpectrumService service, float[] interleavedSamples)
 {
     InvokePrimaryCaptureBytes(service, MemoryMarshal.AsBytes(interleavedSamples.AsSpan()).ToArray());
@@ -3005,6 +4455,36 @@ static float MeasureChannelPeak(IReadOnlyList<float> samples, int channel, int s
     }
 
     return peak;
+}
+
+static double CalculateStereoChannelRms(IReadOnlyList<float> samples, int channel, int startFrame)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Max(0, samples.Count / 2)) * 2 + Math.Clamp(channel, 0, 1);
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < samples.Count; i += 2)
+    {
+        sum += samples[i] * samples[i];
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
+}
+
+static double CalculateStereoDifferenceRms(IReadOnlyList<float> first, IReadOnlyList<float> second, int startFrame)
+{
+    var start = Math.Clamp(startFrame, 0, Math.Min(first.Count, second.Count) / 2) * 2;
+    var maxExclusive = Math.Min(first.Count, second.Count);
+    var sum = 0d;
+    var count = 0;
+    for (var i = start; i < maxExclusive; i++)
+    {
+        var difference = second[i] - first[i];
+        sum += difference * difference;
+        count++;
+    }
+
+    return count == 0 ? 0d : Math.Sqrt(sum / count);
 }
 
 static float MeasureLeftDotProduct(IReadOnlyList<float> first, IReadOnlyList<float> second, int startFrame, int frameCount)
@@ -3290,7 +4770,7 @@ static void SpectrumLinesCarryNaudioMeteredPeaks()
 
 static void MixerStripMetersIgnoreMutedRawInput()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var meterMethod = ExtractSourceBetween(
         windowCode,
         "    private void UpdateMixerChannelMeters(SpectrumFrame frame)",
@@ -3382,8 +4862,8 @@ static void LiveMixAudibilityGatesMuteAndSolo()
 
 static void MixerStripClicksSelectChannelsCheaply()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     var handler = ExtractSourceBetween(
         windowCode,
         "    private async void MixerChannelStripPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)",
@@ -3398,7 +4878,7 @@ static void MixerStripClicksSelectChannelsCheaply()
 
 static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var method = ExtractSourceBetween(
         windowCode,
         "    private void ApplyActiveMicChannelToUi()",
@@ -3427,9 +4907,32 @@ static void ActiveMicSelectionAvoidsSynchronousFormatProbe()
     Assert(panelHelper.Contains("SelectedMixerInputPanel.DataContext = _activeMicChannel;", StringComparison.Ordinal), "mixer selected-input panel should bind directly to the active channel");
 }
 
+static void MicDspEditorRebindsAfterMixerSelection()
+{
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var applyEditorMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelToUi()",
+        "    private void ApplyActiveMicEditorBindings()");
+    var bindingMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicEditorBindings()",
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()");
+    var mixerSelectionMethod = ExtractSourceBetween(
+        windowCode,
+        "    private void ApplyActiveMicChannelSelectionToMixerUi()",
+        "    private void ApplySelectedMixerInputPanelToUi()");
+
+    Assert(applyEditorMethod.Contains("ApplyActiveMicEditorBindings();", StringComparison.Ordinal), "entering Mic/DSP should rebind the editor to the active channel after mixer-side selection");
+    Assert(bindingMethod.Contains("DataContext = Settings;", StringComparison.Ordinal), "active Mic/DSP editor should bind processing controls to the active channel settings");
+    Assert(bindingMethod.Contains("EqBandPanel.ItemsSource = Bands;", StringComparison.Ordinal), "active Mic/DSP editor should bind graphic EQ bands to the active channel bands");
+    Assert(bindingMethod.Contains("SyncEqualizerSettings();", StringComparison.Ordinal), "rebinding the Mic/DSP editor should push visible band gains into the active processor settings");
+    Assert(!mixerSelectionMethod.Contains("ApplyActiveMicEditorBindings();", StringComparison.Ordinal), "mixer-side selection should stay cheap until the Mic/DSP editor is shown");
+}
+
 static void MixerChannelControlsDebounceStatePersistence()
 {
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("private readonly DispatcherTimer _appStatePersistTimer", StringComparison.Ordinal), "window should have a debounced app-state persistence timer");
     Assert(windowCode.Contains("private void ScheduleAppStatePersist()", StringComparison.Ordinal), "window should expose a debounced app-state persistence helper");
 
@@ -3454,7 +4957,7 @@ static void MixerChannelControlsDebounceStatePersistence()
 
 static void MixerVolumeControlsMarkAndSnapUnity()
 {
-    var xaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var xaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     var mixerFaderStyle = ExtractSourceBetween(
         xaml,
         "    <Style x:Key=\"MixerFaderSlider\"",
@@ -3465,8 +4968,8 @@ static void MixerVolumeControlsMarkAndSnapUnity()
 
     var mixingTab = ExtractSourceBetween(
         xaml,
-        "      <TabItem Header=\"Mixing\">",
-        "      <TabItem Header=\"MIDI\">");
+        "      <TabItem x:Name=\"MixingTabItem\" Header=\"Mixing\">",
+        "      <TabItem x:Name=\"MidiTabItem\" Header=\"MIDI\" Visibility=\"Collapsed\">");
     Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\"", StringComparison.Ordinal), "mixer tab should expose the master volume slider");
     Assert(mixingTab.Contains("x:Name=\"MasterVolumeSlider\" Width=\"128\" Minimum=\"0\" Maximum=\"150\" Value=\"100\" Ticks=\"100\"", StringComparison.Ordinal), "master volume should mark unity at 100 percent");
     Assert(mixingTab.Contains("Style=\"{StaticResource MixerFaderSlider}\" Minimum=\"0\" Maximum=\"150\"", StringComparison.Ordinal)
@@ -3484,7 +4987,7 @@ static void MixerVolumeControlsMarkAndSnapUnity()
     Assert(Math.Abs(Snap(102.1d) - 102.1d) < 0.0001d, "mixer volume should remain free above the magnet zone");
     Assert(double.IsNaN(Snap(double.NaN)), "mixer volume snap should leave non-finite values for existing clamping paths");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     var mixerSliderHandler = ExtractSourceBetween(
         windowCode,
         "    private void MixerChannelControlChanged(object sender, RoutedPropertyChangedEventArgs<double> e)",
@@ -3495,6 +4998,21 @@ static void MixerVolumeControlsMarkAndSnapUnity()
         "    private void MasterOutputModeChanged");
     Assert(mixerSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "channel faders should apply the unity magnet before updating the live mix");
     Assert(masterSliderHandler.Contains("TrySnapMixerUnitySlider(sender)", StringComparison.Ordinal), "master volume should apply the unity magnet before rebuilding the live mix");
+}
+
+static void DualMonoProviderCopiesMonoSamplesToBothSides()
+{
+    var mic = new LiveMicBlockSampleProvider(48_000);
+    var dualMono = new DualMonoSampleProvider(mic);
+    mic.SetBlock([0.50f, -0.25f, 0.125f]);
+
+    var output = new float[6];
+    dualMono.Read(output, 0, output.Length);
+
+    AssertSequenceEqual(
+        new[] { 0.50f, 0.50f, -0.25f, -0.25f, 0.125f, 0.125f },
+        output,
+        "dual-mono provider should copy each processed mono sample to both stereo channels");
 }
 
 static void StereoPanProviderRoutesMonoMicsAcrossStereoBus()
@@ -3625,8 +5143,8 @@ static void AudioSyncBufferUsesNAudioWdlResampler()
     var wrongTone = CalculateToneMagnitude(output, targetSampleRate, 1_600, targetSampleRate / 100, Math.Min(2048, written - targetSampleRate / 100));
     Assert(expectedTone > wrongTone * 3d, "resampled output should preserve the source tone at the target sample rate");
 
-    var converterSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "NAudioSampleRateConverter.cs")));
-    var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "AudioSyncBuffer.cs")));
+    var converterSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "NAudioSampleRateConverter.cs")));
+    var syncBufferSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Sync", "AudioSyncBuffer.cs")));
     Assert(converterSource.Contains("WdlResamplingSampleProvider", StringComparison.Ordinal), "sample-rate conversion should use NAudio's WDL resampler");
     Assert(syncBufferSource.Contains("NAudioSampleRateConverter.TryResampleInterleaved", StringComparison.Ordinal), "auxiliary sync buffers should use the NAudio resampler before falling back");
 }
@@ -3679,11 +5197,12 @@ static void NAudioFileAnalyzerReportsRecordingQualityDetails()
         Assert(silentWindowAnalysis.IsPartial, "silent bounded windows should still report partial scan scope");
         Assert(silentWindowAnalysis.LeadingSilence <= TimeSpan.FromMilliseconds(85), "silent bounded windows should report silence for the scanned window, not the full file");
 
-        var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
-        Assert(windowCode.Contains("CreateAudioRecordingFileItem", StringComparison.Ordinal), "recording browser should create analyzed file rows");
+        var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+        var recordingCatalog = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Recording", "AudioRecordingCatalog.cs")));
+        Assert(windowCode.Contains("AudioRecordingCatalog.EnumerateRecordingFiles", StringComparison.Ordinal), "recording browser should delegate file rows to the recording catalog");
         Assert(windowCode.Contains("MaximumAnalyzedRecordingRows", StringComparison.Ordinal), "recording browser should cap eager analysis rows");
         Assert(windowCode.Contains("EagerRecordingAnalysisDuration", StringComparison.Ordinal), "recording browser should cap eager analysis duration");
-        Assert(windowCode.Contains("AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, EagerRecordingAnalysisDuration)", StringComparison.Ordinal), "recording browser should use bounded NAudio analysis for eager file rows");
+        Assert(recordingCatalog.Contains("AudioFileAnalyzer.TryAnalyze(file.FullName, out var fileAnalysis, out _, eagerAnalysisDuration)", StringComparison.Ordinal), "recording catalog should use bounded NAudio analysis for eager file rows");
     }
     finally
     {
@@ -3702,6 +5221,8 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     var lowLatency = WasapiOutputSettings.FromPersisted("LowLatency", exclusiveMode: false, customLatencyMilliseconds: null);
     Assert(lowLatency.Profile == WasapiOutputLatencyProfile.LowLatency, "WASAPI persisted profile should restore low-latency mode");
     Assert(lowLatency.EffectiveLatencyMilliseconds == WasapiOutputSettings.LowLatencyMilliseconds, "low-latency profile should use the low-latency buffer target");
+    Assert(lowLatency.ProcessedOutputTargetBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.LowLatencyMilliseconds), "low-latency profile should also drive the live monitor target buffer");
+    Assert(lowLatency.ProcessedOutputMaximumBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.LowLatencyProcessedOutputMaximumBufferMilliseconds), "low-latency profile should use a low trim ceiling");
     Assert(lowLatency.DisplayText.Contains("shared", StringComparison.Ordinal), "default WASAPI profile text should explain shared mode");
 
     var custom = WasapiOutputSettings.FromPersisted("Custom", exclusiveMode: true, customLatencyMilliseconds: 999);
@@ -3709,6 +5230,8 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     Assert(custom.ExclusiveMode, "WASAPI persisted profile should restore exclusive mode");
     Assert(custom.CustomLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should be clamped for stability");
     Assert(custom.EffectiveLatencyMilliseconds == WasapiOutputSettings.MaximumCustomLatencyMilliseconds, "custom WASAPI latency should drive the effective buffer target");
+    Assert(custom.ProcessedOutputTargetBufferDuration == TimeSpan.FromMilliseconds(WasapiOutputSettings.MaximumCustomLatencyMilliseconds), "custom profile should drive the live monitor target buffer");
+    Assert(custom.ProcessedOutputProviderBufferDuration >= custom.ProcessedOutputMaximumBufferDuration, "custom profile should keep provider capacity above the trimming ceiling");
     Assert(custom.DisplayText.Contains("exclusive", StringComparison.Ordinal), "custom WASAPI profile text should explain exclusive mode");
 
     using var service = new MicrophoneSpectrumService();
@@ -3727,21 +5250,24 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
     Assert((bool)GetProperty(restored, "WasapiOutputExclusiveMode")!, "WASAPI exclusive mode should survive app-state roundtrip");
     Assert((int)GetProperty(restored, "WasapiOutputCustomLatencyMilliseconds")! == 190, "WASAPI custom latency should survive app-state roundtrip");
 
-    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     Assert(serviceSource.Contains("ConfigureWasapiOutput", StringComparison.Ordinal), "audio service should expose WASAPI output configuration");
     Assert(serviceSource.Contains("_wasapiOutputSettings.EffectiveLatencyMilliseconds", StringComparison.Ordinal), "WASAPI output should use the active latency profile");
+    Assert(serviceSource.Contains("_wasapiOutputSettings.ProcessedOutputTargetBufferDuration", StringComparison.Ordinal), "processed monitor buffer should use the active latency profile");
     Assert(serviceSource.Contains("AudioClientShareMode.Exclusive", StringComparison.Ordinal), "WASAPI output should support expert exclusive mode");
 
-    var windowCode = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml.cs"));
+    var windowCode = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
     Assert(windowCode.Contains("WasapiOutputProfile = _wasapiOutputSettings.Profile.ToString()", StringComparison.Ordinal), "WASAPI profile should be persisted by the window state capture");
     Assert(windowCode.Contains("_spectrumService.ConfigureWasapiOutput(_wasapiOutputSettings)", StringComparison.Ordinal), "WASAPI settings should be applied before output routing starts");
     Assert(windowCode.Contains("WASAPI: {_spectrumService.WasapiOutputModeStatus}", StringComparison.Ordinal), "route status should show active WASAPI mode");
 
-    var windowXaml = File.ReadAllText(FindRepoFile("EqualizerWindow.xaml"));
+    var windowXaml = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml")));
     Assert(windowXaml.Contains("Advanced WASAPI", StringComparison.Ordinal), "advanced WASAPI controls should be present but tucked away");
     Assert(windowXaml.Contains("WasapiOutputProfileComboBox", StringComparison.Ordinal), "WASAPI profile dropdown should be wired");
     Assert(windowXaml.Contains("WasapiExclusiveModeCheckBox", StringComparison.Ordinal), "WASAPI exclusive-mode checkbox should be wired");
     Assert(windowXaml.Contains("WasapiCustomLatencySlider", StringComparison.Ordinal), "WASAPI custom latency slider should be wired");
+    Assert(windowXaml.Contains("Minimum=\"6\"", StringComparison.Ordinal), "WASAPI custom slider should expose the experimental 6 ms live-monitor latency floor");
+    Assert(windowXaml.Contains("TickFrequency=\"1\"", StringComparison.Ordinal), "WASAPI custom slider should allow 1 ms latency steps");
 
     static object? GetProperty(object target, string propertyName)
     {
@@ -3756,7 +5282,7 @@ static void WasapiExpertOutputSettingsArePersistedAndRouted()
 
 static void ProcessedOutputResamplesAsioFallbackFormats()
 {
-    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Audio", "MicrophoneSpectrumService.cs")));
+    var serviceSource = File.ReadAllText(FindRepoFile(Path.Combine("Modules", "Audio", "Live", "MicrophoneSpectrumService.cs")));
     var asioOutputMethod = ExtractSourceBetween(
         serviceSource,
         "private bool TryStartAsioProcessedOutput(IWaveProvider provider, out IWavePlayer? player, out IWaveProvider? playbackProvider)",
@@ -3899,16 +5425,75 @@ static void KaraokeSampleReaderAcceptsExtendedFormats()
     foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".wma", ".flac", ".aiff", ".aif" })
     {
         var path = Path.Combine(Path.GetTempPath(), "track" + extension);
-        var isSupported = (bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", path);
-        var isVisible = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", path);
+        var isSupported = KaraokeTrackAudioReader.CanUseSampleReader(path);
+        var isVisible = KaraokePlaybackPolicy.IsSupportedTrackFile(path);
 
         Assert(isSupported, $"{extension} should use the NAudio sample reader path when the local codec can decode it");
         Assert(isVisible, $"{extension} should be visible in the karaoke track browser");
     }
 
     var m4pPath = Path.Combine(Path.GetTempPath(), "protected.m4p");
-    Assert(!(bool)InvokeKaraokeTrackAudioReaderPrivateStatic("CanUseSampleReader", m4pPath), "protected Apple Music M4P should not use the sample reader path");
-    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath), "protected Apple Music M4P should stay hidden");
+    Assert(!KaraokeTrackAudioReader.CanUseSampleReader(m4pPath), "protected Apple Music M4P should not use the sample reader path");
+    Assert(!KaraokePlaybackPolicy.IsSupportedTrackFile(m4pPath), "protected Apple Music M4P should stay hidden");
+}
+
+static void KaraokeSampleReaderFailuresUseMediaFallback()
+{
+    var codecError = new InvalidCastException("Unable to cast COM object of type 'System.__ComObject' to interface type 'NAudio.MediaFoundation.IMFSourceReader'.");
+    var outputError = new IOException("The selected output device is unavailable.");
+
+    Assert(
+        KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\song.m4a", codecError),
+        "MediaFoundation COM reader failures should fall back to Windows media playback");
+    Assert(
+        !KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\song.m4a", outputError),
+        "plain output-device failures should not be hidden behind media fallback");
+    Assert(
+        !KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(@"C:\Music\protected.m4p", codecError),
+        "unsupported protected tracks should not be routed into fallback playback");
+}
+
+static void KaraokePlaybackStoppedCodecFailuresUseMediaFallback()
+{
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var fallbackMethod = ExtractSourceBetween(
+        windowSource,
+        "    private bool StartKaraokeMediaFallbackPlayback(string path, TimeSpan? startPosition = null)",
+        "    private void KaraokeMediaFallbackOpened");
+    var completedMethod = ExtractSourceBetween(
+        windowSource,
+        "    private void HandleKaraokePlaybackCompleted(Exception? exception, bool wasStoppedByUser)",
+        "    private void KaraokePlaybackPositionTimerTick");
+
+    Assert(fallbackMethod.Contains("player.Position = clampedPosition", StringComparison.Ordinal), "media fallback should preserve the attempted playback position");
+    Assert(completedMethod.Contains("stoppedSampleReaderPlayback", StringComparison.Ordinal), "playback stopped should know whether the NAudio sample reader path failed");
+    Assert(completedMethod.Contains("KaraokePlaybackPolicy.ShouldTryMediaFallbackAfterSampleReaderFailure(trackPath, exception)", StringComparison.Ordinal), "sample-reader playback exceptions should route through codec fallback detection");
+    Assert(completedMethod.Contains("StartKaraokeMediaFallbackPlayback(trackPath, stoppedPosition)", StringComparison.Ordinal), "sample-reader playback exceptions should restart through Windows media fallback");
+}
+
+static void KaraokePlayRestartsAfterTrackEnd()
+{
+    var duration = TimeSpan.FromSeconds(180);
+
+    var endedStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(duration.TotalSeconds, duration);
+    var nearEndStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(duration.TotalSeconds - 0.1d, duration);
+    var middleStart = KaraokePlaybackPolicy.ResolvePlaybackStartPosition(42d, duration);
+
+    Assert(endedStart == TimeSpan.Zero, "karaoke play should restart instead of resuming from the exact end");
+    Assert(nearEndStart == TimeSpan.Zero, "karaoke play should restart when the transport is effectively at the end");
+    Assert(Math.Abs((middleStart - TimeSpan.FromSeconds(42)).TotalMilliseconds) < 1d, "karaoke play should preserve normal mid-track resume positions");
+}
+
+static void KaraokeAddTracksLoadsIdleSelection()
+{
+    var windowSource = File.ReadAllText(FindRepoFile(Path.Combine("src", "EqualizerWindow.xaml.cs")));
+    var addTracksMethod = ExtractSourceBetween(
+        windowSource,
+        "    private int AddKaraokeTracksToQueue(IEnumerable<string> paths, bool selectFirstAdded)",
+        "    private void KaraokeQueueSelectionChanged");
+
+    Assert(addTracksMethod.Contains("SetKaraokeTrack(added[0].Path, updateQueueSelection: true)", StringComparison.Ordinal), "adding a selected karaoke track while idle should load the highlighted playback target");
+    Assert(!addTracksMethod.Contains("SelectQueuedKaraokeTrackWithoutLoading(added[0]);", StringComparison.Ordinal), "adding a karaoke track should not leave a highlighted item unloaded while idle");
 }
 
 static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
@@ -3916,13 +5501,13 @@ static void AudioRecordingBrowserAcceptsExtendedPlaybackFormats()
     foreach (var extension in new[] { ".wav", ".mp3", ".m4a", ".aac", ".mp4", ".flac", ".aiff", ".aif", ".wma" })
     {
         var path = Path.Combine(Path.GetTempPath(), "recording" + extension);
-        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", path);
+        var isSupported = AudioRecordingCatalog.IsSupportedRecordingFile(path);
 
         Assert(isSupported, $"{extension} should be accepted by the recording browser playback filter");
     }
 
     var protectedPath = Path.Combine(Path.GetTempPath(), "recording.m4p");
-    Assert(!(bool)InvokeEqualizerWindowPrivateStatic("IsSupportedAudioRecordingFile", protectedPath), "M4P should not be accepted as a recording playback format");
+    Assert(!AudioRecordingCatalog.IsSupportedRecordingFile(protectedPath), "M4P should not be accepted as a recording playback format");
 }
 
 static void AudioRecordingExporterSupportsCompressedTargets()
@@ -3986,7 +5571,7 @@ static void KaraokeBrowserDfsHidesM4pTracks()
         File.WriteAllBytes(m4pPath, CreateMinimalM4aWithDuration(44100, 44100));
         File.WriteAllBytes(ignoredPath, [1, 2, 3, 4]);
 
-        var isSupported = (bool)InvokeEqualizerWindowPrivateStatic("IsSupportedKaraokeTrackFile", m4pPath);
+        var isSupported = KaraokePlaybackPolicy.IsSupportedTrackFile(m4pPath);
         var files = ((IEnumerable<string>)InvokeEqualizerWindowPrivateStatic("EnumerateKaraokeTrackFiles", folder)).ToList();
 
         Assert(!isSupported, "M4P tracks should stay hidden because protected Apple Music files are not reliably playable");
@@ -4310,39 +5895,7 @@ static bool SaveCachedKaraokeLyricsForTrack(string trackPath, string lyrics)
 
 static bool TryReadKaraokeTrackDuration(string path, out TimeSpan duration)
 {
-    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
-    if (readerType is null)
-    {
-        throw new InvalidOperationException("karaoke track audio reader type was not found");
-    }
-
-    var args = new object?[] { path, TimeSpan.Zero };
-    var method = readerType.GetMethod("TryReadDuration", BindingFlags.Public | BindingFlags.Static);
-    if (method is null)
-    {
-        throw new InvalidOperationException("KaraokeTrackAudioReader.TryReadDuration was not found");
-    }
-
-    var result = (bool)method.Invoke(null, args)!;
-    duration = (TimeSpan)args[1]!;
-    return result;
-}
-
-static object InvokeKaraokeTrackAudioReaderPrivateStatic(string methodName, params object?[] args)
-{
-    var readerType = typeof(EqualizerWindow).GetNestedType("KaraokeTrackAudioReader", BindingFlags.NonPublic);
-    if (readerType is null)
-    {
-        throw new InvalidOperationException("KaraokeTrackAudioReader type was not found");
-    }
-
-    var method = readerType.GetMethod(methodName, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-    if (method is null)
-    {
-        throw new InvalidOperationException($"KaraokeTrackAudioReader.{methodName} was not found");
-    }
-
-    return method.Invoke(null, args) ?? throw new InvalidOperationException($"{methodName} returned null");
+    return KaraokeTrackAudioReader.TryReadDuration(path, out duration);
 }
 
 static byte[] CreateMinimalM4aWithDuration(uint timescale, uint duration)
@@ -4426,10 +5979,34 @@ static string FindRepoFile(string relativePath)
             return candidate;
         }
 
+        var srcCandidate = Path.Combine(directory.FullName, "src", relativePath);
+        if (!relativePath.StartsWith("src" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && File.Exists(srcCandidate))
+        {
+            return srcCandidate;
+        }
+
         directory = directory.Parent;
     }
 
     throw new FileNotFoundException($"Could not find {relativePath} from {Environment.CurrentDirectory}");
+}
+
+static string FindRepoDirectory(string relativePath)
+{
+    var directory = new DirectoryInfo(Environment.CurrentDirectory);
+    while (directory is not null)
+    {
+        var candidate = Path.Combine(directory.FullName, relativePath);
+        if (Directory.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        directory = directory.Parent;
+    }
+
+    throw new DirectoryNotFoundException($"Could not find {relativePath} from {Environment.CurrentDirectory}");
 }
 
 static T GetProperty<T>(object target, string name)

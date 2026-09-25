@@ -11,7 +11,6 @@ portable-build/
 *.suo
 output/
 tools/__pycache__/
-tools/build_revised_resume.py
 Assets/about-dedication-before-fireworks.png
 Assets/about-dedication-dataurl.jpg
 Assets/about-dedication-phone.jpg

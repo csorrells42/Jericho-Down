@@ -1,0 +1,18 @@
+# Audio Module
+
+Owns audio capture, playback output routing, recording, loopback, synchronization, and shared NAudio helper code.
+
+The root audio module coordinates ownership; implementation lives in documented submodules.
+
+Important submodules:
+- `Asio`: ASIO-specific driver startup, callback testing, and diagnostics.
+- `Capture`: process-loopback and signal-generator capture source implementations.
+- `CoreAudio`: Windows CoreAudio session enumeration, session control, and device notifications.
+- `Devices`: input/output device vocabulary, selected-channel modes, and output route policy.
+- `Diagnostics`: user-facing audio device and ASIO runtime diagnostic reports.
+- `Dsp`: voice processor, EQ, verification, and signal shaping.
+- `Live`: live microphone service orchestration, capture startup, processed monitoring, recording routing, spectrum publishing, and live output coordination.
+- `Recording`: recording source selection, audio-file analysis, sample conversion, and compressed export.
+- `Sync`: delay lines, auxiliary latency buffers, and NAudio-backed sample-rate conversion.
+
+Do not put camera preview, video recording, karaoke lyric display, or WPF tab orchestration here.

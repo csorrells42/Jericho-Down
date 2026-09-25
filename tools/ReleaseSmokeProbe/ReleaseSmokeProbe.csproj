@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\JerichoDown.csproj" />
+    <Resource Include="..\..\Assets\jericho-down-icon.ico" Link="Assets\jericho-down-icon.ico" />
   </ItemGroup>
 </Project>
