@@ -9,7 +9,10 @@ internal static class AppStoragePaths
 
     static AppStoragePaths()
     {
-        TryMigrateLegacySettingsFolder();
+        if (AppContext.GetData("JerichoDown.SettingsFolder") is null)
+        {
+            TryMigrateLegacySettingsFolder();
+        }
     }
 
     public static string SettingsFolder { get; } = GetAppDataFolder();
@@ -22,6 +25,14 @@ internal static class AppStoragePaths
 
     private static string GetAppDataFolder()
     {
+        // An embedded verification host can isolate settings from the user's profile.
+        if (AppContext.GetData("JerichoDown.SettingsFolder") is string settingsFolder)
+        {
+            if (!Path.IsPathFullyQualified(settingsFolder))
+                throw new ArgumentException("The settings folder must be an absolute path.");
+            return Path.GetFullPath(settingsFolder);
+        }
+
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var root = string.IsNullOrWhiteSpace(localAppData)
             ? Path.Combine(GetAppBaseFolder(), SettingsFolderName)
