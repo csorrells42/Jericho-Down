@@ -183,6 +183,36 @@ internal static class Program
         if (firstPath == secondPath) throw new InvalidOperationException("Rapid karaoke recordings reuse the same filename.");
         File.Delete(firstPath);
         Console.WriteLine("PASS Same-second karaoke recordings choose separate files");
+
+        var backingPath = Path.Combine(profile, "smoke-backing.wav");
+        using (var writer = new WaveFileWriter(backingPath, WaveFormat.CreateIeeeFloatWaveFormat(48000, 2)))
+        {
+            var samples = Enumerable.Range(0, 48000 * 8)
+                .Select(i => (float)(0.03 * Math.Sin(i / 2 * 2 * Math.PI * 220 / 48000))).ToArray();
+            writer.WriteSamples(samples, 0, samples.Length);
+        }
+        tabs.SelectedItem = tabs.Items.Cast<TabItem>().Single(tab => Equals(tab.Header, "Karaoke"));
+        typeof(EqualizerWindow).GetMethod("SetKaraokeTrack", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [backingPath, false]);
+        Click(window, "KaraokeRecordVocalButton");
+        await Task.Delay(200);
+        if (!service.IsProcessedAudioRecording || !Field<bool>(window, "_isKaraokeTrackPlaying"))
+            throw new InvalidOperationException("Karaoke did not start both backing playback and vocal recording.");
+        Click(window, "KaraokePauseVocalButton");
+        if (!service.IsProcessedAudioRecordingPaused || Field<bool>(window, "_isKaraokeTrackPlaying"))
+            throw new InvalidOperationException("Karaoke did not pause playback and recording together.");
+        Click(window, "KaraokePauseVocalButton");
+        await Task.Delay(200);
+        Click(window, "KaraokeStopVocalButton");
+        if (service.IsProcessedAudioRecording || Field<bool>(window, "_isKaraokeTrackPlaying"))
+            throw new InvalidOperationException("Karaoke stop left playback or recording running.");
+        var vocal = Directory.GetFiles(profile, "karaokeRecording_*.wav").Single();
+        using (var reader = new AudioFileReader(vocal))
+        {
+            if (reader.TotalTime.TotalSeconds < 0.1)
+                throw new InvalidOperationException("Karaoke vocal recording did not finalize.");
+        }
+        Console.WriteLine("PASS Karaoke backing playback and vocal record/pause/resume/stop chain");
     }
 
     private static int VerifyAudioHardware()
