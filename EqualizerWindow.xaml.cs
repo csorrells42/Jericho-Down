@@ -3272,6 +3272,10 @@ public partial class EqualizerWindow : Window
         System.Threading.Interlocked.Increment(ref _cameraServiceStopOperationVersion);
 
         TryShutdownStep(SaveAppStateNow);
+        TryShutdownStep(() =>
+        {
+            if (_isRecordingSession) StopRecordingClicked(this, new RoutedEventArgs());
+        });
         TryShutdownStep(() => CompositionTarget.Rendering -= CompositionTargetRendering);
         TryShutdownStep(StopShutdownTimers);
         TryShutdownStep(DisposeAudioDeviceNotificationWatcher);
@@ -4038,7 +4042,23 @@ public partial class EqualizerWindow : Window
 
         StopSessionPlayback();
 
-        var recordingTarget = CreatePodcastRecordingTarget();
+        RecordingTarget recordingTarget;
+        try
+        {
+            if (!_spectrumService.IsRunning) StartSelectedDevice();
+            recordingTarget = CreatePodcastRecordingTarget();
+            var number = FormatRecordingSetNumber(recordingTarget.SetNumber);
+            var mixPath = RecordProcessedAudioCheckBox.IsChecked == true
+                ? System.IO.Path.Combine(recordingTarget.SessionFolder, $"mix_{number}.wav")
+                : null;
+            _spectrumService.StartSessionAudioRecording(mixPath,
+                System.IO.Path.Combine(recordingTarget.SessionFolder, $"raw_backup_{number}.wav"));
+        }
+        catch (Exception ex)
+        {
+            RecordingStatusText.Text = $"Recording could not start: {ex.Message}";
+            return;
+        }
         _activeRecordingSessionFolder = recordingTarget.SessionFolder;
         _activeRecordingSetNumber = recordingTarget.SetNumber;
         _recordingStartedAt = DateTime.UtcNow;
@@ -4078,6 +4098,7 @@ public partial class EqualizerWindow : Window
 
         if (_isRecordingPaused)
         {
+            _spectrumService.ResumeSessionAudioRecording();
             _recordingPausedDuration += DateTime.UtcNow - _recordingPausedAt;
             _recordingPausedAt = DateTime.MinValue;
             _isRecordingPaused = false;
@@ -4102,6 +4123,7 @@ public partial class EqualizerWindow : Window
         }
         else
         {
+            _spectrumService.PauseSessionAudioRecording();
             _recordingPausedAt = DateTime.UtcNow;
             _isRecordingPaused = true;
             if (_dx12Camera?.IsTextureNative == true && _dx12Camera.IsRecording)
@@ -4137,6 +4159,7 @@ public partial class EqualizerWindow : Window
         var elapsed = GetRecordingElapsed();
         var sessionFolder = _activeRecordingSessionFolder;
         var setNumber = _activeRecordingSetNumber;
+        _spectrumService.StopSessionAudioRecording();
         _lastPreviewRecordingDiagnostics = null;
         var textureResult = StopTextureNativeRecording();
         var videoPath = textureResult?.Path ?? StopActivePreviewRecording();
@@ -6009,6 +6032,9 @@ public partial class EqualizerWindow : Window
                 denoiseSliderStrength = _videoDenoiseSliderStrength,
                 denoiseStrength = _pendingVideoDenoiseStrength,
                 video = string.IsNullOrWhiteSpace(videoPath) ? null : System.IO.Path.GetFileName(videoPath),
+                processedAudio = GetExistingSessionAudioFile(sessionFolder, $"mix_{FormatRecordingSetNumber(setNumber)}.wav"),
+                rawAudio = GetExistingSessionAudioFile(sessionFolder, $"raw_backup_{FormatRecordingSetNumber(setNumber)}.wav"),
+                audioError = _spectrumService.SessionAudioRecordingError,
                 engine = textureResult is not null
                     ? _dx12Camera?.IsTextureNative == true
                         ? "Windows Media Foundation shared texture-native GPU stream"
@@ -6047,6 +6073,11 @@ public partial class EqualizerWindow : Window
         {
             RecordingStatusText.Text = $"Recording stopped, but session metadata could not be written: {ex.Message}";
         }
+    }
+
+    private static string? GetExistingSessionAudioFile(string folder, string fileName)
+    {
+        return File.Exists(System.IO.Path.Combine(folder, fileName)) ? fileName : null;
     }
 
     private static string CreateAudioRecordingFileName(
@@ -7869,7 +7900,16 @@ public partial class EqualizerWindow : Window
         if (_isRecordingSession && now - _lastRecordingTimerUpdateUtc >= TimeSpan.FromMilliseconds(250))
         {
             _lastRecordingTimerUpdateUtc = now;
-            UpdateRecordingTimer();
+            if (!_spectrumService.IsSessionAudioRecording)
+            {
+                var reason = _spectrumService.SessionAudioRecordingError ?? "The microphone stream stopped or changed.";
+                StopRecordingClicked(this, new RoutedEventArgs());
+                RecordingStatusText.Text = $"Session ended: {reason} Completed files were saved.";
+            }
+            else
+            {
+                UpdateRecordingTimer();
+            }
         }
 
         if (now - _lastRecordingHealthUpdateUtc >= TimeSpan.FromMilliseconds(250))
@@ -8104,6 +8144,7 @@ public partial class EqualizerWindow : Window
         }
 
         StartRecordingButton.IsEnabled = !_isRecordingSession;
+        RecordProcessedAudioCheckBox.IsEnabled = !_isRecordingSession;
         PauseRecordingButton.IsEnabled = _isRecordingSession;
         PauseRecordingButton.Content = _isRecordingPaused ? "Resume" : "Pause";
         StopRecordingButton.IsEnabled = _isRecordingSession;

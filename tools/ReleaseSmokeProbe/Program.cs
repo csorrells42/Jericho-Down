@@ -74,6 +74,8 @@ internal static class Program
                 app.MainWindow = window;
                 window.Show();
                 await VerifyAsync(window, profile);
+                if (args.Contains("--video", StringComparer.Ordinal))
+                    await VerifyPodcastAsync(window, profile);
                 if (errors.Messages.Count > 0)
                     throw new InvalidOperationException("WPF binding errors: " + string.Join(Environment.NewLine, errors.Messages.Distinct()));
                 var service = Field<MicrophoneSpectrumService>(window, "_spectrumService");
@@ -233,6 +235,48 @@ internal static class Program
             failures++;
         }
         return failures == 0 ? 0 : 1;
+    }
+
+    private static async Task VerifyPodcastAsync(EqualizerWindow window, string profile)
+    {
+        var tabs = Control<TabControl>(window, "MainTabControl");
+        tabs.SelectedItem = tabs.Items.Cast<TabItem>().Single(tab => Equals(tab.Header, "Podcast"));
+        Control<ToggleButton>(window, "CameraEnabledToggle").SetCurrentValue(ToggleButton.IsCheckedProperty, true);
+        await Task.Delay(2500);
+        Click(window, "StartRecordingButton");
+        await Task.Delay(1200);
+        Click(window, "PauseRecordingButton");
+        await Task.Delay(150);
+        Click(window, "PauseRecordingButton");
+        await Task.Delay(500);
+        Click(window, "StopRecordingButton");
+        var folder = Directory.GetDirectories(profile, "Podcast_*").Single();
+        foreach (var name in new[] { "video_001.mp4", "mix_001.wav", "raw_backup_001.wav", "session.json" })
+        {
+            var path = Path.Combine(folder, name);
+            if (!File.Exists(path) || new FileInfo(path).Length < 100)
+                throw new InvalidOperationException($"Podcast session did not produce {name}.");
+            if (name.EndsWith(".wav", StringComparison.Ordinal))
+            {
+                using var reader = new AudioFileReader(path);
+                var samples = new float[48000];
+                var count = reader.Read(samples, 0, samples.Length);
+                if (count < 4000 || !samples.Take(count).Any(sample => Math.Abs(sample) > 0.001f))
+                    throw new InvalidOperationException($"Podcast {name} has no audible samples.");
+            }
+        }
+        Control<ToggleButton>(window, "CameraEnabledToggle").SetCurrentValue(ToggleButton.IsCheckedProperty, false);
+        Console.WriteLine("PASS Podcast video, processed mix, raw backup, pause/resume and metadata");
+
+        Click(window, "StartRecordingButton");
+        await Task.Delay(300);
+        Field<MicrophoneSpectrumService>(window, "_spectrumService").Stop();
+        await Task.Delay(500);
+        if (Field<bool>(window, "_isRecordingSession"))
+            throw new InvalidOperationException("Podcast UI kept recording after capture stopped.");
+        if (!Control<TextBlock>(window, "RecordingStatusText").Text.Contains("Session ended", StringComparison.Ordinal))
+            throw new InvalidOperationException("Podcast recording did not explain the interrupted stream.");
+        Console.WriteLine("PASS Capture interruption finalizes podcast session and updates the UI");
     }
 
     private static T Control<T>(FrameworkElement root, string name) where T : FrameworkElement =>

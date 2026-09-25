@@ -62,6 +62,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private IWaveProvider? _processedOutputPlaybackProvider;
     private WasapiOutputSettings _wasapiOutputSettings = WasapiOutputSettings.Default;
     private readonly object _processedRecordingLock = new();
+    private readonly SessionAudioRecorder _sessionAudioRecorder = new();
     private WaveFileWriter? _processedRecordingWriter;
     private string? _processedRecordingPath;
     private bool _isProcessedRecordingPaused;
@@ -1239,6 +1240,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private void StopCore()
     {
         _autoRecoverCapture = false;
+        _sessionAudioRecorder.Stop();
         var capture = _capture;
         if (capture is not null)
         {
@@ -1348,6 +1350,26 @@ public sealed class MicrophoneSpectrumService : IDisposable
             }
         }
     }
+
+    public bool IsSessionAudioRecording => _sessionAudioRecorder.IsRecording;
+
+    public string? SessionAudioRecordingError => _sessionAudioRecorder.LastError;
+
+    public void StartSessionAudioRecording(string? mixPath, string rawBackupPath)
+    {
+        lock (_captureLifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_isDisposing, this);
+            var capture = _capture ?? throw new InvalidOperationException("Select an available microphone before recording a session.");
+            _sessionAudioRecorder.Start(mixPath, rawBackupPath, capture.WaveFormat);
+        }
+    }
+
+    public void PauseSessionAudioRecording() => _sessionAudioRecorder.SetPaused(true);
+
+    public void ResumeSessionAudioRecording() => _sessionAudioRecorder.SetPaused(false);
+
+    public void StopSessionAudioRecording() => _sessionAudioRecorder.Stop();
 
     public void StartProcessedAudioRecording(string path)
     {
@@ -1654,6 +1676,9 @@ public sealed class MicrophoneSpectrumService : IDisposable
             out var telemetry);
 
         AddProcessedOutputSamples(programOutputSamples, programOutputChannelCount);
+        var sessionError = _sessionAudioRecorder.Write(programOutputSamples, programOutputChannelCount, buffer, captureFormat);
+        if (sessionError is not null)
+            ReportStreamStatus($"Session audio stopped: {sessionError}");
         var recordingSamples = ResolveProcessedRecordingSamples(programOutputSamples, programOutputChannelCount, out var recordingChannelCount);
         WriteProcessedRecordingSamples(recordingSamples, recordingChannelCount);
         UpdateAudioProcessingTime(callbackStartTimestamp);
@@ -4185,6 +4210,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
                     }
 
                     ReleaseCapture(stoppedCapture);
+                    _sessionAudioRecorder.Stop();
                     StopAdditionalCaptures();
                 }
 

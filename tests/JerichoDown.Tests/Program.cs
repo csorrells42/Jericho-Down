@@ -139,6 +139,8 @@ var tests = new (string Name, Action Test)[]
     ("Audio recording exporter supports compressed targets", AudioRecordingExporterSupportsCompressedTargets),
     ("Recording preserves existing destination", RecordingSafetyTests.RecordingPreservesExistingFile),
     ("Export protects normalized source path", RecordingSafetyTests.ExportProtectsNormalizedSourcePath),
+    ("Session audio pauses and finalizes on capture stop", RecordingSafetyTests.SessionAudioPausesAndFinalizesOnStop),
+    ("Natural session writes raw audio and finalizes on disposal", RecordingSafetyTests.NaturalSessionWritesRawOnly),
     ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
     ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
     ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),

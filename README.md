@@ -17,7 +17,7 @@ It is offered freely for Christian churches, worship teams, and ministries.
 - Processed output routing to speakers, headphones, or a virtual cable device.
 - Standalone processed audio recording with saved-file browsing and playback.
 - Camera preview with Media Foundation NV12 DX12, DirectShow BGRA DX12, and texture-native DX12 paths.
-- Podcast session recording with video, processed mix WAV, optional raw backup WAV, session metadata, and a saved-video browser.
+- Podcast session recording with video, optional processed mix WAV, raw input backup WAV, session metadata, and a saved-video browser. Audio is saved alongside the video, not embedded in the MP4.
 - Camera profiles, Windows camera controls, video grain reduction, color polish, and preview/record parity reporting.
 
 ## Build
@@ -40,6 +40,7 @@ dotnet run --project tests\JerichoDown.Tests\JerichoDown.Tests.csproj -c Release
 .\tools\VerifyJerichoDown.ps1 -UiSmoke -AudioHardware
 .\tools\VerifyJerichoDown.ps1 -LiveCamera
 .\tools\VerifyJerichoDown.ps1 -TextureDiagnostic
+dotnet run --project tools\ReleaseSmokeProbe\ReleaseSmokeProbe.csproj -c Release -- --video
 ```
 
 The default verifier builds Release, runs the test harness, and lists available cameras. `-UiSmoke` exercises the actual WPF tabs, mixer selection/mute, recording controls, and shutdown with an isolated temporary profile. It does not change your saved settings. `-AudioHardware` opens available inputs and briefly plays a generated test tone through the default output; unavailable ASIO drivers are reported separately and still require a connected-device test. `-LiveCamera` briefly opens the configured real and virtual cameras through the DX12 preview host. `-TextureDiagnostic` probes the texture-native path without making that experimental path a required pass condition.
