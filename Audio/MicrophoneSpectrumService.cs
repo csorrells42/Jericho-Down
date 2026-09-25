@@ -44,6 +44,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private SpectrumAnalyzer _input1Analyzer = new(SpectrumDisplaySampleRate);
     private SpectrumAnalyzer _input2Analyzer = new(SpectrumDisplaySampleRate);
     private IWaveIn? _capture;
+    private readonly object _captureLifecycleLock = new();
+    private readonly object _captureRestartLock = new();
+    private Task? _pendingCaptureStop;
+    private int _captureLifecycleVersion;
     private VoiceSampleProcessor? _voiceProcessor;
     private readonly object _liveMixLock = new();
     private readonly MixBusProcessor _mixBusProcessor = new();
@@ -112,7 +116,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private string _captureBackendDescription = "not open";
     private bool _autoRecoverCapture;
     private bool _isStoppingCapture;
-    private bool _isDisposing;
+    private volatile bool _isDisposing;
     private int _captureRecoveryInProgress;
     private System.Runtime.GCLatencyMode _previousGcLatencyMode;
     private bool _gcLatencyModeChanged;
@@ -1152,6 +1156,20 @@ public sealed class MicrophoneSpectrumService : IDisposable
         VoiceProcessorSettings? processorSettings,
         InputChannelMode inputChannelMode)
     {
+        lock (_captureLifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_isDisposing, this);
+            StartCore(deviceNumber, endpointId, backend, processorSettings, inputChannelMode);
+        }
+    }
+
+    private void StartCore(
+        int deviceNumber,
+        string? endpointId,
+        AudioInputBackend backend,
+        VoiceProcessorSettings? processorSettings,
+        InputChannelMode inputChannelMode)
+    {
         if (_capture is not null)
         {
             return;
@@ -1211,10 +1229,25 @@ public sealed class MicrophoneSpectrumService : IDisposable
     }
     public void Stop()
     {
+        Interlocked.Increment(ref _captureLifecycleVersion);
+        lock (_captureLifecycleLock)
+        {
+            StopCore();
+        }
+    }
+
+    private void StopCore()
+    {
         _autoRecoverCapture = false;
+        var capture = _capture;
+        if (capture is not null)
+        {
+            // StopRecording may wait for its event thread; detach before that wait.
+            DetachCaptureEvents(capture);
+        }
+
         StopProcessedAudioRecording();
         StopAdditionalCaptures();
-        var capture = _capture;
         if (capture is null)
         {
             return;
@@ -1302,10 +1335,18 @@ public sealed class MicrophoneSpectrumService : IDisposable
     public void Dispose()
     {
         _isDisposing = true;
-        StopProcessedAudioRecording();
-        StopProcessedOutput();
-        Stop();
-        ReleaseCapture();
+        lock (_captureLifecycleLock)
+        {
+            try
+            {
+                Stop();
+            }
+            finally
+            {
+                try { StopProcessedOutput(); }
+                finally { ReleaseCapture(); }
+            }
+        }
     }
 
     public void StartProcessedAudioRecording(string path)
@@ -1404,13 +1445,34 @@ public sealed class MicrophoneSpectrumService : IDisposable
         InputChannelMode inputChannelMode,
         TimeSpan stopTimeout)
     {
-        var stopTask = Task.Run(Stop);
+        lock (_captureRestartLock)
+        {
+            ObjectDisposedException.ThrowIf(_isDisposing, this);
+            RestartCaptureCore(deviceNumber, endpointId, backend, processorSettings, inputChannelMode, stopTimeout);
+        }
+    }
+
+    private void RestartCaptureCore(
+        int deviceNumber,
+        string? endpointId,
+        AudioInputBackend backend,
+        VoiceProcessorSettings? processorSettings,
+        InputChannelMode inputChannelMode,
+        TimeSpan stopTimeout)
+    {
+        if (_pendingCaptureStop is null || (_pendingCaptureStop.IsCompleted && _capture is not null))
+        {
+            _pendingCaptureStop = Task.Run(Stop);
+        }
+
+        var stopTask = _pendingCaptureStop;
         var stoppedCleanly = stopTask.Wait(stopTimeout);
         if (!stoppedCleanly)
         {
-            AbandonCurrentCaptureForDriverReset();
-            StreamStatusChanged?.Invoke(this, "Audio driver is still releasing the old stream; opening a fresh stream.");
+            throw new TimeoutException("The audio driver is still releasing its previous stream. Waiting before reopening capture.");
         }
+
+        _pendingCaptureStop = null;
 
         Exception? lastException = null;
         for (var attempt = 1; attempt <= MaximumCaptureRecoveryAttempts + 2; attempt++)
@@ -1419,6 +1481,10 @@ public sealed class MicrophoneSpectrumService : IDisposable
             {
                 Start(deviceNumber, endpointId, backend, processorSettings, inputChannelMode);
                 return;
+            }
+            catch (ObjectDisposedException) when (_isDisposing)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -1431,6 +1497,19 @@ public sealed class MicrophoneSpectrumService : IDisposable
     }
 
     private void StartAdditionalCaptures()
+    {
+        lock (_captureLifecycleLock)
+        {
+            if (_isDisposing || _capture is null)
+            {
+                return;
+            }
+
+            StartAdditionalCapturesCore();
+        }
+    }
+
+    private void StartAdditionalCapturesCore()
     {
         LiveMicChannelRuntime[] liveMixChannels;
         lock (_liveMixLock)
@@ -1539,7 +1618,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
         ConfigureAudioCallbackThread();
         var callbackStartTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
         var capture = _capture;
-        if (capture is null || e.BytesRecorded == 0)
+        if (capture is null || e.BytesRecorded == 0 || (sender is not null && !ReferenceEquals(sender, capture)))
         {
             return;
         }
@@ -4060,24 +4139,24 @@ public sealed class MicrophoneSpectrumService : IDisposable
     private void CaptureRecordingStopped(object? sender, StoppedEventArgs e)
     {
         var stoppedCapture = sender as IWaveIn;
-        var shouldRecover = (stoppedCapture is null || ReferenceEquals(_capture, stoppedCapture))
+        var shouldRecover = stoppedCapture is not null && ReferenceEquals(_capture, stoppedCapture)
             && _autoRecoverCapture
             && !_isStoppingCapture
             && !_isDisposing;
-        ReleaseCapture(stoppedCapture);
         if (shouldRecover)
         {
-            BeginCaptureRecovery(e.Exception);
+            BeginCaptureRecovery(stoppedCapture!, e.Exception);
         }
     }
 
-    private void BeginCaptureRecovery(Exception? exception)
+    private void BeginCaptureRecovery(IWaveIn stoppedCapture, Exception? exception)
     {
         if (System.Threading.Interlocked.Exchange(ref _captureRecoveryInProgress, 1) != 0)
         {
             return;
         }
 
+        var operationVersion = Volatile.Read(ref _captureLifecycleVersion);
         StreamStatusChanged?.Invoke(this, exception is null
             ? "Audio stream stopped; reopening mic stream."
             : $"Audio stream interrupted: {exception.Message}. Reopening mic stream.");
@@ -4086,17 +4165,34 @@ public sealed class MicrophoneSpectrumService : IDisposable
         {
             try
             {
-                for (var attempt = 1; attempt <= MaximumCaptureRecoveryAttempts; attempt++)
+                // Driver callbacks must return before disposing or joining their threads.
+                lock (_captureLifecycleLock)
                 {
-                    if (!_autoRecoverCapture || _isDisposing)
+                    if (_isDisposing || operationVersion != Volatile.Read(ref _captureLifecycleVersion)
+                        || !ReferenceEquals(_capture, stoppedCapture))
                     {
                         return;
                     }
 
+                    ReleaseCapture(stoppedCapture);
+                    StopAdditionalCaptures();
+                }
+
+                for (var attempt = 1; attempt <= MaximumCaptureRecoveryAttempts; attempt++)
+                {
                     Thread.Sleep(TimeSpan.FromMilliseconds(250 * attempt));
                     try
                     {
-                        Start(_currentDeviceNumber, _currentInputEndpointId, _currentInputBackend, _currentProcessorSettings, _currentInputChannelMode);
+                        lock (_captureLifecycleLock)
+                        {
+                            if (!_autoRecoverCapture || _isDisposing
+                                || operationVersion != Volatile.Read(ref _captureLifecycleVersion))
+                            {
+                                return;
+                            }
+
+                            Start(_currentDeviceNumber, _currentInputEndpointId, _currentInputBackend, _currentProcessorSettings, _currentInputChannelMode);
+                        }
                         StreamStatusChanged?.Invoke(this, "Audio stream recovered.");
                         return;
                     }
@@ -4113,31 +4209,6 @@ public sealed class MicrophoneSpectrumService : IDisposable
                 System.Threading.Interlocked.Exchange(ref _captureRecoveryInProgress, 0);
             }
         });
-    }
-
-    private void AbandonCurrentCaptureForDriverReset()
-    {
-        var capture = _capture;
-        if (capture is null)
-        {
-            return;
-        }
-
-        try
-        {
-            DetachCaptureEvents(capture);
-        }
-        catch
-        {
-        }
-
-        if (ReferenceEquals(_capture, capture))
-        {
-            _capture = null;
-            _voiceProcessor = null;
-            System.Threading.Interlocked.Increment(ref _spectrumAnalysisVersion);
-            RestoreRuntimeMode();
-        }
     }
 
     private void ReleaseCapture(IWaveIn? capture = null)
