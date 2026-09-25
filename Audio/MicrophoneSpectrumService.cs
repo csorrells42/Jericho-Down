@@ -1364,6 +1364,7 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
         lock (_processedRecordingLock)
         {
+            ObjectDisposedException.ThrowIf(_isDisposing, this);
             if (_processedRecordingWriter is not null)
             {
                 throw new InvalidOperationException("Processed audio recording is already running.");
@@ -1371,9 +1372,18 @@ public sealed class MicrophoneSpectrumService : IDisposable
 
             var sampleRate = Math.Max(8000, _activeSampleRate);
             var recordingChannelCount = GetProcessedRecordingChannelCount(_processedRecordingSource);
-            _processedRecordingWriter = new WaveFileWriter(
-                path,
-                WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, recordingChannelCount));
+            var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            try
+            {
+                _processedRecordingWriter = new WaveFileWriter(
+                    stream,
+                    WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, recordingChannelCount));
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
             _processedRecordingPath = path;
             _isProcessedRecordingPaused = false;
         }

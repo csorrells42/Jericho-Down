@@ -97,18 +97,19 @@ public static class AudioRecordingExporter
             throw new ArgumentException("Choose a valid export path.", nameof(targetPath));
         }
 
-        if (Path.GetFullPath(sourcePath).Equals(Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Export to a new file so the original recording stays intact.");
-        }
-
         var info = GetFormatInfo(format);
-        if (!IsSupportedExportExtension(targetPath))
+        if (!TryGetFormatForExtension(targetPath, out var targetFormat) || targetFormat.Format != format)
         {
             targetPath = Path.ChangeExtension(targetPath, info.Extension);
         }
 
-        var targetDirectory = Path.GetDirectoryName(targetPath) ?? ".";
+        targetPath = Path.GetFullPath(targetPath);
+        if (Path.GetFullPath(sourcePath).Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Export to a new file so the original recording stays intact.");
+        }
+
+        var targetDirectory = Path.GetDirectoryName(targetPath)!;
         Directory.CreateDirectory(targetDirectory);
         var tempPath = Path.Combine(
             targetDirectory,
@@ -134,8 +135,7 @@ public static class AudioRecordingExporter
                     throw new ArgumentOutOfRangeException(nameof(format), format, "Unsupported export format.");
             }
 
-            File.Delete(targetPath);
-            File.Move(tempPath, targetPath);
+            File.Move(tempPath, targetPath, overwrite: true);
         }
         catch
         {

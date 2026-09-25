@@ -5,6 +5,19 @@ namespace JerichoDown;
 
 internal static class PathSafety
 {
+    public static string GetAvailableFilePath(string folder, string fileName)
+    {
+        var path = Path.Combine(folder, fileName);
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        for (var suffix = 1; File.Exists(path) || Directory.Exists(path); suffix++)
+        {
+            path = Path.Combine(folder, $"{stem}_{suffix:00}{extension}");
+        }
+
+        return path;
+    }
+
     public static bool IsRegularFileUnderFolder(string? path, string? rootFolder, params string[] allowedExtensions)
     {
         if (!TryGetSafeFullPath(path, out var fullPath)

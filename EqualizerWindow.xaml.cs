@@ -6067,17 +6067,11 @@ public partial class EqualizerWindow : Window
     private string CreateAudioRecordingFilePath(DateTime timestamp)
     {
         Directory.CreateDirectory(_audioRecordingFolder);
-        var baseName = System.IO.Path.GetFileNameWithoutExtension(CreateAudioRecordingFileName(
+        var fileName = CreateAudioRecordingFileName(
             timestamp,
             _audioRecordingSource,
-            _activeMicChannel?.ChannelNumber ?? 1));
-        var path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}.wav");
-        for (var attempt = 1; File.Exists(path) && attempt < 100; attempt++)
-        {
-            path = System.IO.Path.Combine(_audioRecordingFolder, $"{baseName}_{attempt:00}.wav");
-        }
-
-        return path;
+            _activeMicChannel?.ChannelNumber ?? 1);
+        return PathSafety.GetAvailableFilePath(_audioRecordingFolder, fileName);
     }
 
     private void SpectrumViewClicked(object sender, RoutedEventArgs e)
@@ -12245,7 +12239,7 @@ public partial class EqualizerWindow : Window
     {
         Directory.CreateDirectory(_karaokeRecordingFolder);
         var fileName = $"karaokeRecording_{timestamp:yyyy-MM-dd_HH-mm-ss}.wav";
-        return System.IO.Path.Combine(_karaokeRecordingFolder, fileName);
+        return PathSafety.GetAvailableFilePath(_karaokeRecordingFolder, fileName);
     }
 
     private void PlayKaraokeRecordingFileClicked(object sender, RoutedEventArgs e)

@@ -137,6 +137,8 @@ var tests = new (string Name, Action Test)[]
     ("Karaoke sample reader accepts extended formats", KaraokeSampleReaderAcceptsExtendedFormats),
     ("Audio recording browser accepts extended playback formats", AudioRecordingBrowserAcceptsExtendedPlaybackFormats),
     ("Audio recording exporter supports compressed targets", AudioRecordingExporterSupportsCompressedTargets),
+    ("Recording preserves existing destination", RecordingSafetyTests.RecordingPreservesExistingFile),
+    ("Export protects normalized source path", RecordingSafetyTests.ExportProtectsNormalizedSourcePath),
     ("Karaoke browser DFS hides M4P tracks", KaraokeBrowserDfsHidesM4pTracks),
     ("Karaoke artist falls back to iTunes folder", KaraokeArtistFallsBackToITunesFolder),
     ("Karaoke empty lyric prompt is track aware", KaraokeEmptyLyricPromptIsTrackAware),
