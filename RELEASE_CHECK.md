@@ -1,6 +1,6 @@
 # Release Check - 2026-09-24
 
-Status: software checks pass; live Yamaha AG06/ASIO verification remains open.
+Status: automated software checks pass; release sign-off is blocked on connected Yamaha AG06/ASIO hardware and desktop visual verification.
 
 ## Confirmed And Fixed
 
@@ -25,12 +25,17 @@ Podcast audio is saved as separate WAV files alongside the MP4. It is not muxed 
 - Release publish succeeded; output includes JerichoDown.exe, runtime metadata, dependencies, and the About asset.
 - Probe processes exited. Tests used isolated temporary settings and did not replace the user's saved Yamaha selection.
 - Desktop launcher targets `bin/Release/net10.0-windows/JerichoDown.exe`, which was rebuilt with these fixes.
+- Final artifact audit: Release and publish copies of `JerichoDown.exe` and `JerichoDown.dll` have matching SHA-256 hashes. All five bundled PDF guides, the About image, runtime metadata, and NAudio/DirectX dependencies are present in the publish output.
 
 ## Open Gate
 
 The installed Yamaha Steinberg USB ASIO driver reports "Device could not be opened." The user's saved primary input is that ASIO driver. Reconnect/power the AG06, or resolve any driver ownership problem, then test input channels, mixer routing/recording, restart, and shutdown with that hardware before claiming full ASIO release readiness.
 
+The final Windows PnP audit found no present Yamaha/Steinberg audio device. The two retained AG06/AG03 software-device records both report `Present=False`. This is evidence that the hardware is unavailable to Windows, not proof of an application ASIO defect. Do not replace the saved Yamaha selection or repeatedly reopen its driver to work around missing hardware.
+
 The Windows computer-use helper could not start because of a sandbox ACL error. The WPF probe executes real control events and checks bindings, but a screenshot-based visual review was not completed. MIDI message/mapping/file logic is covered by tests; external MIDI hardware was not exercised.
+
+The desktop helper was retried after resetting its session and again exited with `windows sandbox failed: helper_unknown_error: apply deny-read ACLs`. No live helper or verification process is being waited on. Resume visual verification when that execution environment works; do not treat the in-process WPF checks as screenshot evidence.
 
 ## Repeatable Commands
 
