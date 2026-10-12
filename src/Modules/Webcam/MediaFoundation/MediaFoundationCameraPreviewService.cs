@@ -8,6 +8,8 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 {
     private static readonly TimeSpan CaptureStopTimeout = TimeSpan.FromSeconds(3);
     private readonly object _recordingLock = new();
+    private readonly object _lifecycleLock = new();
+    private bool _disposed;
     private MediaFoundationCameraDeviceFactory.MediaFoundationScope? _mediaFoundationScope;
     private IMFSourceReader? _reader;
     private object? _mediaSource;
@@ -91,7 +93,21 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public bool Start(CameraDevice camera, CameraVideoMode? mode)
     {
-        Stop();
+        lock (_lifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return StartCore(camera, mode);
+        }
+    }
+
+    private bool StartCore(CameraDevice camera, CameraVideoMode? mode)
+    {
+        StopCore();
+        if (_captureTask is { IsCompleted: false })
+        {
+            StatusChanged?.Invoke(this, "Previous camera capture is still stopping. Try again shortly.");
+            return false;
+        }
 
         if (!OperatingSystem.IsWindows())
         {
@@ -101,12 +117,13 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
         try
         {
-            _cancellation = new CancellationTokenSource();
+            var cancellation = new CancellationTokenSource();
+            _cancellation = cancellation;
             var startup = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
             _captureTask = Task.Run(() => CaptureLoop(
                 camera,
                 mode,
-                _cancellation.Token,
+                cancellation.Token,
                 startup));
             if (!startup.Task.Wait(TimeSpan.FromSeconds(5)))
             {
@@ -127,7 +144,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         }
         catch (Exception ex)
         {
-            CleanupPreviewObjects();
+            StopCore();
             StatusChanged?.Invoke(this, $"Could not start Media Foundation preview: {ex.Message}");
             return false;
         }
@@ -283,9 +300,16 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
     public void Stop()
     {
+        lock (_lifecycleLock) StopCore();
+    }
+
+    private void StopCore()
+    {
         StopRecording();
         var captureTask = _captureTask;
-        _cancellation?.Cancel();
+        var cancellation = _cancellation;
+        _cancellation = null;
+        cancellation?.Cancel();
         TryFlushSourceReader();
 
         try
@@ -296,22 +320,26 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
         {
         }
 
-        _captureTask = null;
-        _cancellation?.Dispose();
-        _cancellation = null;
         if (captureTask is null || captureTask.IsCompleted)
         {
+            _captureTask = null;
+            cancellation?.Dispose();
             CleanupPreviewObjects();
         }
-        else
+        else if (cancellation is not null)
         {
-            ResetPreviewState();
+            _ = captureTask.ContinueWith(_ => cancellation.Dispose(), TaskScheduler.Default);
         }
     }
 
     public void Dispose()
     {
-        Stop();
+        lock (_lifecycleLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            StopCore();
+        }
     }
 
     private void CaptureLoop(
@@ -330,6 +358,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
                 camera,
                 mode,
                 out mediaSource);
+            cancellationToken.ThrowIfCancellationRequested();
             _mediaFoundationScope = mediaFoundationScope;
             _reader = reader;
             _mediaSource = mediaSource;
@@ -354,6 +383,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
                 if (MediaFoundationInterop.Failed(result))
                 {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                     StatusChanged?.Invoke(this, $"Camera read failed: 0x{result:X8}");
                     Thread.Sleep(50);
                     continue;
@@ -361,6 +391,7 @@ public sealed class MediaFoundationCameraPreviewService : IDisposable
 
                 if ((streamFlags & MediaFoundationInterop.MF_SOURCE_READERF_ENDOFSTREAM) != 0)
                 {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                     StatusChanged?.Invoke(this, "Camera preview ended");
                     break;
                 }

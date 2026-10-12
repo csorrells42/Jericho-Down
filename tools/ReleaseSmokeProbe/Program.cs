@@ -10,6 +10,7 @@ using System.Windows.Media;
 using JerichoDown;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Live;
+using JerichoDown.Modules.Audio.Capture;
 using JerichoDown.Modules.SessionPlayback;
 using NAudio.Wave;
 
@@ -282,6 +283,30 @@ internal static class Program
                 Thread.Sleep(500);
                 if (!service.IsProcessedOutputEnabled) throw new InvalidOperationException("Output route did not remain enabled.");
                 Console.WriteLine($"PASS Output {output.Name}: {service.ActualProcessedOutputFormatStatus}");
+                using (var loopback = new ProcessLoopbackCapture(Environment.ProcessId))
+                using (var received = new ManualResetEventSlim())
+                using (var stopped = new ManualResetEventSlim())
+                {
+                    Exception? captureError = null;
+                    var disposeOnData = false;
+                    loopback.RecordingStopped += (_, e) => { captureError = e.Exception; stopped.Set(); };
+                    loopback.DataAvailable += (_, e) =>
+                    {
+                        if (e.BytesRecorded > 0 && e.Buffer.Take(e.BytesRecorded).Any(value => value != 0)) received.Set();
+                        if (disposeOnData) loopback.Dispose();
+                    };
+                    loopback.StartRecording();
+                    if (!received.Wait(TimeSpan.FromSeconds(3))) throw new InvalidOperationException("Process loopback received no generated audio.");
+                    loopback.StopRecording();
+                    if (captureError is not null) throw captureError;
+                    Console.WriteLine("PASS Per-app loopback captures generated audio and stops");
+                    stopped.Reset();
+                    disposeOnData = true;
+                    loopback.StartRecording();
+                    if (!stopped.Wait(TimeSpan.FromSeconds(3))) throw new InvalidOperationException("Loopback did not stop after callback disposal.");
+                    if (captureError is not null) throw captureError;
+                    Console.WriteLine("PASS Per-app loopback reopens and safely disposes inside its data callback");
+                }
                 service.ConfigureProcessedOutput(false, output);
             }
             catch (Exception ex)

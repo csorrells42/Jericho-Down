@@ -49,34 +49,22 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
                 return;
             }
 
-            try
+            _stopRequested = false;
+            _isRecording = true;
+            var startup = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _captureThread = new Thread(() => CaptureThread(startup))
             {
-                _stopRequested = false;
-                _audioClient = ActivateProcessLoopbackAudioClient(_targetProcessId);
-                WaveFormat = _audioClient.MixFormat;
-                _audioClient.Initialize(
-                    AudioClientShareMode.Shared,
-                    AudioClientStreamFlags.Loopback,
-                    CaptureBufferMilliseconds * 10_000L,
-                    0,
-                    WaveFormat,
-                    Guid.Empty);
-                _captureClient = _audioClient.AudioCaptureClient;
-                _audioClient.Start();
-                _isRecording = true;
-                _captureThread = new Thread(CaptureThread)
-                {
-                    IsBackground = true,
-                    Name = $"Process loopback capture {_targetProcessId}"
-                };
-                _captureThread.Start();
-            }
-            catch
+                IsBackground = true,
+                Name = $"Process loopback capture {_targetProcessId}"
+            };
+            _captureThread.Start();
+            if (!startup.Task.Wait(TimeSpan.FromSeconds(6)))
             {
-                _isRecording = false;
-                ReleaseAudioClient();
-                throw;
+                _stopRequested = true;
+                throw new TimeoutException("Windows did not start process-loopback capture.");
             }
+            if (startup.Task.Result is { } error)
+                throw new InvalidOperationException($"Process-loopback capture could not start: {error.Message}", error);
         }
     }
 
@@ -104,10 +92,11 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
             captureThread = _captureThread;
         }
 
-        if (captureThread is null || ReferenceEquals(Thread.CurrentThread, captureThread))
+        if (captureThread is null)
         {
             return true;
         }
+        if (ReferenceEquals(Thread.CurrentThread, captureThread)) return false;
 
         return captureThread.Join(timeout);
     }
@@ -138,11 +127,23 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
         }
     }
 
-    private void CaptureThread()
+    private void CaptureThread(TaskCompletionSource<Exception?> startup)
     {
         Exception? stopException = null;
         try
         {
+            // Keep the process-loopback COM client in the MTA for its entire lifetime.
+            _audioClient = ActivateProcessLoopbackAudioClient(_targetProcessId);
+            _audioClient.Initialize(
+                AudioClientShareMode.Shared,
+                AudioClientStreamFlags.Loopback | AudioClientStreamFlags.AutoConvertPcm,
+                CaptureBufferMilliseconds * 10_000L,
+                0,
+                WaveFormat,
+                Guid.Empty);
+            _captureClient = _audioClient.AudioCaptureClient;
+            _audioClient.Start();
+            startup.TrySetResult(null);
             while (!Volatile.Read(ref _stopRequested))
             {
                 var packetSize = _captureClient?.GetNextPacketSize() ?? 0;
@@ -162,16 +163,16 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
         catch (Exception ex)
         {
             stopException = ex;
+            startup.TrySetResult(ex);
         }
         finally
         {
             lock (_syncRoot)
             {
+                ReleaseAudioClient();
                 _isRecording = false;
                 _captureThread = null;
             }
-
-            ReleaseAudioClient();
             RecordingStopped?.Invoke(this, new StoppedEventArgs(stopException));
         }
     }
@@ -397,26 +398,47 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
     }
 
     [ComVisible(true)]
-    private sealed class ActivateAudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler, IDisposable
+    private sealed class ActivateAudioInterfaceCompletionHandler : IActivateAudioInterfaceCompletionHandler, IAgileObject, IDisposable
     {
+        private readonly object _sync = new();
         private readonly ManualResetEventSlim _completed = new();
-        private object? _activatedInterface;
+        private AudioClient? _client;
         private Exception? _exception;
-        private int _activateResult;
+        private bool _disposed;
 
         public int ActivateCompleted(IActivateAudioInterfaceAsyncOperation activateOperation)
         {
+            object? activatedInterface = null;
+            AudioClient? client = null;
+            Exception? failure = null;
             try
             {
-                var result = activateOperation.GetActivateResult(out _activateResult, out _activatedInterface);
+                var result = activateOperation.GetActivateResult(out var activateResult, out activatedInterface);
                 ThrowIfFailed(result);
+                ThrowIfFailed(activateResult);
+                // Query the interface on Windows' completion thread before handing it to the caller.
+                client = new AudioClient((IAudioClient)activatedInterface);
+                activatedInterface = null;
             }
             catch (Exception ex)
             {
-                _exception = ex;
+                failure = ex;
             }
             finally
             {
+                if (activatedInterface is not null && Marshal.IsComObject(activatedInterface))
+                    Marshal.ReleaseComObject(activatedInterface);
+            }
+
+            lock (_sync)
+            {
+                if (_disposed)
+                {
+                    client?.Dispose();
+                    return 0;
+                }
+                _client = client;
+                _exception = failure;
                 _completed.Set();
             }
 
@@ -430,23 +452,29 @@ public sealed class ProcessLoopbackCapture : IWaveIn, IDisposable
                 throw new TimeoutException("Windows did not complete process-loopback activation.");
             }
 
-            if (_exception is not null)
+            lock (_sync)
             {
-                throw new InvalidOperationException("Windows process-loopback activation failed.", _exception);
+                if (_exception is not null)
+                    throw new InvalidOperationException($"Windows process-loopback activation failed: {_exception.Message}", _exception);
+                var client = _client ?? throw new InvalidOperationException("Windows process-loopback activation did not return an audio client.");
+                _client = null;
+                return client;
             }
-
-            ThrowIfFailed(_activateResult);
-            if (_activatedInterface is not IAudioClient audioClient)
-            {
-                throw new InvalidOperationException("Windows process-loopback activation did not return an audio client.");
-            }
-
-            return new AudioClient(audioClient);
         }
 
         public void Dispose()
         {
-            _completed.Dispose();
+            lock (_sync)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _client?.Dispose();
+                _client = null;
+                _completed.Dispose();
+            }
         }
     }
+
+    [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90")]
+    private interface IAgileObject { }
 }

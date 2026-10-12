@@ -9,9 +9,35 @@ using JerichoDown.Modules.SessionPlayback;
 using System.Reflection;
 using System.Diagnostics;
 using System.Text.Json;
+using JerichoDown.Modules.Audio.Capture;
+using JerichoDown.Modules.Webcam.MediaFoundation;
 
 internal static class ReviewRegressionTests
 {
+    public static void LateLoopbackActivationDoesNotTouchDisposedEvent()
+    {
+        var type = typeof(ProcessLoopbackCapture).GetNestedType("ActivateAudioInterfaceCompletionHandler", BindingFlags.NonPublic)!;
+        var handler = (IDisposable)Activator.CreateInstance(type, nonPublic: true)!;
+        handler.Dispose();
+        // A failed late completion must be contained just like a successful late completion.
+        type.GetMethod("ActivateCompleted")!.Invoke(handler, [null]);
+    }
+
+    public static void CameraRetainsStoppingWorker()
+    {
+        using var service = new MediaFoundationCameraPreviewService();
+        var worker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var field = typeof(MediaFoundationCameraPreviewService).GetField("_captureTask", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        field.SetValue(service, worker.Task);
+        try
+        {
+            service.Stop();
+            if (!ReferenceEquals(field.GetValue(service), worker.Task))
+                throw new InvalidOperationException("Camera stop forgot a worker that still owns native resources.");
+        }
+        finally { worker.SetResult(); }
+    }
+
     public static void RecordingDeletionRejectsJunctionAncestors()
     {
         var folder = Path.Combine(Path.GetTempPath(), $"jericho-junction-{Guid.NewGuid():N}");
