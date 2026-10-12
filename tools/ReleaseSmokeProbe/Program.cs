@@ -11,6 +11,7 @@ using JerichoDown;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Live;
 using JerichoDown.Modules.Audio.Capture;
+using JerichoDown.Modules.Midi;
 using JerichoDown.Modules.SessionPlayback;
 using NAudio.Wave;
 
@@ -311,6 +312,18 @@ internal static class Program
                 Thread.Sleep(500);
                 if (!service.IsProcessedOutputEnabled) throw new InvalidOperationException("Output route did not remain enabled.");
                 Console.WriteLine($"PASS Output {output.Name}: {service.ActualProcessedOutputFormatStatus}");
+                using (var systemAudio = new MicrophoneSpectrumService())
+                using (var received = new ManualResetEventSlim())
+                {
+                    systemAudio.SpectrumAvailable += (_, frame) =>
+                    {
+                        if (frame.RawPeakLevel > .0001) received.Set();
+                    };
+                    systemAudio.Start(AudioInputDevice.CreateSystemAudioLoopback());
+                    if (!received.Wait(TimeSpan.FromSeconds(3))) throw new InvalidOperationException("Computer loopback received no generated audio.");
+                    systemAudio.Stop();
+                    Console.WriteLine("PASS Computer loopback receives generated speaker audio and stops");
+                }
                 using (var loopback = new ProcessLoopbackCapture(Environment.ProcessId))
                 using (var received = new ManualResetEventSlim())
                 using (var stopped = new ManualResetEventSlim())
@@ -347,6 +360,36 @@ internal static class Program
         {
             Console.WriteLine("UNAVAILABLE No Windows output device.");
             failures++;
+        }
+
+        var midiInputs = MidiDeviceCatalog.GetInputDevices();
+        var midiOutputs = MidiDeviceCatalog.GetOutputDevices();
+        Console.WriteLine($"MIDI devices: {midiInputs.Count} inputs, {midiOutputs.Count} outputs.");
+        var softwareSynth = midiOutputs.FirstOrDefault(device => device.ProductName == "Microsoft GS Wavetable Synth");
+        if (softwareSynth is not null)
+        {
+            try
+            {
+                using var midi = new MidiOutputPort();
+                midi.Open(softwareSynth);
+                midi.SendBankSelect(1, 0);
+                midi.SendPatchChange(1, 0);
+                midi.SendControlChange(1, 7, 25);
+                midi.SendPitchWheel(1, 8192);
+                midi.SendNoteOn(1, 60, 25);
+                Thread.Sleep(100);
+                midi.SendNoteOff(1, 60, 0);
+                midi.SendAllNotesOff();
+                midi.SendResetAllControllers();
+                midi.Reset();
+                midi.Close();
+                Console.WriteLine("PASS Windows software MIDI output accepts bank, patch, control, pitch, notes and reset");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"FAIL Windows software MIDI output: {ex.Message}");
+                failures++;
+            }
         }
         return failures == 0 ? 0 : 1;
     }
@@ -409,6 +452,22 @@ internal static class Program
             await Task.Delay(150);
         }
         Console.WriteLine("PASS Recorded video playback, pause/seek/resume, stop and reopen");
+
+        using (var playback = new MediaFoundationFilePlaybackService())
+        {
+            var path = Path.Combine(folder, "video_001.mp4");
+            var starts = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => Task.Run(() => playback.Start(path))));
+            if (starts.Any(started => !started)) throw new InvalidOperationException("Overlapping playback starts did not serialize cleanly.");
+            await Task.WhenAll(Task.Run(playback.Stop), Task.Run(playback.Dispose));
+            if (playback.IsRunning) throw new InvalidOperationException("Concurrent playback shutdown left a worker active.");
+            try
+            {
+                playback.Start(path);
+                throw new InvalidOperationException("Disposed playback reopened.");
+            }
+            catch (ObjectDisposedException) { }
+        }
+        Console.WriteLine("PASS Concurrent playback starts, stop/dispose and disposed reopen guard");
 
         Click(window, "StartRecordingButton");
         await Task.Delay(300);
