@@ -93,7 +93,11 @@ internal static class Program
                 if (dispatcherErrors.Count > 0)
                     throw new AggregateException("Unhandled WPF errors were caught by the app.", dispatcherErrors);
                 var service = Field<MicrophoneSpectrumService>(window, "_spectrumService");
+                Invoke(window, "BeginKaraokeLyricWork");
+                var pendingLyrics = Field<CancellationTokenSource>(window, "_karaokeLyricsCancellation");
                 window.Close();
+                if (!pendingLyrics.IsCancellationRequested) throw new InvalidOperationException("Closing left lyric work active.");
+                Invoke(window, "CompleteKaraokeLyricWork", pendingLyrics);
                 if (service.IsRunning) throw new InvalidOperationException("Capture remained active after closing the window.");
                 Console.WriteLine("PASS Window closes and releases capture");
                 exitCode = 0;
@@ -235,6 +239,23 @@ internal static class Program
                 throw new InvalidOperationException("Karaoke vocal recording did not finalize.");
         }
         Console.WriteLine("PASS Karaoke backing playback and vocal record/pause/resume/stop chain");
+
+        Invoke(window, "BeginKaraokeLyricWork");
+        var staleLyrics = Field<CancellationTokenSource>(window, "_karaokeLyricsCancellation");
+        Control<TextBox>(window, "KaraokeLyricsTextBox").Text = "Edited lyrics must remain intact";
+        if (!staleLyrics.IsCancellationRequested) throw new InvalidOperationException("Editing lyrics did not invalidate pending analysis.");
+        Invoke(window, "CompleteKaraokeLyricWork", staleLyrics);
+        var nextBackingPath = Path.Combine(profile, "next-backing.wav");
+        File.Copy(backingPath, nextBackingPath);
+        Invoke(window, "BeginKaraokeLyricWork");
+        staleLyrics = Field<CancellationTokenSource>(window, "_karaokeLyricsCancellation");
+        Invoke(window, "SetKaraokeTrack", nextBackingPath, false);
+        if (!staleLyrics.IsCancellationRequested) throw new InvalidOperationException("Changing tracks did not invalidate pending lyrics.");
+        var isCurrent = (bool)typeof(EqualizerWindow).GetMethod("IsKaraokeLyricWorkCurrent", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [staleLyrics])!;
+        if (isCurrent) throw new InvalidOperationException("Stale lyric results could still overwrite the new track.");
+        Invoke(window, "CompleteKaraokeLyricWork", staleLyrics);
+        Console.WriteLine("PASS Lyric edits and track changes invalidate pending analysis");
 
         service.Stop();
         for (var attempt = 0; attempt < 3; attempt++)

@@ -330,6 +330,7 @@ public partial class EqualizerWindow : Window
     private bool _isKaraokeVocalRecording;
     private bool _isKaraokeVocalRecordingPaused;
     private bool _isDetectingKaraokeLyrics;
+    private CancellationTokenSource? _karaokeLyricsCancellation;
     private string? _karaokeVocalRecordingPath;
     private DateTime _karaokeVocalRecordingStartedAt;
     private DateTime _karaokeVocalRecordingPausedAt;
@@ -3629,6 +3630,7 @@ public partial class EqualizerWindow : Window
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         _isClosing = true;
+        TryShutdownStep(CancelKaraokeLyricWork);
         _audioStreamOperationVersion++;
         System.Threading.Interlocked.Increment(ref _cameraPreviewStartOperationVersion);
         System.Threading.Interlocked.Increment(ref _cameraServiceStopOperationVersion);
@@ -8891,6 +8893,7 @@ public partial class EqualizerWindow : Window
             var switchingTracks = !string.Equals(_karaokeTrackPath, trackPath, StringComparison.OrdinalIgnoreCase);
             if (switchingTracks)
             {
+                CancelKaraokeLyricWork();
                 SaveCurrentKaraokeLyricsForCurrentTrack();
             }
 
@@ -8923,6 +8926,7 @@ public partial class EqualizerWindow : Window
         }
         catch (Exception ex)
         {
+            CancelKaraokeLyricWork();
             _karaokeTrackPath = null;
             _karaokeTrackDuration = TimeSpan.Zero;
             UpdateKaraokeTrackUi();
@@ -9683,6 +9687,7 @@ public partial class EqualizerWindow : Window
         _isStoppingKaraokePlayback = false;
         if (clearTrack)
         {
+            CancelKaraokeLyricWork();
             _karaokeTrackPath = null;
             _karaokeTrackDuration = TimeSpan.Zero;
         }
@@ -10073,6 +10078,7 @@ public partial class EqualizerWindow : Window
 
     private void KaraokeLyricsTextChanged(object sender, TextChangedEventArgs e)
     {
+        CancelKaraokeLyricWork();
         UpdateKaraokeLyricsDisplay();
     }
 
@@ -10706,8 +10712,26 @@ public partial class EqualizerWindow : Window
             | d & 0x7F;
     }
 
+    private void CancelKaraokeLyricWork() => _karaokeLyricsCancellation?.Cancel();
+
+    private CancellationTokenSource BeginKaraokeLyricWork()
+    {
+        CancelKaraokeLyricWork();
+        return _karaokeLyricsCancellation = new CancellationTokenSource();
+    }
+
+    private bool IsKaraokeLyricWorkCurrent(CancellationTokenSource cancellation) =>
+        !_isClosing && !cancellation.IsCancellationRequested && ReferenceEquals(_karaokeLyricsCancellation, cancellation);
+
+    private void CompleteKaraokeLyricWork(CancellationTokenSource cancellation)
+    {
+        if (ReferenceEquals(_karaokeLyricsCancellation, cancellation)) _karaokeLyricsCancellation = null;
+        cancellation.Dispose();
+    }
+
     private async void AutoTimeKaraokeLyricsClicked(object sender, RoutedEventArgs e)
     {
+        if (_isClosing) return;
         if (string.IsNullOrWhiteSpace(_karaokeTrackPath) || !File.Exists(_karaokeTrackPath))
         {
             KaraokeStatusText.Text = "Load a backing track before auto-timing lyrics.";
@@ -10722,10 +10746,12 @@ public partial class EqualizerWindow : Window
         }
 
         KaraokeStatusText.Text = "Analyzing backing track for lyric timing...";
+        var cancellation = BeginKaraokeLyricWork();
         try
         {
             var trackPath = _karaokeTrackPath;
-            var timedLines = await Task.Run(() => GenerateKaraokeLyricTimingsFromAudio(trackPath, lyricLines));
+            var timedLines = await Task.Run(() => GenerateKaraokeLyricTimingsFromAudio(trackPath, lyricLines, cancellation.Token));
+            if (!IsKaraokeLyricWorkCurrent(cancellation)) return;
             KaraokeLyricsTextBox.Text = string.Join(
                 Environment.NewLine,
                 timedLines.Select(line => $"{FormatLyricTimestamp(line.Start)} {line.Text}"));
@@ -10735,7 +10761,11 @@ public partial class EqualizerWindow : Window
         }
         catch (Exception ex)
         {
-            KaraokeStatusText.Text = $"Auto timing failed: {ex.Message}";
+            if (IsKaraokeLyricWorkCurrent(cancellation)) KaraokeStatusText.Text = $"Auto timing failed: {ex.Message}";
+        }
+        finally
+        {
+            CompleteKaraokeLyricWork(cancellation);
         }
     }
 
@@ -10752,7 +10782,7 @@ public partial class EqualizerWindow : Window
 
     private async Task DetectKaraokeLyricsForTrackAsync(string trackPath, bool tryLocalSidecarFirst)
     {
-        if (_isDetectingKaraokeLyrics)
+        if (_isClosing || _isDetectingKaraokeLyrics)
         {
             return;
         }
@@ -10766,6 +10796,7 @@ public partial class EqualizerWindow : Window
         _isDetectingKaraokeLyrics = true;
         DetectKaraokeLyricsButton.IsEnabled = false;
         KaraokeStatusText.Text = "Checking local lyrics...";
+        var cancellation = BeginKaraokeLyricWork();
         try
         {
             if (tryLocalSidecarFirst
@@ -10795,15 +10826,15 @@ public partial class EqualizerWindow : Window
             KaraokeStatusText.Text = "Separating lead vocal for pro lyric detection...";
             void Report(string message)
             {
-                Dispatcher.BeginInvoke(() => KaraokeStatusText.Text = message, DispatcherPriority.Background);
+                if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (IsKaraokeLyricWorkCurrent(cancellation)) KaraokeStatusText.Text = message;
+                }, DispatcherPriority.Background);
             }
 
-            var detectedLyrics = await Task.Run(() => GenerateKaraokeLyricsWithAi(trackPath, toolchain, Report));
-            if (!string.Equals(_karaokeTrackPath, trackPath, StringComparison.OrdinalIgnoreCase))
-            {
-                KaraokeStatusText.Text = "Lyric detection finished for a previous backing track.";
-                return;
-            }
+            var detectedLyrics = await Task.Run(() => GenerateKaraokeLyricsWithAi(trackPath, toolchain, Report, cancellation.Token));
+            if (!IsKaraokeLyricWorkCurrent(cancellation)) return;
 
             KaraokeLyricsTextBox.Text = detectedLyrics.LyricsText;
             SaveCachedKaraokeLyricsForTrack(trackPath, detectedLyrics.LyricsText);
@@ -10812,12 +10843,14 @@ public partial class EqualizerWindow : Window
         }
         catch (Exception ex)
         {
-            KaraokeStatusText.Text = $"Lyric detection failed: {ShortenKaraokeProcessError(ex.Message)}";
+            if (IsKaraokeLyricWorkCurrent(cancellation))
+                KaraokeStatusText.Text = $"Lyric detection failed: {ShortenKaraokeProcessError(ex.Message)}";
         }
         finally
         {
             _isDetectingKaraokeLyrics = false;
-            DetectKaraokeLyricsButton.IsEnabled = true;
+            if (!_isClosing) DetectKaraokeLyricsButton.IsEnabled = true;
+            CompleteKaraokeLyricWork(cancellation);
         }
     }
 
@@ -10975,10 +11008,11 @@ public partial class EqualizerWindow : Window
         return true;
     }
 
-    private static List<KaraokeTimedLyricLine> GenerateKaraokeLyricTimingsFromAudio(string trackPath, IReadOnlyList<string> lyricLines)
+    private static List<KaraokeTimedLyricLine> GenerateKaraokeLyricTimingsFromAudio(string trackPath, IReadOnlyList<string> lyricLines, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var reader = KaraokeTrackAudioReader.Open(trackPath);
-        var windows = ReadKaraokeAudioEnergyWindows(reader);
+        var windows = ReadKaraokeAudioEnergyWindows(reader, cancellationToken);
         if (windows.Count == 0)
         {
             return GenerateEvenKaraokeLyricTimings(lyricLines, TimeSpan.Zero, reader.TotalTime);
@@ -11009,6 +11043,7 @@ public partial class EqualizerWindow : Window
         var timedLines = new List<KaraokeTimedLyricLine>(lyricLines.Count);
         for (var i = 0; i < lyricLines.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var targetWeight = totalWeight * i / Math.Max(1d, lyricLines.Count);
             var runningWeight = 0d;
             var timestampSeconds = activeStart.TotalSeconds;
@@ -11028,7 +11063,7 @@ public partial class EqualizerWindow : Window
         return timedLines;
     }
 
-    private static List<KaraokeAudioEnergyWindow> ReadKaraokeAudioEnergyWindows(KaraokeTrackAudioReader reader)
+    private static List<KaraokeAudioEnergyWindow> ReadKaraokeAudioEnergyWindows(KaraokeTrackAudioReader reader, CancellationToken cancellationToken)
     {
         const double windowSeconds = 0.05d;
         var channels = Math.Max(1, reader.WaveFormat.Channels);
@@ -11039,6 +11074,7 @@ public partial class EqualizerWindow : Window
         int read;
         while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var sum = 0d;
             for (var i = 0; i < read; i++)
             {
@@ -11072,18 +11108,20 @@ public partial class EqualizerWindow : Window
     private static KaraokeDetectedLyrics GenerateKaraokeLyricsWithAi(
         string trackPath,
         KaraokeAiToolchain toolchain,
-        Action<string> reportStatus)
+        Action<string> reportStatus,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var workFolder = CreateKaraokeAiWorkFolder();
         PrepareCleanKaraokeAiWorkArea();
         Directory.CreateDirectory(workFolder);
 
-        var demucsInputPath = PrepareKaraokeAiInputTrack(trackPath, workFolder, reportStatus);
+        var demucsInputPath = PrepareKaraokeAiInputTrack(trackPath, workFolder, reportStatus, cancellationToken);
         reportStatus("Separating lead vocal with Demucs...");
-        var vocalPath = RunDemucsVocalSeparation(demucsInputPath, workFolder, toolchain, reportStatus);
+        var vocalPath = RunDemucsVocalSeparation(demucsInputPath, workFolder, toolchain, reportStatus, cancellationToken);
 
         reportStatus("Aligning separated vocal with WhisperX...");
-        var whisperJsonPath = RunWhisperXAlignment(vocalPath, workFolder, toolchain, reportStatus);
+        var whisperJsonPath = RunWhisperXAlignment(vocalPath, workFolder, toolchain, reportStatus, cancellationToken);
 
         reportStatus("Building bouncing-ball lyric timing...");
         var words = ReadWhisperXWords(whisperJsonPath);
@@ -11226,7 +11264,8 @@ public partial class EqualizerWindow : Window
         string trackPath,
         string workFolder,
         KaraokeAiToolchain toolchain,
-        Action<string> reportStatus)
+        Action<string> reportStatus,
+        CancellationToken cancellationToken)
     {
         var outputFolder = System.IO.Path.Combine(workFolder, "demucs");
         Directory.CreateDirectory(outputFolder);
@@ -11239,9 +11278,9 @@ public partial class EqualizerWindow : Window
                 "demucs",
                 arguments,
                 workFolder,
-                TimeSpan.FromMinutes(20));
+                TimeSpan.FromMinutes(20), cancellationToken);
         }
-        catch (Exception ex) when (IsDemucsWavSaveBackendFailure(ex.Message))
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && IsDemucsWavSaveBackendFailure(ex.Message))
         {
             reportStatus("Demucs WAV output stumbled; retrying vocals as MP3...");
             outputFolder = System.IO.Path.Combine(workFolder, "demucs_mp3");
@@ -11253,7 +11292,7 @@ public partial class EqualizerWindow : Window
                 "demucs",
                 arguments,
                 workFolder,
-                TimeSpan.FromMinutes(20));
+                TimeSpan.FromMinutes(20), cancellationToken);
         }
 
         var vocalPath = FindDemucsVocalOutput(outputFolder);
@@ -11268,7 +11307,8 @@ public partial class EqualizerWindow : Window
     private static string PrepareKaraokeAiInputTrack(
         string trackPath,
         string workFolder,
-        Action<string> reportStatus)
+        Action<string> reportStatus,
+        CancellationToken cancellationToken)
     {
         if (KaraokeTrackAudioReader.CanUseSampleReader(trackPath))
         {
@@ -11286,7 +11326,7 @@ public partial class EqualizerWindow : Window
         Directory.CreateDirectory(inputFolder);
         var wavPath = System.IO.Path.Combine(inputFolder, "karaoke_input.wav");
         string[] arguments = ["-y", "-hide_banner", "-loglevel", "error", "-i", trackPath, "-vn", "-ac", "2", "-ar", "44100", "-sample_fmt", "s16", wavPath];
-        RunKaraokeProcess(ffmpegPath, arguments, inputFolder, TimeSpan.FromMinutes(5));
+        RunKaraokeProcess(ffmpegPath, arguments, inputFolder, TimeSpan.FromMinutes(5), cancellationToken);
         if (!File.Exists(wavPath))
         {
             throw new InvalidOperationException("FFmpeg finished without producing a WAV input for Demucs.");
@@ -11333,7 +11373,8 @@ public partial class EqualizerWindow : Window
         string vocalPath,
         string workFolder,
         KaraokeAiToolchain toolchain,
-        Action<string> reportStatus)
+        Action<string> reportStatus,
+        CancellationToken cancellationToken)
     {
         var outputFolder = System.IO.Path.Combine(workFolder, "whisperx");
         Directory.CreateDirectory(outputFolder);
@@ -11358,9 +11399,9 @@ public partial class EqualizerWindow : Window
                 "whisperx",
                 gpuArguments,
                 workFolder,
-                TimeSpan.FromMinutes(30));
+                TimeSpan.FromMinutes(30), cancellationToken);
         }
-        catch (Exception ex) when (IsWhisperXGpuRetryCandidate(ex.Message))
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && IsWhisperXGpuRetryCandidate(ex.Message))
         {
             reportStatus("WhisperX GPU path stumbled; retrying CPU-safe alignment...");
             foreach (var staleJson in Directory.EnumerateFiles(outputFolder, "*.json", SearchOption.AllDirectories))
@@ -11385,7 +11426,7 @@ public partial class EqualizerWindow : Window
                 "whisperx",
                 cpuArguments,
                 workFolder,
-                TimeSpan.FromMinutes(60));
+                TimeSpan.FromMinutes(60), cancellationToken);
         }
 
         var jsonPath = Directory.EnumerateFiles(outputFolder, "*.json", SearchOption.AllDirectories)
@@ -11415,11 +11456,12 @@ public partial class EqualizerWindow : Window
         string pythonModuleName,
         IReadOnlyList<string> arguments,
         string workingDirectory,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(executablePath))
         {
-            RunKaraokeProcess(executablePath, arguments, workingDirectory, timeout);
+            RunKaraokeProcess(executablePath, arguments, workingDirectory, timeout, cancellationToken);
             return;
         }
 
@@ -11427,15 +11469,21 @@ public partial class EqualizerWindow : Window
         {
             var moduleArguments = new List<string>(arguments.Count + 2) { "-m", pythonModuleName };
             moduleArguments.AddRange(arguments);
-            RunKaraokeProcess(pythonPath, moduleArguments, workingDirectory, timeout);
+            RunKaraokeProcess(pythonPath, moduleArguments, workingDirectory, timeout, cancellationToken);
             return;
         }
 
         throw new InvalidOperationException($"{pythonModuleName} is not available.");
     }
 
-    private static string RunKaraokeProcess(string fileName, IReadOnlyList<string> arguments, string workingDirectory, TimeSpan timeout)
+    private static string RunKaraokeProcess(string fileName, IReadOnlyList<string> arguments, string workingDirectory, TimeSpan timeout, CancellationToken cancellationToken = default) =>
+        RunKaraokeProcessAsync(fileName, arguments, workingDirectory, timeout, cancellationToken).GetAwaiter().GetResult();
+
+    private static async Task<string> RunKaraokeProcessAsync(string fileName, IReadOnlyList<string> arguments, string workingDirectory, TimeSpan timeout, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMilliseconds(Math.Clamp(timeout.TotalMilliseconds, 1d, int.MaxValue)));
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
@@ -11466,25 +11514,50 @@ public partial class EqualizerWindow : Window
             throw new InvalidOperationException($"{System.IO.Path.GetFileName(fileName)} could not start: {ex.Message}", ex);
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        var timeoutMilliseconds = (int)Math.Clamp(timeout.TotalMilliseconds, 1d, int.MaxValue);
-        if (!process.WaitForExit(timeoutMilliseconds))
+        void TerminateProcess()
         {
             try
             {
-                process.Kill(entireProcessTree: true);
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
             }
-            catch
+            catch (Exception ex)
             {
+                Trace.TraceWarning($"Karaoke tool cleanup failed: {ex.Message}");
             }
-
-            throw new TimeoutException($"{System.IO.Path.GetFileName(fileName)} timed out after {timeout.TotalMinutes:0} minutes.");
         }
 
-        process.WaitForExit();
-        var stdout = stdoutTask.GetAwaiter().GetResult();
-        var stderr = stderrTask.GetAwaiter().GetResult();
+        // Closing the app must terminate children before its dispatcher can exit.
+        using var terminateOnCancellation = deadline.Token.Register(TerminateProcess);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(deadline.Token);
+        try
+        {
+            // A child may inherit these pipes even after the launcher exits.
+            await Task.WhenAll(process.WaitForExitAsync(deadline.Token), stdoutTask, stderrTask)
+                .WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"{System.IO.Path.GetFileName(fileName)} timed out after {timeout.TotalMinutes:0.##} minutes.");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try
+                {
+                    TerminateProcess();
+                    process.WaitForExit(500);
+                }
+                catch (Exception ex)
+                {
+                    Trace.TraceWarning($"Karaoke tool cleanup failed: {ex.Message}");
+                }
+            }
+        }
+
+        var stdout = await stdoutTask.ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
         if (process.ExitCode != 0)
         {
             var details = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;

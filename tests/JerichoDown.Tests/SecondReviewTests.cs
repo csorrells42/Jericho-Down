@@ -6,6 +6,73 @@ using JerichoDown.Modules.SessionPlayback;
 
 internal static class SecondReviewTests
 {
+    public static bool RunProcessProbe(string[] args)
+    {
+        if (args.Length == 0 || args[0] != "--karaoke-process-probe") return false;
+        if (args[1] == "inherited-output")
+        {
+            var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+            start.ArgumentList.Add("--karaoke-process-probe");
+            start.ArgumentList.Add("sleep");
+            using var child = Process.Start(start)!;
+        }
+        else
+        {
+            if (args.Length > 2) File.WriteAllText(args[2], Environment.ProcessId.ToString());
+            Console.WriteLine("probe started");
+            Thread.Sleep(1500);
+        }
+        return true;
+    }
+
+    public static void KaraokeProcessDeadlineIncludesOutputDrain()
+    {
+        var run = typeof(JerichoDown.EqualizerWindow).GetMethod("RunKaraokeProcess", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            run.Invoke(null, [Environment.ProcessPath!, new[] { "--karaoke-process-probe", "inherited-output" },
+                AppContext.BaseDirectory, TimeSpan.FromMilliseconds(250), CancellationToken.None]);
+            throw new InvalidOperationException("An inherited output pipe bypassed the tool's timeout.");
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is TimeoutException)
+        {
+            if (watch.Elapsed > TimeSpan.FromSeconds(1))
+                throw new InvalidOperationException("Tool output drain ignored its deadline.");
+        }
+    }
+
+    public static void KaraokeCancellationTerminatesChild()
+    {
+        var marker = Path.Combine(Path.GetTempPath(), $"jericho-process-{Guid.NewGuid():N}.txt");
+        using var cancellation = new CancellationTokenSource();
+        var run = typeof(JerichoDown.EqualizerWindow).GetMethod("RunKaraokeProcess", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var worker = Task.Run(() =>
+        {
+            try
+            {
+                run.Invoke(null, [Environment.ProcessPath!, new[] { "--karaoke-process-probe", "sleep", marker },
+                    AppContext.BaseDirectory, TimeSpan.FromSeconds(10), cancellation.Token]);
+                throw new InvalidOperationException("Canceled tool completed normally.");
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is OperationCanceledException) { }
+        });
+        try
+        {
+            if (!SpinWait.SpinUntil(() => File.Exists(marker) && new FileInfo(marker).Length > 0, 2000))
+                throw new InvalidOperationException("Tool probe did not start.");
+            using var child = Process.GetProcessById(int.Parse(File.ReadAllText(marker)));
+            cancellation.Cancel();
+            if (!worker.Wait(1000) || !child.WaitForExit(500))
+                throw new InvalidOperationException("Canceled lyric tool was left running.");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { worker.Wait(3000); } finally { File.Delete(marker); }
+        }
+    }
+
     public static void MixerPreservesSummingHeadroom()
     {
         var output = new float[4];

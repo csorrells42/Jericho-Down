@@ -27,8 +27,12 @@ using NAudio.Midi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
+if (SecondReviewTests.RunProcessProbe(args)) return 0;
+
 var tests = new (string Name, Action Test)[]
 {
+    ("Karaoke process deadline includes output drain", SecondReviewTests.KaraokeProcessDeadlineIncludesOutputDrain),
+    ("Karaoke cancellation terminates child", SecondReviewTests.KaraokeCancellationTerminatesChild),
     ("Mixer preserves summing headroom", SecondReviewTests.MixerPreservesSummingHeadroom),
     ("Mono fold-down precedes clipping", SecondReviewTests.MonoFoldDownPrecedesClipping),
     ("Limiter protects post-effects output", SecondReviewTests.LimiterProtectsPostEffectsOutput),
