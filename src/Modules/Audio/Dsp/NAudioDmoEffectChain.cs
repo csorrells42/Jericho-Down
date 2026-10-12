@@ -98,15 +98,15 @@ public sealed class NAudioDmoEffectChain : IDisposable
         _settingsRevision = -1;
         ClearRuntimes();
 
-        AddIfEnabled(enabledMask, 0, CreateRuntime<DmoChorus, DmoChorus.Params>(ConfigureChorus));
-        AddIfEnabled(enabledMask, 1, CreateRuntime<DmoFlanger, DmoFlanger.Params>(ConfigureFlanger));
-        AddIfEnabled(enabledMask, 2, CreateRuntime<DmoEcho, DmoEcho.Params>(ConfigureEcho));
-        AddIfEnabled(enabledMask, 3, CreateRuntime<DmoDistortion, DmoDistortion.Params>(ConfigureDistortion));
-        AddIfEnabled(enabledMask, 4, CreateRuntime<DmoCompressor, DmoCompressor.Params>(ConfigureCompressor));
-        AddIfEnabled(enabledMask, 5, CreateRuntime<DmoParamEq, DmoParamEq.Params>(ConfigureParamEq));
-        AddIfEnabled(enabledMask, 6, CreateRuntime<DmoGargle, DmoGargle.Params>(ConfigureGargle));
-        AddIfEnabled(enabledMask, 7, CreateRuntime<DmoI3DL2Reverb, DmoI3DL2Reverb.Params>(ConfigureI3Dl2Reverb));
-        AddIfEnabled(enabledMask, 8, CreateRuntime<DmoWavesReverb, DmoWavesReverb.Params>(ConfigureWavesReverb));
+        AddIfEnabled(enabledMask, 0, () => CreateRuntime<DmoChorus, DmoChorus.Params>(ConfigureChorus));
+        AddIfEnabled(enabledMask, 1, () => CreateRuntime<DmoFlanger, DmoFlanger.Params>(ConfigureFlanger));
+        AddIfEnabled(enabledMask, 2, () => CreateRuntime<DmoEcho, DmoEcho.Params>(ConfigureEcho));
+        AddIfEnabled(enabledMask, 3, () => CreateRuntime<DmoDistortion, DmoDistortion.Params>(ConfigureDistortion));
+        AddIfEnabled(enabledMask, 4, () => CreateRuntime<DmoCompressor, DmoCompressor.Params>(ConfigureCompressor));
+        AddIfEnabled(enabledMask, 5, () => CreateRuntime<DmoParamEq, DmoParamEq.Params>(ConfigureParamEq));
+        AddIfEnabled(enabledMask, 6, () => CreateRuntime<DmoGargle, DmoGargle.Params>(ConfigureGargle));
+        AddIfEnabled(enabledMask, 7, () => CreateRuntime<DmoI3DL2Reverb, DmoI3DL2Reverb.Params>(ConfigureI3Dl2Reverb));
+        AddIfEnabled(enabledMask, 8, () => CreateRuntime<DmoWavesReverb, DmoWavesReverb.Params>(ConfigureWavesReverb));
     }
 
     private DmoRuntime<TDmo, TParam>? CreateRuntime<TDmo, TParam>(Action<TParam, VoiceProcessorSettings> configure)
@@ -115,7 +115,9 @@ public sealed class NAudioDmoEffectChain : IDisposable
         try
         {
             var runtime = new DmoRuntime<TDmo, TParam>(_waveFormat, configure);
-            return runtime.IsAvailable ? runtime : null;
+            if (runtime.IsAvailable) return runtime;
+            runtime.Dispose();
+            return null;
         }
         catch
         {
@@ -123,14 +125,14 @@ public sealed class NAudioDmoEffectChain : IDisposable
         }
     }
 
-    private void AddIfEnabled(int enabledMask, int bit, IDmoRuntime? runtime)
+    private void AddIfEnabled(int enabledMask, int bit, Func<IDmoRuntime?> createRuntime)
     {
         if ((enabledMask & (1 << bit)) == 0)
         {
-            runtime?.Dispose();
             return;
         }
 
+        var runtime = createRuntime();
         if (runtime is not null)
         {
             _runtimes.Add(runtime);

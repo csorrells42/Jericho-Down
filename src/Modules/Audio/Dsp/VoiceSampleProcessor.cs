@@ -515,7 +515,8 @@ public sealed class VoiceSampleProcessor
         var deEsserCutoffHz = Math.Clamp(_settings.DeEsserFrequencyHz, 3500d, 10000d);
         var deEsserRc = 1d / (2d * Math.PI * deEsserCutoffHz);
         _deEsserHighPassAlpha = deEsserRc / (deEsserRc + dt);
-        var deEsserLowPassHz = Math.Clamp(deEsserCutoffHz + 3500d, 6500d, Math.Min(14000d, _sampleRate * 0.45d));
+        var deEsserMaximumHz = Math.Min(14000d, _sampleRate * 0.45d);
+        var deEsserLowPassHz = Math.Clamp(deEsserCutoffHz + 3500d, Math.Min(6500d, deEsserMaximumHz), deEsserMaximumHz);
         _deEsserLowPassAlpha = 1d - Math.Exp(-2d * Math.PI * deEsserLowPassHz / _sampleRate);
         const double breathHighPassHz = 2500d;
         var breathHighPassRc = 1d / (2d * Math.PI * breathHighPassHz);

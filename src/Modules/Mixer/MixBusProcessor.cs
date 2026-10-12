@@ -35,7 +35,8 @@ public sealed class MixBusProcessor
             _normalizeGain += (1d - _normalizeGain) * 0.025d;
         }
 
-        var limiterCeiling = DbToLinear(Math.Clamp(settings.LimiterCeilingDb, -24d, 0d));
+        var limiterCeiling = DbToLinear(Math.Clamp(
+            double.IsFinite(settings.LimiterCeilingDb) ? settings.LimiterCeilingDb : -1d, -24d, 0d));
         var peak = 0d;
         var sumSquares = 0d;
         var sampleCount = 0;
@@ -129,15 +130,7 @@ public sealed class MixBusProcessor
 
     private static double ApplyLimiter(double sample, double ceiling)
     {
-        var absolute = Math.Abs(sample);
-        if (absolute <= ceiling)
-        {
-            return sample;
-        }
-
-        var overshoot = absolute - ceiling;
-        var softened = ceiling + Math.Tanh(overshoot / Math.Max(0.0001d, 1d - ceiling)) * (1d - ceiling);
-        return Math.CopySign(softened, sample);
+        return Math.Clamp(sample, -ceiling, ceiling);
     }
 
     private static double ProcessSample(

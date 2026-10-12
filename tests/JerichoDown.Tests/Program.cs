@@ -29,6 +29,9 @@ using NAudio.Wave.SampleProviders;
 
 var tests = new (string Name, Action Test)[]
 {
+    ("DSP supports low input sample rates", ReviewRegressionTests.VoiceProcessingSupportsLowSampleRates),
+    ("Mixer limiter honors its ceiling", ReviewRegressionTests.MixerLimiterHonorsCeiling),
+    ("Mixer sanitizes invalid limiter settings", ReviewRegressionTests.MixerRejectsNonFiniteCeiling),
     ("Video color processor leaves neutral frames unchanged", VideoColorProcessorNeutralFrame),
     ("Video color processor applies visible adjustments", VideoColorProcessorAppliesAdjustments),
     ("Video denoiser seeds first frame unchanged", VideoDenoiserSeedsFirstFrame),
