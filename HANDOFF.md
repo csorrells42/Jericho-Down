@@ -43,7 +43,7 @@ dotnet run --project .\tests\JerichoDown.Tests -c Release --no-build
 Current validation:
 
 - Build succeeds with zero warnings and zero errors.
-- Test harness passes: 174 tests as of 2026-10-12.
+- Test harness passes: 188 tests as of the second review on 2026-10-12, including a 280-case DSP rate/toggle safety matrix.
 - Detailed findings, checkpoint commits, hardware evidence and remaining limitations are in `RELEASE_CHECK.md`.
 
 ## Run
@@ -69,7 +69,7 @@ We are working only on Jericho Down.
 Use the current Jericho-Down Git checkout and verify its remote before pushing.
 Jericho Down is the church/live-worship evolution of Podcast Workbench. Podcast Workbench is frozen separately at tag podcast-workbench-v1-stable.
 This repo starts from the stable Podcast Workbench codebase and is now renamed to JerichoDown: project file, solution, namespaces, app title, tests, README, and verifier script.
-Current validation: Release build has 0 warnings/errors, 174 regression tests pass, and WPF/available Windows audio/camera smoke passes. See RELEASE_CHECK.md for specifics and unverified hardware/visual checks.
+Current validation: Release build has 0 warnings/errors, 188 regression tests pass (including 280 DSP safety cases), and WPF/available Windows audio/camera/software-MIDI smoke passes. See RELEASE_CHECK.md for specifics and unverified hardware/visual/model-execution checks.
 Keep generated bin/obj output out of commits and preserve the user's saved profile.
 Scope: church/live worship production, recording, camera preview, microphone DSP/EQ, spectrum/waveform/DX12 waterfall visualization, karaoke/worship lyrics and recording, MIDI utilities, processed output routing and multi-input mixing. Mic Compare was removed.
 Do not add Automagination Amalgastation features here. Wi-Fi, IP scanning, port scanning, serial, Modbus, SQL, MQTT, and automation toolbox work belong in the separate AutomaginationAmalgastation repo.

@@ -2,7 +2,47 @@
 
 Status: repository-wide review and verified fixes completed; automated software and available Windows hardware checks pass. The user no longer owns the AG06, so that device is not a completion requirement. Physical ASIO/MIDI and screenshot verification remain unverified, not claimed as passed.
 
-## October Review: Fixed Findings
+## Second October Review: Fixed Findings
+
+This fresh pass started from `cba4f09` with a clean tree. It rechecked DSP/effect ordering and state, floating-point mixer math, playback lifecycle/timing, asynchronous karaoke work and external processes, MIDI file semantics, and the earlier recording/device/path fixes. Confirmed failures were repaired in checkpoint commits; the final validation also repeats the repository-wide regression and real-window checks below.
+
+| Priority | Defect and effect | Repair and evidence |
+| --- | --- | --- |
+| P1 | NAudio effects ran after the microphone limiter. A +15 dB DMO EQ raised a signal limited to -18 dB to about -3 dB. | Apply limiting and safety clipping after the block effects. The regression reproduced the overshoot before repair and now respects the ceiling. |
+| P1 | Changing pitch-shifter FFT size/overlap reused NAudio's old FIFO indices and could throw an array-index exception during live processing. | Recreate the stateful shifter when its frame geometry changes. Regression exercises increases, decreases and overlap changes. |
+| P2 | Mixer input sums were clipped before master attenuation; mono output clipped left/right independently before averaging. Both caused avoidable distortion and incorrect gain. | Keep floating-point headroom through gain/normalization and fold down mono before final clipping. Exact-sample regressions verify both cases. |
+| P2 | Pitch shift and convolution froze buffered audio while bypassed, replaying old sound when re-enabled. | Clear state on bypass, including dry mix and unity-pitch bypass. Silence-after-bypass regressions cover both effects. |
+| P2 | A backward seek could leave playback waiting for an old frame's timestamp; cancellation could still allow that frame to be published. | Abort the old wait when a seek is pending or cancellation occurs; discard the stale sample. A ten-second wait is interrupted immediately in regression. |
+| P2 | Playback start/stop/dispose were not serialized, and stopping from a playback callback waited for its own task. | Serialize lifecycle operations, retain the existing unfinished-worker guard, and skip self-wait. Tests cover callback stop, repeated disposal, real concurrent starts and stop/dispose, plus rejected reopen after disposal. |
+| P2 | Auto Time could overwrite a different song's lyrics or newer edits after its background analysis completed. | Cancel/invalidate work on track change, edit, replacement operation and close; ignore stale results/status. Actual WPF checks exercise edit/track/close invalidation. |
+| P2 | Karaoke external tools had no app-close cancellation, and inherited output pipes could bypass their process-exit timeout. | Propagate cancellation through analysis/FFmpeg/Demucs/WhisperX, terminate active process trees, and apply the deadline to process exit plus output drain. Bounded real child-process fixtures reproduce the timeout and verify cancellation/termination. |
+| P2 | MIDI playback treated zero/invalid or SMPTE division as ordinary quarter-note ticks; format-2 independent sequences could be played/exported with altered timing semantics. | Reject unsupported playback/conversion with a clear error, inspect the original format before NAudio normalizes its collection, and label SMPTE summaries correctly. Tests exercise invalid divisions and a real format-2 file fixture. |
+
+Checkpoint commits: `40719a3`, `c9f46cd`, `4ca9c72`; expanded hardware/concurrency verification: `8189288`.
+
+## Second Review Verification
+
+- Regression harness: **188 tests passed**, up from 174. Fourteen new tests include **280 DSP safety cases**: all 40 boolean switches at seven rates from 8 to 192 kHz, each enabled, bypassed and re-enabled, with nonfinite input samples. These safety checks complement, rather than replace, the existing measured custom DSP and all-band EQ boost/cut/adjacent-response checks.
+- Release and Debug solution builds: zero warnings and errors. The final `VerifyJerichoDown.ps1 -UiSmoke -AudioHardware` gate completed successfully.
+- Release publish succeeded after granting access to installed Windows SDK metadata. Build/publish EXE and DLL SHA-256 hashes match; no JerichoDown, test-harness or camera/WPF probe processes remained after verification.
+- Real WPF: all five tabs twice; all 11 mixer strips select/mute; EQ excludes loopback; audible recording and pause/resume/stop; karaoke backing/vocal transport; stale lyric invalidation; bounded device recovery; no binding or dispatcher errors; clean shutdown.
+- Camera/session: HD Webcam recording, paired mixed/raw WAVs, pause/resume, two segments and matching metadata, video decode/seek/reopen, concurrent playback starts and stop/dispose, capture interruption finalization.
+- Standalone DX12: HD Webcam, 1280x720@30 NV12; **52 frames received, 51 rendered**, host ready.
+- Windows audio: Intel microphone array, MSI microphone and MSI virtual line captured successfully; default output opened at 192 kHz. Computer loopback and per-app loopback captured generated audio; per-app reopen and callback disposal passed.
+- MIDI: zero inputs and one output enumerated. Microsoft GS Wavetable Synth accepted bank/patch, controller, pitch, note-on/off, all-notes-off and reset. This verifies the software output API, not an external instrument or listening assessment.
+- The first expanded computer-loopback probe incorrectly read optional waveform arrays. It was corrected to inspect always-published raw peak telemetry and then passed; this was a probe defect, not an application repair.
+- Local logs: `output/second-review-verification.log`, `output/second-review-audio.log`, `output/second-review-video.log`, `output/second-review-dx12.log`. Test recordings/profiles remain only in the printed temporary folders. User settings and shortcut are unchanged.
+
+### Limits
+
+- Physical ASIO and external MIDI input/output hardware are not certified. The absent AG06 is not required or repeatedly probed.
+- Full Demucs/WhisperX model execution was not run. Process orchestration, cancellation and output parsing are tested, but model installation, downloads and GPU inference are not. Killing an active process tree does not guarantee cleanup of third-party children that deliberately detach or whose launcher already exited.
+- The DSP rate/toggle matrix checks sample count, finite bounded output and transitions; optional native effects may bypass unsupported formats. It does not measure perceptual quality or every continuous parameter combination.
+- Real WPF/DX12 execution is not screenshot approval. No new visual certification or long-duration/multi-PC/physical hot-unplug certification is claimed.
+
+Library source used to confirm retained pitch state and MIDI format normalization: [NAudio SmbPitchShifter 2.3.0](https://github.com/naudio/NAudio/blob/v2.3.0/NAudio.Core/Dsp/SmbPitchShifter.cs), [NAudio MidiFile 2.3.0](https://github.com/naudio/NAudio/blob/v2.3.0/NAudio.Midi/Midi/MidiFile.cs).
+
+## First October Review: Fixed Findings
 
 The review covered audio capture/routing/recovery, custom and NAudio DSP, mixer providers, recording/export/path handling, MIDI, karaoke/file playback, camera/native resource lifetimes, graph shutdown, application persistence and WPF event wiring. It combined source inspection, targeted failure reproduction, the existing regression suite, and real-window/hardware probes. It is not a claim that every possible device, input file or concurrency interleaving has been certified.
 
