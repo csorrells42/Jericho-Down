@@ -81,6 +81,13 @@ internal static class Program
                 await VerifyAsync(window, profile);
                 if (args.Contains("--video", StringComparer.Ordinal))
                     await VerifyPodcastAsync(window, profile);
+                if (args.Contains("--visual", StringComparer.Ordinal))
+                {
+                    var tabs = Control<TabControl>(window, "MainTabControl");
+                    tabs.SelectedItem = tabs.Items.Cast<TabItem>().Single(tab => Equals(tab.Header, "Mixing"));
+                    Console.WriteLine("Visual inspection window is ready for 60 seconds.");
+                    await Task.Delay(TimeSpan.FromSeconds(60));
+                }
                 if (errors.Messages.Count > 0)
                     throw new InvalidOperationException("WPF binding errors: " + string.Join(Environment.NewLine, errors.Messages.Distinct()));
                 if (dispatcherErrors.Count > 0)
