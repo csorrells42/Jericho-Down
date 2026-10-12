@@ -143,12 +143,15 @@ public static class SessionRecordingCatalog
         }
 
         return Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+            || (Path.GetFileName(path).StartsWith("video_", StringComparison.OrdinalIgnoreCase)
+                && Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
             || Path.GetFileName(path).Equals("session.json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static SessionMetadataSummary ReadSessionMetadata(string folder, string videoFileName)
     {
-        var metadataPath = Path.Combine(folder, "session.json");
+        var metadataPath = Path.Combine(folder, Path.ChangeExtension(videoFileName, ".json"));
+        if (!File.Exists(metadataPath)) metadataPath = Path.Combine(folder, "session.json");
         if (!File.Exists(metadataPath))
         {
             return new SessionMetadataSummary(0, null, null);

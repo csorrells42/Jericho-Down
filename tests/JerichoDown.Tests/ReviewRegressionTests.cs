@@ -7,9 +7,66 @@ using NAudio.Midi;
 using NAudio.Wave;
 using JerichoDown.Modules.SessionPlayback;
 using System.Reflection;
+using System.Diagnostics;
+using System.Text.Json;
 
 internal static class ReviewRegressionTests
 {
+    public static void RecordingDeletionRejectsJunctionAncestors()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"jericho-junction-{Guid.NewGuid():N}");
+        var root = Path.Combine(folder, "recordings");
+        var outside = Path.Combine(folder, "outside");
+        var junction = Path.Combine(root, "linked");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(Path.Combine(outside, "nested"));
+        File.WriteAllText(Path.Combine(outside, "nested", "clip.wav"), "preserve");
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junction}\" \"{outside}\"")
+                { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            process.WaitForExit();
+            if (process.ExitCode != 0) throw new InvalidOperationException("Could not create the isolated test junction.");
+            var safety = typeof(VoiceSampleProcessor).Assembly.GetType("JerichoDown.PathSafety")!;
+            var fileCheck = safety.GetMethod("IsRegularFileUnderFolder")!;
+            var directoryCheck = safety.GetMethod("IsDirectoryUnderFolder")!;
+            if ((bool)fileCheck.Invoke(null, [Path.Combine(junction, "nested", "clip.wav"), root, new[] { ".wav" }])!
+                || (bool)directoryCheck.Invoke(null, [Path.Combine(junction, "nested"), root, false])!)
+                throw new InvalidOperationException("Deletion validation accepted a path through an external junction.");
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    public static void SessionCatalogRetainsEverySegmentMetadata()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"jericho-segments-{Guid.NewGuid():N}");
+        var session = Path.Combine(folder, "Podcast_2026-10-12_10-00-00");
+        Directory.CreateDirectory(session);
+        try
+        {
+            for (var set = 1; set <= 2; set++)
+            {
+                var name = $"video_{set:000}";
+                File.WriteAllBytes(Path.Combine(session, name + ".mp4"), [0]);
+                File.WriteAllText(Path.Combine(session, name + ".json"), JsonSerializer.Serialize(new
+                    { video = name + ".mp4", setNumber = set, duration = "00:00:05", camera = "Test camera" }));
+            }
+            File.Copy(Path.Combine(session, "video_002.json"), Path.Combine(session, "session.json"));
+            var recordings = SessionRecordingCatalog.EnumerateSessionRecordings(folder);
+            if (recordings.Count != 2 || recordings.Any(item => !item.Details.Contains("Test camera") || !item.Details.Contains("00:00:05")))
+                throw new InvalidOperationException("An earlier recording segment lost its metadata.");
+            File.Delete(Path.Combine(session, "video_002.json"));
+            if (!SessionRecordingCatalog.EnumerateSessionRecordings(folder)
+                .Single(item => item.Path.EndsWith("video_002.mp4")).Details.Contains("Test camera"))
+                throw new InvalidOperationException("Legacy session metadata is no longer readable.");
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
     public static void MidiFailedExportPreservesDestination()
     {
         var path = Path.Combine(Path.GetTempPath(), $"jericho-midi-{Guid.NewGuid():N}.mid");

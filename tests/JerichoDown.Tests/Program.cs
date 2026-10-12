@@ -30,6 +30,8 @@ using NAudio.Wave.SampleProviders;
 var tests = new (string Name, Action Test)[]
 {
     ("DSP supports low input sample rates", ReviewRegressionTests.VoiceProcessingSupportsLowSampleRates),
+    ("Recording deletion rejects junction ancestors", ReviewRegressionTests.RecordingDeletionRejectsJunctionAncestors),
+    ("Session catalog retains every segment metadata", ReviewRegressionTests.SessionCatalogRetainsEverySegmentMetadata),
     ("MIDI failed export preserves destination", ReviewRegressionTests.MidiFailedExportPreservesDestination),
     ("Playback retains stopping worker", ReviewRegressionTests.PlaybackRetainsStoppingWorker),
     ("Shelf extremes remain audible", ReviewRegressionTests.ShelfExtremesRemainAudible),

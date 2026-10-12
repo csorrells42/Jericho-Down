@@ -10,6 +10,7 @@ using System.Windows.Media;
 using JerichoDown;
 using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Live;
+using JerichoDown.Modules.SessionPlayback;
 using NAudio.Wave;
 
 internal static class Program
@@ -56,7 +57,7 @@ internal static class Program
 
         if (args.Contains("--audio-hardware", StringComparer.Ordinal))
         {
-            var result = VerifyAudioHardware();
+            var result = VerifyAudioHardware(args.Contains("--asio", StringComparer.Ordinal));
             timeout.Cancel();
             return result;
         }
@@ -244,11 +245,12 @@ internal static class Program
         Console.WriteLine("PASS Failed audio retries stop and explicit device refresh re-enables recovery");
     }
 
-    private static int VerifyAudioHardware()
+    private static int VerifyAudioHardware(bool includeAsio)
     {
         var failures = 0;
         var devices = MicrophoneSpectrumService.GetInputDevices()
-            .Where(device => !device.IsStereoTestTone && !device.IsSystemAudioLoopback && !device.IsProcessLoopback);
+            .Where(device => !device.IsStereoTestTone && !device.IsSystemAudioLoopback && !device.IsProcessLoopback
+                && (includeAsio || !device.IsAsio));
         foreach (var device in devices)
         {
             using var service = new MicrophoneSpectrumService();
@@ -312,7 +314,7 @@ internal static class Program
         await Task.Delay(1000);
         Click(window, "StopRecordingButton");
         var folder = Directory.GetDirectories(profile, "Podcast_*").Single();
-        foreach (var name in new[] { "video_001.mp4", "mix_001.wav", "raw_backup_001.wav", "video_002.mp4", "mix_002.wav", "raw_backup_002.wav", "session.json" })
+        foreach (var name in new[] { "video_001.mp4", "mix_001.wav", "raw_backup_001.wav", "video_001.json", "video_002.mp4", "mix_002.wav", "raw_backup_002.wav", "video_002.json", "session.json" })
         {
             var path = Path.Combine(folder, name);
             if (!File.Exists(path) || new FileInfo(path).Length < 100)
@@ -327,7 +329,33 @@ internal static class Program
             }
         }
         Control<ToggleButton>(window, "CameraEnabledToggle").SetCurrentValue(ToggleButton.IsCheckedProperty, false);
+        for (var set = 1; set <= 2; set++)
+        {
+            using var metadata = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, $"video_{set:000}.json")));
+            using var audio = new AudioFileReader(Path.Combine(folder, $"mix_{set:000}.wav"));
+            var duration = TimeSpan.Parse(metadata.RootElement.GetProperty("duration").GetString()!);
+            if (Math.Abs(duration.TotalSeconds - audio.TotalTime.TotalSeconds) > 1.1)
+                throw new InvalidOperationException("Segment metadata contains cumulative rather than per-segment duration.");
+        }
         Console.WriteLine("PASS Podcast video, processed mix, raw backup, pause/resume, segment rotation and metadata");
+
+        using (var playback = new MediaFoundationFilePlaybackService())
+        {
+            var frames = 0;
+            playback.FrameAvailable += (_, _) => Interlocked.Increment(ref frames);
+            var path = Path.Combine(folder, "video_001.mp4");
+            if (!playback.Start(path)) throw new InvalidOperationException("Recorded video could not open for playback.");
+            await Task.Delay(300);
+            playback.Pause();
+            playback.Seek(TimeSpan.Zero);
+            playback.Play();
+            await Task.Delay(300);
+            playback.Stop();
+            if (frames == 0 || playback.IsRunning) throw new InvalidOperationException("Playback did not render frames and stop.");
+            if (!playback.Start(path)) throw new InvalidOperationException("Playback could not reopen after stop.");
+            await Task.Delay(150);
+        }
+        Console.WriteLine("PASS Recorded video playback, pause/seek/resume, stop and reopen");
 
         Click(window, "StartRecordingButton");
         await Task.Delay(300);

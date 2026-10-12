@@ -24,7 +24,7 @@ internal static class PathSafety
             || !TryGetSafeFullPath(rootFolder, out var fullRoot)
             || !File.Exists(fullPath)
             || !IsSameOrDescendant(fullPath, fullRoot)
-            || HasReparsePoint(fullPath))
+            || HasReparsePointInPath(fullPath, fullRoot))
         {
             return false;
         }
@@ -38,7 +38,8 @@ internal static class PathSafety
         if (!TryGetSafeFullPath(path, out var fullPath)
             || !TryGetSafeFullPath(rootFolder, out var fullRoot)
             || !Directory.Exists(fullPath)
-            || HasReparsePoint(fullPath))
+            || !IsSameOrDescendant(fullPath, fullRoot)
+            || HasReparsePointInPath(fullPath, fullRoot))
         {
             return false;
         }
@@ -79,8 +80,7 @@ internal static class PathSafety
 
         try
         {
-            fullPath = Path.GetFullPath(path)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
             return !string.IsNullOrWhiteSpace(fullPath);
         }
         catch
@@ -113,5 +113,17 @@ internal static class PathSafety
         {
             return true;
         }
+    }
+
+    private static bool HasReparsePointInPath(string path, string root)
+    {
+        // A regular file can still escape the selected folder through a parent junction.
+        for (string? current = path; current is not null && IsSameOrDescendant(current, root);
+            current = Path.GetDirectoryName(current))
+        {
+            if (HasReparsePoint(current)) return true;
+            if (current.Equals(root, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
     }
 }

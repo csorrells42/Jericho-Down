@@ -372,6 +372,7 @@ public partial class EqualizerWindow : Window
     private DateTime _recordingStartedAt;
     private DateTime _recordingPausedAt;
     private TimeSpan _recordingPausedDuration;
+    private TimeSpan _recordingSegmentStartedElapsed;
     private bool _cameraAvailable;
     private bool _isCameraEnabled;
     private bool _isUpdatingCameraUi;
@@ -4419,6 +4420,7 @@ public partial class EqualizerWindow : Window
         _activeRecordingSessionFolder = recordingTarget.SessionFolder;
         _activeRecordingSetNumber = recordingTarget.SetNumber;
         _recordingStartedAt = DateTime.UtcNow;
+        _recordingSegmentStartedElapsed = TimeSpan.Zero;
         _recordingPausedAt = DateTime.MinValue;
         _recordingPausedDuration = TimeSpan.Zero;
         _isRecordingSession = true;
@@ -4547,7 +4549,7 @@ public partial class EqualizerWindow : Window
         _activeRecordingSessionFolder = null;
         _activeRecordingSetNumber = 0;
         RecordingTimerText.Text = "00:00:00";
-        if (sessionFolder is not null)
+        if (sessionFolder is not null && setNumber > 0)
         {
             WriteRecordingSessionMetadata(sessionFolder, setNumber, videoPath, elapsed, textureResult);
         }
@@ -4600,10 +4602,12 @@ public partial class EqualizerWindow : Window
             WriteRecordingSessionMetadata(sessionFolder, completedSetNumber, completedVideoPath, completedElapsed, textureResult);
         }
 
+        _activeRecordingSetNumber = 0;
         try
         {
             var recordingTarget = SessionRecordingCatalog.CreateRecordingTarget(sessionFolder);
             _activeRecordingSetNumber = recordingTarget.SetNumber;
+            _recordingSegmentStartedElapsed = GetRecordingElapsed();
             StartSessionAudioFiles(recordingTarget);
 
             var nextVideoPath = GetActiveRecordingVideoPath();
@@ -6384,7 +6388,8 @@ public partial class EqualizerWindow : Window
             var metadata = new
             {
                 createdAt = DateTimeOffset.Now,
-                duration = FormatDuration(elapsed),
+                duration = FormatDuration(elapsed > _recordingSegmentStartedElapsed
+                    ? elapsed - _recordingSegmentStartedElapsed : TimeSpan.Zero),
                 setNumber,
                 camera = CameraComboBox.SelectedItem is CameraDevice camera ? camera.Name : null,
                 mode = CameraStatusText.ResolveSelectedCameraMode(CameraModeComboBox.SelectedItem).Label,
@@ -6427,7 +6432,11 @@ public partial class EqualizerWindow : Window
                         textureResult.Status
                     }
             };
-            AtomicFile.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, UserPresetJsonOptions));
+            var json = JsonSerializer.Serialize(metadata, UserPresetJsonOptions);
+            var segmentMetadataPath = System.IO.Path.Combine(sessionFolder,
+                $"video_{SessionRecordingCatalog.FormatRecordingSetNumber(setNumber)}.json");
+            AtomicFile.WriteAllText(segmentMetadataPath, json);
+            AtomicFile.WriteAllText(metadataPath, json);
         }
         catch (Exception ex)
         {
