@@ -48,10 +48,9 @@ public sealed class MixBusProcessor
             {
                 var leftIndex = frame * 2;
                 var rightIndex = leftIndex + 1;
-                var left = ProcessSample(input[leftIndex], masterGain, limiterCeiling, settings.LimiterEnabled, out var leftReductionDb);
-                var right = ProcessSample(input[rightIndex], masterGain, limiterCeiling, settings.LimiterEnabled, out var rightReductionDb);
-                limiterReductionDb = Math.Max(limiterReductionDb, Math.Max(leftReductionDb, rightReductionDb));
-                var mono = (float)Math.Clamp((left + right) * 0.5d, -1d, 1d);
+                var combined = (float)((SanitizeSample(input[leftIndex]) + SanitizeSample(input[rightIndex])) * 0.5d);
+                var mono = (float)ProcessSample(combined, masterGain, limiterCeiling, settings.LimiterEnabled, out var reductionDb);
+                limiterReductionDb = Math.Max(limiterReductionDb, reductionDb);
                 output[leftIndex] = mono;
                 output[rightIndex] = mono;
                 AccumulateTelemetrySample(mono, ref peak, ref sumSquares, ref sampleCount);
@@ -193,7 +192,8 @@ public sealed class MixBusProcessor
 
     private static double SanitizeSample(float sample)
     {
-        return Math.Clamp(float.IsFinite(sample) ? sample : 0f, -1f, 1f);
+        // The floating-point sum may exceed full scale before master attenuation/normalization.
+        return float.IsFinite(sample) ? sample : 0f;
     }
 }
 

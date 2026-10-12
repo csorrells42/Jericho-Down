@@ -22,8 +22,14 @@ public sealed class NAudioImpulseConvolutionProcessor
 
     public void UpdateFromSettings(VoiceProcessorSettings settings)
     {
+        var wasActive = _enabled && _mix > 0f;
         _enabled = settings.NAudioConvolutionEnabled;
         _mix = (float)Math.Clamp(double.IsFinite(settings.NAudioConvolutionMix) ? settings.NAudioConvolutionMix : 0.2d, 0d, 1d);
+        if (wasActive && (!_enabled || _mix <= 0f))
+        {
+            Array.Clear(_tailBuffer);
+            Array.Clear(_nextTailBuffer);
+        }
 
         var impulseKey = new ImpulseKey(
             settings.NAudioConvolutionLengthMs,
@@ -31,8 +37,7 @@ public sealed class NAudioImpulseConvolutionProcessor
             settings.NAudioConvolutionDecay);
         if (_impulseInitialized && impulseKey.Equals(_impulseKey))
         {
-            // Only the enable flag or mix changed - keep the impulse response and the
-            // in-flight reverb tail intact instead of truncating whatever was still ringing out.
+            // Preserve the tail during active wet/dry adjustments, but never freeze it in bypass.
             return;
         }
 

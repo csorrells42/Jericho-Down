@@ -340,14 +340,19 @@ public sealed class VoiceSampleProcessor
             gateOpennessSum += _gateOpenness;
             _makeupGain = SmoothLevelGain(_makeupGain, makeupTargetGain, levelSmoothingCoefficient);
             sample *= _makeupGain;
-            sample = ApplyLimiter(sample);
-            sample = SanitizeAudioSample(sample);
-            processed[i] = (float)ApplyOutputSafetyClip(sample);
+            processed[i] = (float)SanitizeAudioSample(sample);
         }
 
         _naudioPitchShiftProcessor.Transform(processed[..sampleCount]);
         _naudioImpulseConvolutionProcessor.Transform(processed[..sampleCount]);
         _naudioDmoEffectChain.Transform(processed[..sampleCount]);
+
+        // Effects can add gain, so the limiter and safety clip must protect the final signal.
+        for (var i = 0; i < sampleCount; i++)
+        {
+            var sample = ApplyLimiter(SanitizeAudioSample(processed[i]));
+            processed[i] = (float)ApplyOutputSafetyClip(SanitizeAudioSample(sample));
+        }
 
         var telemetry = Telemetry;
         telemetry.InputTrimDb = Math.Abs(_settings.InputTrimDb);

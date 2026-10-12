@@ -313,7 +313,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
                         ref sourceTimestampOffsetTicks,
                         ref lastPresentationTicks,
                         ref syntheticPresentationTicks);
-                    WaitUntilFrameIsDue(frameTicks, cancellationToken);
+                    if (!WaitUntilFrameIsDue(frameTicks, cancellationToken)) continue;
                     if (TryReadFrame(sample, format.Width, format.Height, format.Subtype, format.Stride, out var frame))
                     {
                         FrameAvailable?.Invoke(this, frame);
@@ -648,19 +648,25 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
         return syntheticTicks;
     }
 
-    private void WaitUntilFrameIsDue(long frameTicks, CancellationToken cancellationToken)
+    private bool WaitUntilFrameIsDue(long frameTicks, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             _resumeEvent.Wait(cancellationToken);
-            var delayTicks = frameTicks - GetCurrentPlaybackTicks();
+            long delayTicks;
+            lock (_stateLock)
+            {
+                if (_pendingSeekTicks.HasValue) return false;
+                delayTicks = frameTicks - GetCurrentPlaybackTicksLocked();
+            }
             if (delayTicks <= 0)
             {
-                return;
+                return true;
             }
 
             Thread.Sleep((int)Math.Clamp(delayTicks / TimeSpan.TicksPerMillisecond, 1L, 16L));
         }
+        return false;
     }
 
     private long GetCurrentPlaybackTicks()

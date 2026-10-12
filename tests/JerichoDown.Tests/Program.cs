@@ -29,6 +29,11 @@ using NAudio.Wave.SampleProviders;
 
 var tests = new (string Name, Action Test)[]
 {
+    ("Mixer preserves summing headroom", SecondReviewTests.MixerPreservesSummingHeadroom),
+    ("Mono fold-down precedes clipping", SecondReviewTests.MonoFoldDownPrecedesClipping),
+    ("Limiter protects post-effects output", SecondReviewTests.LimiterProtectsPostEffectsOutput),
+    ("Convolution does not replay bypassed audio", SecondReviewTests.ConvolutionDoesNotReplayBypassedAudio),
+    ("Seek interrupts old frame wait", SecondReviewTests.SeekInterruptsOldFrameWait),
     ("DSP supports low input sample rates", ReviewRegressionTests.VoiceProcessingSupportsLowSampleRates),
     ("Late loopback activation ignores disposed event", ReviewRegressionTests.LateLoopbackActivationDoesNotTouchDisposedEvent),
     ("Camera retains stopping worker", ReviewRegressionTests.CameraRetainsStoppingWorker),
