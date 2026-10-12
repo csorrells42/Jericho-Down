@@ -5,9 +5,53 @@ using JerichoDown.Modules.Audio.Devices;
 using JerichoDown.Modules.Audio.Live;
 using NAudio.Midi;
 using NAudio.Wave;
+using JerichoDown.Modules.SessionPlayback;
+using System.Reflection;
 
 internal static class ReviewRegressionTests
 {
+    public static void MidiFailedExportPreservesDestination()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"jericho-midi-{Guid.NewGuid():N}.mid");
+        byte[] original = [1, 2, 3, 4];
+        File.WriteAllBytes(path, original);
+        try
+        {
+            var events = new MidiEventCollection(1, 480);
+            events.AddEvent(new FailingExportEvent(), 0);
+            try { MidiFileService.Export(path, events); }
+            catch (IOException) { }
+            if (!File.ReadAllBytes(path).SequenceEqual(original))
+                throw new InvalidOperationException("A failed MIDI export destroyed the existing destination.");
+        }
+        finally { File.Delete(path); }
+    }
+
+    public static void PlaybackRetainsStoppingWorker()
+    {
+        using var service = new MediaFoundationFilePlaybackService();
+        var worker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var taskField = typeof(MediaFoundationFilePlaybackService).GetField("_playbackTask", flags)!;
+        typeof(MediaFoundationFilePlaybackService).GetField("_cancellation", flags)!
+            .SetValue(service, new CancellationTokenSource());
+        taskField.SetValue(service, worker.Task);
+        try
+        {
+            service.Stop();
+            if (!ReferenceEquals(taskField.GetValue(service), worker.Task))
+                throw new InvalidOperationException("Stop forgot an unfinished playback worker, allowing overlapping sessions.");
+        }
+        finally { worker.SetResult(); }
+    }
+
+    private sealed class FailingExportEvent : MidiEvent
+    {
+        public FailingExportEvent() : base(0, 1, MidiCommandCode.NoteOn) { }
+        public override void Export(ref long absoluteTime, BinaryWriter writer)
+            => throw new IOException("Injected export failure.");
+    }
+
     public static void ShelfExtremesRemainAudible()
     {
         foreach (var lowShelf in new[] { true, false })

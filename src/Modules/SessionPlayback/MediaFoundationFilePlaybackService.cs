@@ -70,6 +70,14 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
     {
         Stop();
         ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_stateLock)
+        {
+            if (_playbackTask is { IsCompleted: false })
+            {
+                StatusChanged?.Invoke(this, "Previous playback is still stopping. Try again shortly.");
+                return false;
+            }
+        }
 
         if (!OperatingSystem.IsWindows())
         {
@@ -174,7 +182,6 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
             playbackTask = _playbackTask;
             reader = _reader;
             _cancellation = null;
-            _playbackTask = null;
             _paused = false;
             _pendingSeekTicks = null;
             _playbackClock.Reset();
@@ -200,7 +207,14 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
             {
             }
 
-            cancellation.Dispose();
+            if (playbackTask is { IsCompleted: false })
+            {
+                _ = playbackTask.ContinueWith(_ => cancellation.Dispose(), TaskScheduler.Default);
+            }
+            else
+            {
+                cancellation.Dispose();
+            }
         }
     }
 
@@ -213,7 +227,15 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
         _disposed = true;
         Stop();
-        _resumeEvent.Dispose();
+        var playbackTask = _playbackTask;
+        if (playbackTask is { IsCompleted: false })
+        {
+            _ = playbackTask.ContinueWith(_ => _resumeEvent.Dispose(), TaskScheduler.Default);
+        }
+        else
+        {
+            _resumeEvent.Dispose();
+        }
     }
 
     private void PlaybackLoop(string path, CancellationToken cancellationToken, TaskCompletionSource<string?> startup)
@@ -228,6 +250,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
             var duration = ReadDuration(reader);
             lock (_stateLock)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 _reader = reader;
                 _mediaFoundationScope = mediaFoundationScope;
                 _duration = duration;
@@ -265,11 +288,13 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
                 if (MediaFoundationInterop.Failed(result))
                 {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                     throw new InvalidOperationException($"ReadSample failed: 0x{result:X8}");
                 }
 
                 if ((streamFlags & MediaFoundationInterop.MF_SOURCE_READERF_ENDOFSTREAM) != 0)
                 {
+                    MediaFoundationInterop.ReleaseComObject(sampleObject);
                     ended = true;
                     break;
                 }
@@ -322,7 +347,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
             {
                 startup.TrySetResult(ex.Message);
             }
-            else
+            else if (!cancellationToken.IsCancellationRequested)
             {
                 PlaybackFailed?.Invoke(this, ex.Message);
             }

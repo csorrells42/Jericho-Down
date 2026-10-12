@@ -1,4 +1,5 @@
 using NAudio.Midi;
+using System.IO;
 
 namespace JerichoDown.Modules.Midi;
 
@@ -20,7 +21,19 @@ public static class MidiFileService
 
     public static void Export(string filePath, MidiEventCollection events)
     {
-        MidiFile.Export(filePath, events);
+        var destination = Path.GetFullPath(filePath);
+        var temporary = Path.Combine(Path.GetDirectoryName(destination)!, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            MidiFile.Export(temporary, events);
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     public static void ExportCopy(string sourceFilePath, string destinationFilePath, bool strictChecking = false)

@@ -34,7 +34,16 @@ internal sealed class MediaFoundationVideoRecorder : IDisposable
         _nextSampleTime = 0;
 
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path) ?? ".");
-        InitializeWriter();
+        try
+        {
+            InitializeWriter();
+        }
+        catch
+        {
+            MediaFoundationInterop.ReleaseComObject(_writer);
+            _writer = null;
+            throw;
+        }
     }
 
     public string Path { get; }
