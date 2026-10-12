@@ -14,6 +14,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(2);
     private readonly object _stateLock = new();
+    private readonly object _lifecycleLock = new();
     private readonly ManualResetEventSlim _resumeEvent = new(true);
     private readonly Stopwatch _playbackClock = new();
     private CancellationTokenSource? _cancellation;
@@ -68,8 +69,16 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
     public bool Start(string path, TimeSpan startPosition = default)
     {
-        Stop();
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_lifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return StartCore(path, startPosition);
+        }
+    }
+
+    private bool StartCore(string path, TimeSpan startPosition)
+    {
+        StopCore();
         lock (_stateLock)
         {
             if (_playbackTask is { IsCompleted: false })
@@ -107,7 +116,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
         if (!startup.Task.Wait(StartupTimeout))
         {
-            Stop();
+            StopCore();
             StatusChanged?.Invoke(this, $"DX12 session playback timed out opening {Path.GetFileName(path)}.");
             return false;
         }
@@ -115,7 +124,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
         var startupError = startup.Task.Result;
         if (!string.IsNullOrWhiteSpace(startupError))
         {
-            Stop();
+            StopCore();
             StatusChanged?.Invoke(this, $"DX12 session playback unavailable: {startupError}");
             return false;
         }
@@ -173,6 +182,14 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
     public void Stop()
     {
+        lock (_lifecycleLock)
+        {
+            if (!_disposed) StopCore();
+        }
+    }
+
+    private void StopCore()
+    {
         CancellationTokenSource? cancellation;
         Task? playbackTask;
         IMFSourceReader? reader;
@@ -201,7 +218,7 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
             try
             {
-                playbackTask?.Wait(StopTimeout);
+                if (playbackTask is not null && Task.CurrentId != playbackTask.Id) playbackTask.Wait(StopTimeout);
             }
             catch
             {
@@ -220,21 +237,21 @@ public sealed class MediaFoundationFilePlaybackService : IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
+        lock (_lifecycleLock)
         {
-            return;
-        }
+            if (_disposed) return;
 
-        _disposed = true;
-        Stop();
-        var playbackTask = _playbackTask;
-        if (playbackTask is { IsCompleted: false })
-        {
-            _ = playbackTask.ContinueWith(_ => _resumeEvent.Dispose(), TaskScheduler.Default);
-        }
-        else
-        {
-            _resumeEvent.Dispose();
+            _disposed = true;
+            StopCore();
+            var playbackTask = _playbackTask;
+            if (playbackTask is { IsCompleted: false })
+            {
+                _ = playbackTask.ContinueWith(_ => _resumeEvent.Dispose(), TaskScheduler.Default);
+            }
+            else
+            {
+                _resumeEvent.Dispose();
+            }
         }
     }
 

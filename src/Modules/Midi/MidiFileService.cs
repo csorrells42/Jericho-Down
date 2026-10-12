@@ -21,6 +21,7 @@ public static class MidiFileService
 
     public static void Export(string filePath, MidiEventCollection events)
     {
+        ValidateSynchronousFormat(events.MidiFileType);
         var destination = Path.GetFullPath(filePath);
         var temporary = Path.Combine(Path.GetDirectoryName(destination)!, $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
         try
@@ -39,7 +40,16 @@ public static class MidiFileService
     public static void ExportCopy(string sourceFilePath, string destinationFilePath, bool strictChecking = false)
     {
         var file = new MidiFile(sourceFilePath, strictChecking);
+        ValidateSynchronousFormat(file.FileFormat);
         Export(destinationFilePath, file.Events);
+    }
+
+    internal static void ValidateSynchronousFormat(int fileFormat)
+    {
+        // NAudio exposes nonzero file types as a format-1 event collection.
+        // Check the original header before losing independent sequence semantics.
+        if (fileFormat is not (0 or 1))
+            throw new NotSupportedException($"MIDI format {fileFormat} playback/conversion is not supported. Use a synchronous format 0 or 1 file.");
     }
 
     private static IReadOnlyList<MidiTrackSummary> ReadTrackSummaries(MidiFile file)
@@ -100,7 +110,11 @@ public sealed record MidiFileSummary(
     int EventCount,
     IReadOnlyList<MidiTrackSummary> TrackSummaries)
 {
-    public string DisplayText => $"{FileName} | format {FileFormat} | tracks {Tracks} | {DeltaTicksPerQuarterNote} ticks/qn | {EventCount} events";
+    public string DisplayText => $"{FileName} | format {FileFormat} | tracks {Tracks} | {TimingText} | {EventCount} events";
+
+    private string TimingText => (DeltaTicksPerQuarterNote & 0x8000) != 0
+        ? "SMPTE timing"
+        : $"{DeltaTicksPerQuarterNote} ticks/qn";
 }
 
 public sealed record MidiTrackSummary(

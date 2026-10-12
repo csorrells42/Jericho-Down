@@ -4,7 +4,7 @@ namespace JerichoDown.Modules.Audio.Dsp;
 
 public sealed class NAudioPitchShiftProcessor
 {
-    private readonly SmbPitchShifter _pitchShifter = new();
+    private SmbPitchShifter _pitchShifter = new();
     private readonly float _sampleRate;
     private int _settingsRevision = -1;
     private bool _enabled;
@@ -27,16 +27,26 @@ public sealed class NAudioPitchShiftProcessor
         }
 
         _settingsRevision = settings.SettingsRevision;
+        var wasActive = IsActive;
+        var previousFrameSize = _fftFrameSize;
+        var previousOversampling = _oversampling;
         _enabled = settings.NAudioPitchShiftEnabled;
         _pitchRatio = (float)Math.Pow(2d, Semitones(settings.NAudioPitchShiftSemitones) / 12d);
         _fftFrameSize = FftFrameSize(settings.NAudioPitchShiftFftSize);
         _oversampling = Oversampling(settings.NAudioPitchShiftOversampling);
         _mix = (float)Math.Clamp(double.IsFinite(settings.NAudioPitchShiftMix) ? settings.NAudioPitchShiftMix : 1d, 0d, 1d);
+        if ((wasActive && !IsActive) || previousFrameSize != _fftFrameSize || previousOversampling != _oversampling)
+        {
+            // NAudio retains frame indices, phase and FIFO history across calls.
+            _pitchShifter = new SmbPitchShifter();
+        }
     }
+
+    private bool IsActive => _enabled && _mix > 0f && Math.Abs(_pitchRatio - 1f) >= 0.0001f;
 
     public void Transform(Span<float> samples)
     {
-        if (!_enabled || samples.Length == 0 || Math.Abs(_pitchRatio - 1f) < 0.0001f || _mix <= 0f)
+        if (!IsActive || samples.Length == 0)
         {
             return;
         }

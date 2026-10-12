@@ -31,6 +31,13 @@ if (SecondReviewTests.RunProcessProbe(args)) return 0;
 
 var tests = new (string Name, Action Test)[]
 {
+    ("Every DSP toggle survives rate and bypass changes", SecondReviewTests.EveryDspToggleSurvivesRateAndBypassChanges),
+    ("Playback can stop from its own worker", SecondReviewTests.PlaybackCanStopFromItsOwnWorker),
+    ("Pitch shift changes frame geometry live", SecondReviewTests.PitchShiftCanChangeFrameGeometryLive),
+    ("Pitch shift does not replay bypassed audio", SecondReviewTests.PitchShiftDoesNotReplayBypassedAudio),
+    ("Playback stop after dispose is safe", SecondReviewTests.PlaybackStopAfterDisposeIsSafe),
+    ("MIDI rejects unsupported timebases", SecondReviewTests.MidiRejectsUnsupportedTimebases),
+    ("MIDI rejects asynchronous file conversion", SecondReviewTests.MidiRejectsAsynchronousFileConversion),
     ("Karaoke process deadline includes output drain", SecondReviewTests.KaraokeProcessDeadlineIncludesOutputDrain),
     ("Karaoke cancellation terminates child", SecondReviewTests.KaraokeCancellationTerminatesChild),
     ("Mixer preserves summing headroom", SecondReviewTests.MixerPreservesSummingHeadroom),

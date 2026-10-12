@@ -12,6 +12,7 @@ public static class MidiSequenceService
     public static MidiSequencePlaybackPlan CreatePlaybackPlan(string filePath, bool strictChecking = false)
     {
         var file = new MidiFile(filePath, strictChecking);
+        MidiFileService.ValidateSynchronousFormat(file.FileFormat);
         return CreatePlaybackPlan(file.Events, Path.GetFileName(filePath));
     }
 
@@ -26,9 +27,14 @@ public static class MidiSequenceService
 
     public static IReadOnlyList<MidiSequencePlaybackEvent> CreatePlaybackEvents(MidiEventCollection events, int ticksPerQuarterNote)
     {
-        if (ticksPerQuarterNote <= 0)
+        MidiFileService.ValidateSynchronousFormat(events.MidiFileType);
+        if (ticksPerQuarterNote <= 0 || ticksPerQuarterNote > ushort.MaxValue)
         {
-            ticksPerQuarterNote = 480;
+            throw new InvalidDataException("MIDI tick division must be a nonzero 16-bit value.");
+        }
+        if ((ticksPerQuarterNote & 0x8000) != 0)
+        {
+            throw new NotSupportedException("SMPTE-timed MIDI playback is not supported. Use a format 0 or 1 file with ticks-per-quarter-note timing.");
         }
 
         // Stable ordering preserves authored bank/program and note-off/note-on sequences
