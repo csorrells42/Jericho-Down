@@ -30,6 +30,9 @@ using NAudio.Wave.SampleProviders;
 var tests = new (string Name, Action Test)[]
 {
     ("DSP supports low input sample rates", ReviewRegressionTests.VoiceProcessingSupportsLowSampleRates),
+    ("Shelf extremes remain audible", ReviewRegressionTests.ShelfExtremesRemainAudible),
+    ("MIDI bank precedes patch", ReviewRegressionTests.MidiBankPrecedesPatch),
+    ("Session WAV headers recover before stop", ReviewRegressionTests.SessionWritesRecoverableHeaders),
     ("Mixer limiter honors its ceiling", ReviewRegressionTests.MixerLimiterHonorsCeiling),
     ("Mixer sanitizes invalid limiter settings", ReviewRegressionTests.MixerRejectsNonFiniteCeiling),
     ("Video color processor leaves neutral frames unchanged", VideoColorProcessorNeutralFrame),

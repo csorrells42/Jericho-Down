@@ -2423,7 +2423,7 @@
                                 <TextBlock Text="Low shelf slope" Foreground="#B8C7D9" />
                                 <TextBlock Text="{Binding ElementName=NAudioLowShelfSlopeSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                               </Grid>
-                              <Slider x:Name="NAudioLowShelfSlopeSlider" Minimum="0.1" Maximum="4" Value="{Binding NAudioLowShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                              <Slider x:Name="NAudioLowShelfSlopeSlider" Minimum="0.1" Maximum="1" Value="{Binding NAudioLowShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
                             </StackPanel>
                           </Expander>
                           <Expander Header="BiQuad High shelf" Foreground="#F8FAFC" IsExpanded="False">
@@ -2443,7 +2443,7 @@
                                 <TextBlock Text="High shelf slope" Foreground="#B8C7D9" />
                                 <TextBlock Text="{Binding ElementName=NAudioHighShelfSlopeSlider, Path=Value, StringFormat={}{0:0.00}}" Foreground="#F8FAFC" HorizontalAlignment="Right" />
                               </Grid>
-                              <Slider x:Name="NAudioHighShelfSlopeSlider" Minimum="0.1" Maximum="4" Value="{Binding NAudioHighShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
+                              <Slider x:Name="NAudioHighShelfSlopeSlider" Minimum="0.1" Maximum="1" Value="{Binding NAudioHighShelfSlope}" TickPlacement="BottomRight" ValueChanged="ProcessingSliderValueChanged" />
                             </StackPanel>
                           </Expander>
                         </StackPanel>

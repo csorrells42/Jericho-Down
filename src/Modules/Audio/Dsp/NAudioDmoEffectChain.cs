@@ -294,29 +294,38 @@ public sealed class NAudioDmoEffectChain : IDisposable
         private readonly Action<TParam, VoiceProcessorSettings> _configure;
         private bool _streamingResourcesAllocated;
         private bool _failed;
+        private bool _disposed;
 
         public DmoRuntime(WaveFormat waveFormat, Action<TParam, VoiceProcessorSettings> configure)
         {
             _configure = configure;
             _effector = new TDmo();
-            if (_effector.MediaObject is null || _effector.MediaObjectInPlace is null)
+            try
             {
-                return;
-            }
+                if (_effector.MediaObject is null || _effector.MediaObjectInPlace is null)
+                {
+                    return;
+                }
 
-            if (!_effector.MediaObject.SupportsInputWaveFormat(0, waveFormat)
-                || !_effector.MediaObject.SupportsOutputWaveFormat(0, waveFormat))
+                if (!_effector.MediaObject.SupportsInputWaveFormat(0, waveFormat)
+                    || !_effector.MediaObject.SupportsOutputWaveFormat(0, waveFormat))
+                {
+                    return;
+                }
+
+                _effector.MediaObject.SetInputWaveFormat(0, waveFormat);
+                _effector.MediaObject.SetOutputWaveFormat(0, waveFormat);
+                _effector.MediaObject.AllocateStreamingResources();
+                _streamingResourcesAllocated = true;
+            }
+            catch
             {
-                return;
+                Dispose();
+                throw;
             }
-
-            _effector.MediaObject.AllocateStreamingResources();
-            _streamingResourcesAllocated = true;
-            _effector.MediaObject.SetInputWaveFormat(0, waveFormat);
-            _effector.MediaObject.SetOutputWaveFormat(0, waveFormat);
         }
 
-        public bool IsAvailable => !_failed
+        public bool IsAvailable => !_failed && !_disposed
             && _effector.MediaObject is not null
             && _effector.MediaObjectInPlace is not null
             && _streamingResourcesAllocated;
@@ -343,13 +352,18 @@ public sealed class NAudioDmoEffectChain : IDisposable
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             if (_streamingResourcesAllocated && _effector.MediaObject is not null)
             {
-                TryDmo(() => _effector.MediaObject.FreeStreamingResources());
+                // A processing failure must not suppress native resource cleanup.
+                try { _effector.MediaObject.FreeStreamingResources(); }
+                catch { }
             }
 
             _streamingResourcesAllocated = false;
-            _effector.Dispose();
+            try { _effector.Dispose(); }
+            catch { }
         }
 
         private void TryDmo(Action action)

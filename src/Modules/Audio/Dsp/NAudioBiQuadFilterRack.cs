@@ -148,7 +148,8 @@ public sealed class NAudioBiQuadFilterRack
 
     private static float Slope(double slope)
     {
-        return (float)Math.Clamp(double.IsFinite(slope) ? slope : 0.9d, 0.1d, 4d);
+        // NAudio's shelf slope must stay in the monotonic range for all supported gains.
+        return (float)Math.Clamp(double.IsFinite(slope) ? slope : 0.9d, 0.1d, 1d);
     }
 
     private static float Gain(double gainDb)

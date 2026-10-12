@@ -31,10 +31,11 @@ public static class MidiSequenceService
             ticksPerQuarterNote = 480;
         }
 
+        // Stable ordering preserves authored bank/program and note-off/note-on sequences
+        // at the same tick instead of rearranging them by message type.
         var orderedEvents = Enumerable.Range(0, events.Tracks)
             .SelectMany(track => events[track])
             .OrderBy(midiEvent => midiEvent.AbsoluteTime)
-            .ThenBy(GetPlaybackSortOrder)
             .ToArray();
         var playbackEvents = new List<MidiSequencePlaybackEvent>();
         var tempoMicrosecondsPerQuarterNote = DefaultTempoMicrosecondsPerQuarterNote;
@@ -78,19 +79,6 @@ public static class MidiSequenceService
         }
 
         return playbackEvents;
-    }
-
-    private static int GetPlaybackSortOrder(MidiEvent midiEvent)
-    {
-        return midiEvent switch
-        {
-            TempoEvent => 0,
-            PatchChangeEvent => 1,
-            ControlChangeEvent => 2,
-            _ when MidiEvent.IsNoteOff(midiEvent) => 3,
-            _ when MidiEvent.IsNoteOn(midiEvent) => 4,
-            _ => 5
-        };
     }
 
     private static bool TryCreateShortMessage(MidiEvent midiEvent, out int rawMessage)

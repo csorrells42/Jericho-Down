@@ -9,6 +9,7 @@ internal sealed class SessionAudioRecorder
     private WaveFileWriter? _mixWriter;
     private WaveFileWriter? _rawWriter;
     private bool _paused;
+    private long _lastFlushTick;
     private byte[] _mixBytes = [];
     private byte[] _rawBytes = [];
     public string? LastError { get; private set; }
@@ -26,6 +27,7 @@ internal sealed class SessionAudioRecorder
                 if (mixPath is not null)
                     _mixWriter = CreateWriter(mixPath, WaveFormat.CreateIeeeFloatWaveFormat(inputFormat.SampleRate, 2));
                 _paused = false;
+                _lastFlushTick = Environment.TickCount64;
             }
             catch
             {
@@ -57,6 +59,13 @@ internal sealed class SessionAudioRecorder
                     if (_mixBytes.Length < count) _mixBytes = new byte[count];
                     ProcessedAudioSampleConverter.WriteStereoFloat32(mix, channels, _mixBytes);
                     _mixWriter.Write(_mixBytes, 0, count);
+                }
+                if (Environment.TickCount64 - _lastFlushTick >= 2000)
+                {
+                    // Checkpoint both WAV headers so an interrupted session remains readable.
+                    _rawWriter.Flush();
+                    _mixWriter?.Flush();
+                    _lastFlushTick = Environment.TickCount64;
                 }
                 return null;
             }

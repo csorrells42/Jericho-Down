@@ -1,8 +1,70 @@
 using JerichoDown.Modules.Audio.Dsp;
 using JerichoDown.Modules.Mixer;
+using JerichoDown.Modules.Midi;
+using JerichoDown.Modules.Audio.Devices;
+using JerichoDown.Modules.Audio.Live;
+using NAudio.Midi;
+using NAudio.Wave;
 
 internal static class ReviewRegressionTests
 {
+    public static void ShelfExtremesRemainAudible()
+    {
+        foreach (var lowShelf in new[] { true, false })
+        foreach (var gain in new[] { -24d, 24d })
+        {
+            var settings = new VoiceProcessorSettings
+            {
+                NAudioLowShelfEnabled = lowShelf,
+                NAudioHighShelfEnabled = !lowShelf,
+                NAudioLowShelfGainDb = gain,
+                NAudioHighShelfGainDb = gain,
+                NAudioLowShelfSlope = 4,
+                NAudioHighShelfSlope = 4
+            };
+            var rack = new NAudioBiQuadFilterRack(48000);
+            rack.UpdateFromSettings(settings);
+            var output = Enumerable.Range(0, 4096)
+                .Select(i => rack.Transform(0.01 * Math.Sin(2 * Math.PI * 1000 * i / 48000))).ToArray();
+            if (output.Any(sample => !double.IsFinite(sample)) || output.Max(Math.Abs) < 0.00001)
+                throw new InvalidOperationException($"Shelf at {gain} dB silenced the signal (low shelf: {lowShelf}).");
+        }
+    }
+
+    public static void MidiBankPrecedesPatch()
+    {
+        var events = new MidiEventCollection(1, 480);
+        events.AddEvent(new ControlChangeEvent(0, 1, MidiController.BankSelect, 1), 0);
+        events.AddEvent(new ControlChangeEvent(0, 1, MidiController.BankSelectLsb, 2), 0);
+        events.AddEvent(new PatchChangeEvent(0, 1, 7), 0);
+        var plan = MidiSequenceService.CreatePlaybackPlan(events, "bank.mid");
+        if ((plan.Events[0].RawMessage & 0xF0) != 0xB0 || (plan.Events[2].RawMessage & 0xF0) != 0xC0)
+            throw new InvalidOperationException("Bank selection was reordered after the patch change.");
+    }
+
+    public static void SessionWritesRecoverableHeaders()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"jericho-recovery-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            using var service = new MicrophoneSpectrumService();
+            service.Start(AudioInputDevice.CreateStereoTestTone());
+            var mix = Path.Combine(folder, "mix.wav");
+            var raw = Path.Combine(folder, "raw.wav");
+            service.StartSessionAudioRecording(mix, raw);
+            Thread.Sleep(2400);
+            foreach (var path in new[] { mix, raw })
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new WaveFileReader(stream);
+                if (reader.TotalTime.TotalSeconds < 1)
+                    throw new InvalidOperationException("Active session WAV has no recoverable audio header.");
+            }
+        }
+        finally { Directory.Delete(folder, recursive: true); }
+    }
+
     public static void VoiceProcessingSupportsLowSampleRates()
     {
         foreach (var rate in new[] { 8000, 11025, 12000, 16000, 44100, 48000, 96000 })
